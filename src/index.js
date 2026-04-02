@@ -39,6 +39,18 @@ class WhiskieBot {
       // Initialize database
       await initDatabase();
 
+      // Check if we should run now
+      const shouldRun = await this.shouldRunNow();
+
+      if (!shouldRun) {
+        console.log('⏰ Outside trading hours. Bot will sleep until next scheduled time.');
+        console.log('📅 Next run: Tomorrow at 9:00 AM ET\n');
+
+        // Schedule next run and exit
+        this.scheduleNextRun();
+        return;
+      }
+
       // Run initial analysis
       console.log('📊 Running initial portfolio analysis...\n');
       await this.runDailyAnalysis();
@@ -55,6 +67,10 @@ class WhiskieBot {
       cron.schedule('30 16 * * 1-5', async () => {
         console.log('\n⏰ End of day summary triggered');
         await this.sendDailySummary();
+
+        // Shut down after evening summary (save costs)
+        console.log('\n💤 Market closed. Shutting down until tomorrow...');
+        setTimeout(() => process.exit(0), 5000);
       }, {
         timezone: 'America/New_York'
       });
@@ -62,6 +78,7 @@ class WhiskieBot {
       console.log('\n✅ Whiskie Bot is running');
       console.log('📅 Daily analysis: 9:30 AM ET (Mon-Fri)');
       console.log('📊 Daily summary: 4:30 PM ET (Mon-Fri)');
+      console.log('💤 Auto-shutdown: 4:35 PM ET (saves costs)');
       console.log('💡 Press Ctrl+C to stop\n');
 
       this.isRunning = true;
@@ -70,6 +87,35 @@ class WhiskieBot {
       await email.sendErrorAlert(error, 'Bot startup');
       throw error;
     }
+  }
+
+  /**
+   * Check if bot should run now (9 AM - 5 PM ET, Mon-Fri)
+   */
+  async shouldRunNow() {
+    const now = new Date();
+    const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+
+    const hour = etTime.getHours();
+    const day = etTime.getDay(); // 0 = Sunday, 6 = Saturday
+
+    // Only run Mon-Fri (1-5), 9 AM - 5 PM ET
+    const isWeekday = day >= 1 && day <= 5;
+    const isTradingHours = hour >= 9 && hour < 17;
+
+    return isWeekday && isTradingHours;
+  }
+
+  /**
+   * Schedule next run (for Railway restarts)
+   */
+  scheduleNextRun() {
+    // Railway will restart the service daily
+    // This ensures we don't waste compute outside trading hours
+    setTimeout(() => {
+      console.log('🔄 Checking if trading hours...');
+      this.start();
+    }, 60 * 60 * 1000); // Check every hour
   }
 
   /**
