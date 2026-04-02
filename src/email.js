@@ -182,12 +182,6 @@ class EmailAlerts {
     return await this.sendEmail(subject, html);
   }
 
-      <p><em>Trade logged to database.</em></p>
-    `;
-
-    return await this.sendEmail(subject, html);
-  }
-
   /**
    * Send error alert
    */
