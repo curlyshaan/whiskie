@@ -49,6 +49,10 @@ class WhiskieBot {
       // Initialize database
       await initDatabase();
 
+      // Start API server FIRST so Railway knows we're alive
+      this.startAPIServer();
+      console.log('✅ API server started\n');
+
       // Check if we should run now
       const shouldRun = await this.shouldRunNow();
 
@@ -61,9 +65,9 @@ class WhiskieBot {
         return;
       }
 
-      // Run initial analysis
+      // Run initial analysis (in background so it doesn't block)
       console.log('📊 Running initial portfolio analysis...\n');
-      await this.runDailyAnalysis();
+      this.runDailyAnalysis().catch(console.error);
 
       // Schedule daily analysis at 10:00 AM, 12:30 PM, and 3:30 PM ET
       cron.schedule('0 10 * * 1-5', async () => {
@@ -109,9 +113,6 @@ class WhiskieBot {
       console.log('💡 Press Ctrl+C to stop\n');
 
       this.isRunning = true;
-
-      // Start API server for on-demand triggers
-      this.startAPIServer();
     } catch (error) {
       console.error('❌ Error starting bot:', error);
       await email.sendErrorAlert(error, 'Bot startup');
