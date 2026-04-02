@@ -33,7 +33,7 @@ class ClaudeAPI {
   /**
    * Send message to Claude (non-streaming)
    */
-  async sendMessage(messages, model = MODELS.SONNET, systemPrompt = null) {
+  async sendMessage(messages, model = MODELS.SONNET, systemPrompt = null, enableThinking = false) {
     try {
       const payload = {
         model,
@@ -43,6 +43,14 @@ class ClaudeAPI {
 
       if (systemPrompt) {
         payload.system = systemPrompt;
+      }
+
+      // Enable extended thinking for Opus
+      if (enableThinking && model === MODELS.OPUS) {
+        payload.thinking = {
+          type: 'enabled',
+          budget_tokens: 10000
+        };
       }
 
       const response = await this.client.post('/v1/messages', payload);
@@ -86,7 +94,7 @@ class ClaudeAPI {
     const messages = [{ role: 'user', content: prompt }];
 
     // Use Opus with extended thinking for major decisions
-    const response = await this.sendMessage(messages, MODELS.OPUS);
+    const response = await this.sendMessage(messages, MODELS.OPUS, null, true);
     return this.parseAnalysisResponse(response);
   }
 
