@@ -10,9 +10,9 @@ const QUATARLY_BASE_URL = process.env.QUATARLY_BASE_URL;
  * Claude AI Models
  */
 export const MODELS = {
-  OPUS: 'claude-opus-4-6-thinking',      // Expensive, deep analysis
-  SONNET: 'claude-sonnet-4-6-thinking',  // Cheaper, daily use
-  HAIKU: 'claude-haiku-4-5-20251001'     // Cheapest, quick checks
+  OPUS: 'claude-opus-4-6-thinking',      // Use for everything - consistent decisions
+  SONNET: 'claude-sonnet-4-6-thinking',  // Deprecated - use Opus instead
+  HAIKU: 'claude-haiku-4-5-20251001'     // Deprecated - use Opus instead
 };
 
 /**
@@ -80,8 +80,8 @@ class ClaudeAPI {
 
     const messages = [{ role: 'user', content: prompt }];
 
-    // Use Sonnet for daily analysis (cheaper)
-    const response = await this.sendMessage(messages, MODELS.SONNET);
+    // Use Opus with thinking for all analysis (consistency)
+    const response = await this.sendMessage(messages, MODELS.OPUS, null, true);
     return this.parseAnalysisResponse(response);
   }
 
@@ -131,7 +131,7 @@ ${newsData}
 **Provide a BUY/HOLD/AVOID recommendation with detailed reasoning.**`;
 
     const messages = [{ role: 'user', content: prompt }];
-    const response = await this.sendMessage(messages, MODELS.SONNET);
+    const response = await this.sendMessage(messages, MODELS.OPUS, null, true);
     return this.parseAnalysisResponse(response);
   }
 
@@ -162,7 +162,7 @@ ${newsData}
 **Provide clear recommendation with reasoning.**`;
 
     const messages = [{ role: 'user', content: prompt }];
-    const response = await this.sendMessage(messages, MODELS.SONNET);
+    const response = await this.sendMessage(messages, MODELS.OPUS, null, true);
     return this.parseAnalysisResponse(response);
   }
 
@@ -250,7 +250,7 @@ ${JSON.stringify(economic, null, 2)}
   }
 
   /**
-   * Quick sentiment check (uses Haiku - very cheap)
+   * Quick sentiment check (now uses Opus for consistency)
    */
   async quickSentimentCheck(newsHeadlines) {
     const prompt = `Analyze market sentiment from these headlines. Respond with: BULLISH, BEARISH, or NEUTRAL and brief reason.
@@ -259,7 +259,7 @@ Headlines:
 ${newsHeadlines}`;
 
     const messages = [{ role: 'user', content: prompt }];
-    const response = await this.sendMessage(messages, MODELS.HAIKU);
+    const response = await this.sendMessage(messages, MODELS.OPUS, null, true);
     return this.parseAnalysisResponse(response);
   }
 }

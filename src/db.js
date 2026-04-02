@@ -111,6 +111,26 @@ export async function initDatabase() {
       );
     `);
 
+    // Pending approvals - track trade recommendations awaiting user approval
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS pending_approvals (
+        id SERIAL PRIMARY KEY,
+        analysis_id INTEGER REFERENCES ai_decisions(id),
+        symbol VARCHAR(10) NOT NULL,
+        action VARCHAR(10) NOT NULL,
+        quantity INTEGER NOT NULL,
+        entry_price DECIMAL(10, 2) NOT NULL,
+        stop_loss DECIMAL(10, 2),
+        take_profit DECIMAL(10, 2),
+        reasoning TEXT,
+        status VARCHAR(20) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP,
+        approved_at TIMESTAMP,
+        rejected_at TIMESTAMP
+      );
+    `);
+
     console.log('✅ Database schema initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
@@ -263,6 +283,92 @@ export async function logAIDecision(decision) {
     return result.rows[0];
   } catch (error) {
     console.error('Error logging AI decision:', error);
+    throw error;
+  }
+}
+
+/**
+ * Save pending approval (10 minute timeout)
+ */
+export async function savePendingApproval(approval) {
+  try {
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+
+    const result = await pool.query(
+      `INSERT INTO pending_approvals (
+        analysis_id, symbol, action, quantity, entry_price, stop_loss, take_profit, reasoning, expires_at
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [
+        approval.analysisId,
+        approval.symbol,
+        approval.action,
+        approval.quantity,
+        approval.entryPrice,
+        approval.stopLoss,
+        approval.takeProfit,
+        approval.reasoning,
+        expiresAt
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error saving pending approval:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get pending approvals
+ */
+export async function getPendingApprovals() {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM pending_approvals
+       WHERE status = 'pending' AND expires_at > NOW()
+       ORDER BY created_at DESC`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching pending approvals:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update approval status
+ */
+export async function updateApprovalStatus(approvalId, status) {
+  try {
+    const field = status === 'approved' ? 'approved_at' : 'rejected_at';
+
+    const result = await pool.query(
+      `UPDATE pending_approvals
+       SET status = $1, ${field} = NOW()
+       WHERE id = $2
+       RETURNING *`,
+      [status, approvalId]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error updating approval status:', error);
+    throw error;
+  }
+}
+
+/**
+ * Expire old pending approvals
+ */
+export async function expireOldApprovals() {
+  try {
+    await pool.query(
+      `UPDATE pending_approvals
+       SET status = 'expired'
+       WHERE status = 'pending' AND expires_at <= NOW()`
+    );
+  } catch (error) {
+    console.error('Error expiring old approvals:', error);
     throw error;
   }
 }

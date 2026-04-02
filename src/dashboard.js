@@ -1,5 +1,6 @@
 import express from 'express';
 import db from './db.js';
+import { getPendingApprovals, updateApprovalStatus, expireOldApprovals } from './db.js';
 
 const router = express.Router();
 
@@ -8,6 +9,12 @@ const router = express.Router();
  */
 router.get('/', async (req, res) => {
   try {
+    // Expire old approvals first
+    await expireOldApprovals();
+
+    // Get pending approvals
+    const pendingApprovals = await getPendingApprovals();
+
     // Get today's analyses
     const today = new Date().toISOString().split('T')[0];
     const analyses = await db.query(
@@ -36,7 +43,7 @@ router.get('/', async (req, res) => {
        LIMIT 1`
     );
 
-    const html = generateDashboardHTML(analyses.rows, portfolio.rows, trades.rows, snapshot.rows[0]);
+    const html = generateDashboardHTML(analyses.rows, portfolio.rows, trades.rows, snapshot.rows[0], pendingApprovals);
     res.send(html);
   } catch (error) {
     console.error('Dashboard error:', error);
@@ -78,9 +85,40 @@ router.get('/api/today', async (req, res) => {
   }
 });
 
-function generateDashboardHTML(analyses, positions, trades, snapshot) {
+/**
+ * API endpoint - Approve trade
+ */
+router.post('/api/approve/:id', async (req, res) => {
+  try {
+    const approvalId = req.params.id;
+    await updateApprovalStatus(approvalId, 'approved');
+
+    // TODO: Execute the trade here
+    // For now, just mark as approved
+
+    res.json({ success: true, message: 'Trade approved. Execution pending.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * API endpoint - Reject trade
+ */
+router.post('/api/reject/:id', async (req, res) => {
+  try {
+    const approvalId = req.params.id;
+    await updateApprovalStatus(approvalId, 'rejected');
+
+    res.json({ success: true, message: 'Trade rejected' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+function generateDashboardHTML(analyses, positions, trades, snapshot, pendingApprovals) {
   const totalValue = snapshot?.total_value || 100000;
-  const cash = snapshot?.cash_balance || 100000;
+  const cash = snapshot?.cash || snapshot?.cash_balance || 100000;
   const invested = totalValue - cash;
   const gainLoss = snapshot?.total_gain_loss || 0;
   const gainLossPercent = ((gainLoss / 100000) * 100).toFixed(2);
@@ -153,24 +191,106 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
       align-items: center;
       gap: 10px;
     }
-    .analysis-card {
-      background: #0f1425;
+    .approval-card {
+      background: #1a2332;
       padding: 20px;
       border-radius: 8px;
       margin-bottom: 15px;
-      border-left: 4px solid #667eea;
+      border-left: 4px solid #f59e0b;
     }
-    .analysis-time {
-      color: #667eea;
+    .approval-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+    .approval-title {
+      font-size: 1.2rem;
       font-weight: bold;
-      margin-bottom: 10px;
-      font-size: 1.1rem;
+      color: #f59e0b;
+    }
+    .approval-expires {
+      color: #888;
+      font-size: 0.85rem;
+    }
+    .approval-details {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+    .approval-detail {
+      color: #d0d0d0;
+    }
+    .approval-detail strong {
+      color: #fff;
+      display: block;
+      margin-bottom: 5px;
+    }
+    .approval-reasoning {
+      background: #0f1425;
+      padding: 15px;
+      border-radius: 5px;
+      margin-bottom: 15px;
+      color: #d0d0d0;
+      font-size: 0.9rem;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+    .approval-actions {
+      display: flex;
+      gap: 10px;
+    }
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.8; }
+    .btn-approve {
+      background: #10b981;
+      color: white;
+    }
+    .btn-reject {
+      background: #ef4444;
+      color: white;
+    }
+    details {
+      margin-bottom: 15px;
+    }
+    summary {
+      background: #0f1425;
+      padding: 15px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      color: #667eea;
+      border-left: 4px solid #667eea;
+      user-select: none;
+    }
+    summary:hover {
+      background: #151a2e;
     }
     .analysis-content {
+      background: #0f1425;
+      padding: 20px;
+      margin-top: 10px;
+      border-radius: 8px;
       color: #d0d0d0;
       white-space: pre-wrap;
       font-size: 0.95rem;
       line-height: 1.8;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+    .token-usage {
+      color: #888;
+      font-size: 0.85rem;
+      margin-top: 10px;
     }
     .no-data {
       color: #666;
@@ -235,6 +355,50 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
 
     <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
 
+    ${pendingApprovals.length > 0 ? `
+    <div class="section">
+      <div class="section-title">⏳ Pending Approvals (${pendingApprovals.length})</div>
+      ${pendingApprovals.map(approval => {
+        const expiresIn = Math.round((new Date(approval.expires_at) - new Date()) / 1000 / 60);
+        return `
+          <div class="approval-card">
+            <div class="approval-header">
+              <div class="approval-title">
+                ${approval.action.toUpperCase()} ${approval.quantity} ${approval.symbol} @ $${approval.entry_price}
+              </div>
+              <div class="approval-expires">Expires in ${expiresIn} min</div>
+            </div>
+            <div class="approval-details">
+              <div class="approval-detail">
+                <strong>Total Value</strong>
+                $${(approval.quantity * approval.entry_price).toFixed(2)}
+              </div>
+              <div class="approval-detail">
+                <strong>Stop-Loss</strong>
+                ${approval.stop_loss ? '$' + approval.stop_loss : 'Not set'}
+              </div>
+              <div class="approval-detail">
+                <strong>Take-Profit</strong>
+                ${approval.take_profit ? '$' + approval.take_profit : 'Not set'}
+              </div>
+            </div>
+            <div class="approval-reasoning">
+              ${approval.reasoning || 'No reasoning provided'}
+            </div>
+            <div class="approval-actions">
+              <button class="btn btn-approve" onclick="approveTradeconfirm('Are you sure you want to APPROVE this trade?') && approveTrade(${approval.id})">
+                ✅ Approve Trade
+              </button>
+              <button class="btn btn-reject" onclick="confirm('Are you sure you want to REJECT this trade?') && rejectTrade(${approval.id})">
+                ❌ Reject
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+    ` : ''}
+
     <div class="stats">
       <div class="stat-card">
         <div class="stat-label">Total Portfolio Value</div>
@@ -264,19 +428,27 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
       <div class="section-title">📊 Today's Analyses</div>
       ${analyses.length === 0 ?
         '<div class="no-data">No analyses yet today. Next run at 10:00 AM ET.</div>' :
-        analyses.map(a => `
-          <div class="analysis-card">
-            <div class="analysis-time">
-              ${new Date(a.created_at).toLocaleTimeString('en-US', {
-                hour: '2-digit',
-                minute: '2-digit',
-                timeZone: 'America/New_York'
-              })} ET Analysis
-              <span class="timestamp">(${new Date(a.created_at).toLocaleDateString()})</span>
-            </div>
-            <div class="analysis-content">${a.recommendation || 'No recommendation'}</div>
-          </div>
-        `).join('')
+        analyses.map(a => {
+          const time = new Date(a.created_at).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZone: 'America/New_York'
+          });
+          const date = new Date(a.created_at).toLocaleDateString();
+          const inputTokens = a.input_tokens || 0;
+          const outputTokens = a.output_tokens || 0;
+          const totalTokens = a.total_tokens || (inputTokens + outputTokens);
+
+          return `
+            <details>
+              <summary>
+                ${time} ET Analysis <span class="timestamp">(${date})</span>
+                ${totalTokens > 0 ? `<span class="token-usage"> • ${totalTokens.toLocaleString()} tokens</span>` : ''}
+              </summary>
+              <div class="analysis-content">${a.recommendation || 'No recommendation'}</div>
+            </details>
+          `;
+        }).join('')
       }
     </div>
 
@@ -368,6 +540,28 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
   </div>
 
   <script>
+    async function approveTrade(id) {
+      try {
+        const response = await fetch(\`/api/approve/\${id}\`, { method: 'POST' });
+        const data = await response.json();
+        alert(data.message);
+        location.reload();
+      } catch (error) {
+        alert('Error approving trade: ' + error.message);
+      }
+    }
+
+    async function rejectTrade(id) {
+      try {
+        const response = await fetch(\`/api/reject/\${id}\`, { method: 'POST' });
+        const data = await response.json();
+        alert(data.message);
+        location.reload();
+      } catch (error) {
+        alert('Error rejecting trade: ' + error.message);
+      }
+    }
+
     // Auto-refresh every 2 minutes
     setTimeout(() => location.reload(), 120000);
   </script>

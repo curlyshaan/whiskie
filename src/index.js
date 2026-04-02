@@ -15,7 +15,11 @@ import {
   logAlert,
   savePortfolioSnapshot,
   upsertPosition,
-  deletePosition
+  deletePosition,
+  savePendingApproval,
+  getPendingApprovals,
+  updateApprovalStatus,
+  expireOldApprovals
 } from './db.js';
 
 dotenv.config();
@@ -432,6 +436,12 @@ class WhiskieBot {
       console.log('Cash:', '$' + portfolio.cash.toLocaleString());
       console.log('');
 
+      // Fetch real-time market data
+      console.log('📊 Fetching real-time market data...');
+      const marketData = await this.fetchMarketData();
+      console.log('✅ Market data fetched');
+      console.log('');
+
       // Get previous analyses for trend detection
       console.log('📚 Fetching previous analyses for trend detection...');
       const previousAnalyses = await this.getPreviousAnalyses(3);
@@ -453,6 +463,13 @@ class WhiskieBot {
 - Positions: ${portfolio.positions.length}
 - Total Value: $${portfolio.totalValue.toLocaleString()}
 - Cash Available: $${portfolio.cash.toLocaleString()}
+
+**IMPORTANT: Deployment Strategy**
+- Only recommend trades when you have HIGH confidence (8/10 or higher)
+- Don't feel pressured to deploy capital immediately
+- It's OK to hold cash and wait for better opportunities
+- "Deploy X% now" is a suggestion IF you're confident, not a requirement
+- Quality over quantity - better to miss opportunities than make bad trades
 
 **Your Task:**
 1. **WATCHLIST:** Identify 5-10 stocks you're monitoring (with reasons)
@@ -499,7 +516,7 @@ ${historyContext}`;
 
       const analysis = await claude.deepAnalysis(
         portfolio,
-        {},
+        marketData,
         news,
         {},
         question
@@ -514,6 +531,17 @@ ${historyContext}`;
       console.log('Duration:', duration, 'seconds');
       console.log('Response length:', analysis.analysis.length, 'characters');
       console.log('Model used:', analysis.model);
+
+      // Display token usage
+      if (analysis.usage) {
+        const totalTokens = (analysis.usage.input_tokens || 0) + (analysis.usage.output_tokens || 0);
+        console.log('');
+        console.log('📊 TOKEN USAGE:');
+        console.log('   Input tokens:', (analysis.usage.input_tokens || 0).toLocaleString());
+        console.log('   Output tokens:', (analysis.usage.output_tokens || 0).toLocaleString());
+        console.log('   Total tokens:', totalTokens.toLocaleString());
+      }
+
       console.log('');
       console.log('📊 ANALYSIS PREVIEW (first 1500 chars):');
       console.log('─────────────────────────────────────');
@@ -531,20 +559,63 @@ ${historyContext}`;
 
       console.log('💾 Saving analysis to database...');
 
-      // Log the decision with timestamp
-      await logAIDecision({
+      // Log the decision with token usage
+      const analysisId = await logAIDecision({
         type: 'deep-analysis',
         symbol: null,
         recommendation: analysis.analysis,
         reasoning: `Deep portfolio analysis with 50k thinking tokens. Previous analyses: ${previousAnalyses.length}`,
         model: 'opus',
-        confidence: 'high'
+        confidence: 'high',
+        inputTokens: analysis.usage?.input_tokens,
+        outputTokens: analysis.usage?.output_tokens,
+        totalTokens: (analysis.usage?.input_tokens || 0) + (analysis.usage?.output_tokens || 0),
+        durationSeconds: parseInt(duration)
       });
 
       console.log('✅ Analysis saved to database');
       console.log('');
 
-      // TODO: Parse recommendations and send trade alerts
+      // Parse recommendations and create pending approvals
+      console.log('🔍 Parsing trade recommendations...');
+      const recommendations = this.parseRecommendations(analysis.analysis);
+
+      if (recommendations.length > 0) {
+        console.log(`✅ Found ${recommendations.length} trade recommendations`);
+
+        for (const rec of recommendations) {
+          // Save as pending approval
+          const approvalId = await savePendingApproval({
+            analysisId,
+            symbol: rec.symbol,
+            action: 'buy',
+            quantity: rec.quantity,
+            entryPrice: rec.entryPrice,
+            stopLoss: rec.stopLoss,
+            takeProfit: rec.takeProfit,
+            reasoning: rec.reasoning
+          });
+
+          console.log(`   📧 Sending email for ${rec.symbol}...`);
+
+          // Send email notification
+          await email.sendTradeRecommendation({
+            action: 'buy',
+            symbol: rec.symbol,
+            quantity: rec.quantity,
+            price: rec.entryPrice,
+            stopLoss: rec.stopLoss,
+            takeProfit: rec.takeProfit,
+            reasoning: rec.reasoning,
+            approvalId
+          });
+        }
+
+        console.log('✅ All recommendation emails sent');
+      } else {
+        console.log('ℹ️  No trade recommendations found (holding cash)');
+      }
+      console.log('');
 
     } catch (error) {
       console.error('');
@@ -578,6 +649,101 @@ ${historyContext}`;
       return result.rows;
     } catch (error) {
       console.error('Error fetching previous analyses:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch real-time market data
+   */
+  async fetchMarketData() {
+    try {
+      const symbols = ['SPY', 'QQQ', 'DIA', 'IWM', 'VIX', 'TLT', 'GLD', 'USO'];
+      const quotes = await tradier.getQuotes(symbols);
+
+      const marketData = {};
+      if (Array.isArray(quotes)) {
+        quotes.forEach(q => {
+          marketData[q.symbol] = {
+            price: q.last,
+            change: q.change,
+            change_percentage: q.change_percentage,
+            volume: q.volume
+          };
+        });
+      } else {
+        // Single quote
+        marketData[quotes.symbol] = {
+          price: quotes.last,
+          change: quotes.change,
+          change_percentage: quotes.change_percentage,
+          volume: quotes.volume
+        };
+      }
+
+      return marketData;
+    } catch (error) {
+      console.error('Error fetching market data:', error.message);
+      return {};
+    }
+  }
+
+  /**
+   * Parse trade recommendations from Opus analysis
+   */
+  parseRecommendations(analysisText) {
+    const recommendations = [];
+
+    try {
+      // Look for BUY recommendations with pattern matching
+      const buyPattern = /BUY\s+(\d+)\s+(?:shares?\s+)?([A-Z]{1,5})\s+at\s+\$?([\d.]+)/gi;
+      const stopLossPattern = /Stop-loss:\s*\$?([\d.]+)/gi;
+      const takeProfitPattern = /Take-profit:\s*\$?([\d.]+)/gi;
+
+      let match;
+      const matches = [];
+
+      // Find all BUY statements
+      while ((match = buyPattern.exec(analysisText)) !== null) {
+        matches.push({
+          fullMatch: match[0],
+          quantity: parseInt(match[1]),
+          symbol: match[2],
+          entryPrice: parseFloat(match[3]),
+          index: match.index
+        });
+      }
+
+      // For each BUY, find the nearest stop-loss and take-profit
+      for (const buyMatch of matches) {
+        const textAfterBuy = analysisText.substring(buyMatch.index, buyMatch.index + 1000);
+
+        // Find stop-loss
+        stopLossPattern.lastIndex = 0;
+        const slMatch = stopLossPattern.exec(textAfterBuy);
+        const stopLoss = slMatch ? parseFloat(slMatch[1]) : null;
+
+        // Find take-profit
+        takeProfitPattern.lastIndex = 0;
+        const tpMatch = takeProfitPattern.exec(textAfterBuy);
+        const takeProfit = tpMatch ? parseFloat(tpMatch[1]) : null;
+
+        // Extract reasoning (next 500 chars after the BUY statement)
+        const reasoning = textAfterBuy.substring(0, 500).trim();
+
+        recommendations.push({
+          symbol: buyMatch.symbol,
+          quantity: buyMatch.quantity,
+          entryPrice: buyMatch.entryPrice,
+          stopLoss,
+          takeProfit,
+          reasoning
+        });
+      }
+
+      return recommendations;
+    } catch (error) {
+      console.error('Error parsing recommendations:', error.message);
       return [];
     }
   }

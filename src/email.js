@@ -23,25 +23,33 @@ class EmailAlerts {
    * Send trade recommendation email
    */
   async sendTradeRecommendation(trade) {
-    const subject = `🤖 Whiskie Trade Recommendation: ${trade.action.toUpperCase()} ${trade.symbol}`;
+    const subject = `🤖 Whiskie: ${trade.action.toUpperCase()} ${trade.quantity} ${trade.symbol} at $${trade.price}`;
+
+    const dashboardUrl = process.env.DASHBOARD_URL || 'https://whiskie-production.up.railway.app';
 
     const html = `
-      <h2>Trade Recommendation</h2>
+      <h2>🤖 Trade Recommendation from Whiskie</h2>
+
+      <h3>Trade Details:</h3>
       <p><strong>Action:</strong> ${trade.action.toUpperCase()}</p>
       <p><strong>Symbol:</strong> ${trade.symbol}</p>
       <p><strong>Quantity:</strong> ${trade.quantity} shares</p>
-      <p><strong>Price:</strong> $${trade.price}</p>
+      <p><strong>Entry Price:</strong> $${trade.price}</p>
       <p><strong>Total Value:</strong> $${(trade.quantity * trade.price).toFixed(2)}</p>
-      <p><strong>Position Size:</strong> ${trade.positionSize}% of portfolio</p>
+
+      <h3>Risk Management:</h3>
+      <p><strong>Stop-Loss:</strong> ${trade.stopLoss ? '$' + trade.stopLoss : 'Not set'}</p>
+      <p><strong>Take-Profit:</strong> ${trade.takeProfit ? '$' + trade.takeProfit : 'Not set'}</p>
 
       <h3>AI Reasoning:</h3>
-      <pre>${trade.reasoning}</pre>
+      <pre style="background: #f5f5f5; padding: 10px; border-radius: 5px; white-space: pre-wrap;">${trade.reasoning}</pre>
 
-      <h3>Risk Assessment:</h3>
-      <p><strong>Stop-Loss:</strong> $${trade.stopLoss}</p>
-      <p><strong>Take-Profit Target:</strong> $${trade.takeProfit}</p>
+      <hr>
+      <p><strong>⚠️ Action Required:</strong></p>
+      <p>Visit the dashboard to approve or reject this trade:</p>
+      <p><a href="${dashboardUrl}" style="background: #667eea; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block;">Open Dashboard</a></p>
 
-      <p><em>Reply to this email with APPROVE or REJECT</em></p>
+      <p style="color: #666; font-size: 0.9em; margin-top: 20px;">This recommendation will expire in 10 minutes.</p>
     `;
 
     return await this.sendEmail(subject, html);
