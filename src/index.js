@@ -346,6 +346,8 @@ class WhiskieBot {
    */
   async runDeepAnalysis(portfolio, news) {
     try {
+      console.log('🧠 Calling Claude Opus for deep analysis...');
+
       const question = `Analyze my portfolio and provide specific trade recommendations.
 
 Current portfolio has ${portfolio.positions.length} positions worth $${portfolio.totalValue.toLocaleString()}.
@@ -366,8 +368,10 @@ Provide specific, actionable recommendations.`;
         question
       );
 
-      console.log('\n🧠 OPUS ANALYSIS:');
-      console.log(analysis.analysis.substring(0, 500) + '...\n');
+      console.log('\n🧠 OPUS ANALYSIS COMPLETE');
+      console.log('Analysis length:', analysis.analysis.length, 'characters');
+      console.log('First 500 chars:', analysis.analysis.substring(0, 500));
+      console.log('');
 
       // Log the decision
       await logAIDecision({
@@ -379,10 +383,13 @@ Provide specific, actionable recommendations.`;
         confidence: 'high'
       });
 
+      console.log('✅ Analysis logged to database');
+
       // TODO: Parse recommendations and send trade alerts
 
     } catch (error) {
-      console.error('Error in deep analysis:', error);
+      console.error('❌ Error in deep analysis:', error.message);
+      console.error('Stack:', error.stack);
     }
   }
 
