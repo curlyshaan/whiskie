@@ -451,10 +451,25 @@ class WhiskieBot {
 
 **Your Task:**
 1. **WATCHLIST:** Identify 5-10 stocks you're monitoring (with reasons)
-2. **BUY RECOMMENDATIONS:** Which stocks to buy NOW? (symbol, quantity, reasoning)
+2. **BUY RECOMMENDATIONS:** Which stocks to buy NOW? For EACH recommendation provide:
+   - Symbol and company name
+   - Quantity (exact number of shares)
+   - Entry price (current market price)
+   - Position size (% of portfolio)
+   - **STOP-LOSS:** Exact price level and % below entry (explain why this level)
+   - **TAKE-PROFIT:** Target price and expected gain % (explain reasoning)
+   - Sector and stock type (mega-cap/large-cap/mid-cap)
+   - Full reasoning (fundamentals + technicals + macro)
 3. **SELL/TRIM:** Any current positions to sell or trim?
 4. **SECTOR ANALYSIS:** Which sectors look strong/weak based on macro environment?
 5. **TREND DETECTION:** Any patterns from previous analyses?
+
+**Stop-Loss Guidelines (you decide final levels):**
+- Index ETFs: -10 to -12%
+- Blue-chip/Mega-cap: -10 to -12%
+- Large-cap growth: -13 to -15%
+- Mid-cap: -15 to -18%
+- Adjust based on volatility and conviction
 
 **Investment Rules:**
 - Regular stocks only (no crypto, no penny stocks)
@@ -463,7 +478,9 @@ class WhiskieBot {
 - Diversify across sectors
 - YOU decide which sectors to focus/avoid based on current macro environment
 
-**Be SPECIFIC:** Don't say "consider tech stocks" - say "BUY 10 shares of AAPL at $255"
+**Be SPECIFIC:**
+✅ "BUY 10 shares AAPL at $255. Stop-loss: $230 (-9.8%). Take-profit: $295 (+15.7%). Reasoning: Strong iPhone sales..."
+❌ "Consider buying tech stocks"
 
 ${historyContext}`;
 
