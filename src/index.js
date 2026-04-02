@@ -346,7 +346,14 @@ class WhiskieBot {
    */
   async runDeepAnalysis(portfolio, news) {
     try {
-      console.log('🧠 Calling Claude Opus for deep analysis...');
+      console.log('');
+      console.log('═══════════════════════════════════════');
+      console.log('🧠 STARTING DEEP ANALYSIS WITH OPUS');
+      console.log('═══════════════════════════════════════');
+      console.log('Portfolio: $' + portfolio.totalValue.toLocaleString());
+      console.log('Positions:', portfolio.positions.length);
+      console.log('Cash:', '$' + portfolio.cash.toLocaleString());
+      console.log('');
 
       const question = `Analyze my portfolio and provide specific trade recommendations.
 
@@ -360,6 +367,13 @@ Should I:
 
 Provide specific, actionable recommendations.`;
 
+      console.log('📝 Sending question to Opus...');
+      console.log('⏳ Extended thinking enabled (35,000 tokens)');
+      console.log('⏳ This will take 2-5 minutes...');
+      console.log('');
+
+      const startTime = Date.now();
+
       const analysis = await claude.deepAnalysis(
         portfolio,
         {},
@@ -368,28 +382,60 @@ Provide specific, actionable recommendations.`;
         question
       );
 
-      console.log('\n🧠 OPUS ANALYSIS COMPLETE');
-      console.log('Analysis length:', analysis.analysis.length, 'characters');
-      console.log('First 500 chars:', analysis.analysis.substring(0, 500));
+      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
       console.log('');
+      console.log('═══════════════════════════════════════');
+      console.log('✅ OPUS ANALYSIS COMPLETE');
+      console.log('═══════════════════════════════════════');
+      console.log('Duration:', duration, 'seconds');
+      console.log('Response length:', analysis.analysis.length, 'characters');
+      console.log('Model used:', analysis.model);
+      console.log('');
+      console.log('📊 ANALYSIS PREVIEW (first 1000 chars):');
+      console.log('─────────────────────────────────────');
+      console.log(analysis.analysis.substring(0, 1000));
+      console.log('─────────────────────────────────────');
+      console.log('');
+
+      if (analysis.thinking) {
+        console.log('🧠 THINKING PROCESS (first 500 chars):');
+        console.log('─────────────────────────────────────');
+        console.log(analysis.thinking.substring(0, 500));
+        console.log('─────────────────────────────────────');
+        console.log('');
+      }
+
+      console.log('💾 Saving analysis to database...');
 
       // Log the decision
       await logAIDecision({
         type: 'deep-analysis',
         symbol: null,
         recommendation: analysis.analysis,
-        reasoning: 'Deep portfolio analysis',
+        reasoning: 'Deep portfolio analysis with extended thinking',
         model: 'opus',
         confidence: 'high'
       });
 
-      console.log('✅ Analysis logged to database');
+      console.log('✅ Analysis saved to database');
+      console.log('');
 
       // TODO: Parse recommendations and send trade alerts
 
     } catch (error) {
-      console.error('❌ Error in deep analysis:', error.message);
-      console.error('Stack:', error.stack);
+      console.error('');
+      console.error('═══════════════════════════════════════');
+      console.error('❌ ERROR IN DEEP ANALYSIS');
+      console.error('═══════════════════════════════════════');
+      console.error('Error message:', error.message);
+      console.error('Error type:', error.constructor.name);
+      if (error.response) {
+        console.error('API response:', error.response.data);
+      }
+      console.error('Stack trace:', error.stack);
+      console.error('═══════════════════════════════════════');
+      console.error('');
     }
   }
 

@@ -45,18 +45,23 @@ class ClaudeAPI {
         payload.system = systemPrompt;
       }
 
-      // Enable extended thinking for Opus
+      // Enable extended thinking for Opus with large budget
       if (enableThinking && model === MODELS.OPUS) {
+        console.log('🧠 Enabling extended thinking with 35,000 token budget...');
         payload.thinking = {
           type: 'enabled',
-          budget_tokens: 10000
+          budget_tokens: 35000
         };
+        console.log('⏳ This may take 2-5 minutes for deep analysis...');
       }
 
+      console.log(`📡 Calling Claude API (model: ${model})...`);
       const response = await this.client.post('/v1/messages', payload);
+      console.log('✅ Claude API response received');
+
       return response.data;
     } catch (error) {
-      console.error('Claude API Error:', error.response?.data || error.message);
+      console.error('❌ Claude API Error:', error.response?.data || error.message);
       throw error;
     }
   }
