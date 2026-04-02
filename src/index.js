@@ -61,9 +61,23 @@ class WhiskieBot {
       console.log('📊 Running initial portfolio analysis...\n');
       await this.runDailyAnalysis();
 
-      // Schedule daily analysis at 9:30 AM ET (market open)
-      cron.schedule('30 9 * * 1-5', async () => {
-        console.log('\n⏰ Scheduled daily analysis triggered');
+      // Schedule daily analysis at 10:00 AM, 12:30 PM, and 3:30 PM ET
+      cron.schedule('0 10 * * 1-5', async () => {
+        console.log('\n⏰ 10:00 AM Analysis - Market has settled after open');
+        await this.runDailyAnalysis();
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      cron.schedule('30 12 * * 1-5', async () => {
+        console.log('\n⏰ 12:30 PM Analysis - Mid-day check');
+        await this.runDailyAnalysis();
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      cron.schedule('30 15 * * 1-5', async () => {
+        console.log('\n⏰ 3:30 PM Analysis - Before market close');
         await this.runDailyAnalysis();
       }, {
         timezone: 'America/New_York'
@@ -82,8 +96,11 @@ class WhiskieBot {
       });
 
       console.log('\n✅ Whiskie Bot is running');
-      console.log('📅 Daily analysis: 9:30 AM ET (Mon-Fri)');
-      console.log('📊 Daily summary: 4:30 PM ET (Mon-Fri)');
+      console.log('📅 Analysis schedule (Mon-Fri):');
+      console.log('   • 10:00 AM ET - Morning analysis');
+      console.log('   • 12:30 PM ET - Mid-day check');
+      console.log('   • 3:30 PM ET - Before close');
+      console.log('📊 Daily summary: 4:30 PM ET');
       console.log('💤 Auto-shutdown: 4:35 PM ET (saves costs)');
       console.log('💡 Press Ctrl+C to stop\n');
 
@@ -410,21 +427,50 @@ class WhiskieBot {
       console.log('Cash:', '$' + portfolio.cash.toLocaleString());
       console.log('');
 
-      const question = `Analyze my portfolio and provide specific trade recommendations.
+      // Get previous analyses for trend detection
+      console.log('📚 Fetching previous analyses for trend detection...');
+      const previousAnalyses = await this.getPreviousAnalyses(3);
 
-Current portfolio has ${portfolio.positions.length} positions worth $${portfolio.totalValue.toLocaleString()}.
-Cash available: $${portfolio.cash.toLocaleString()}.
+      let historyContext = '';
+      if (previousAnalyses.length > 0) {
+        console.log(`✅ Found ${previousAnalyses.length} previous analyses`);
+        historyContext = '\n\n**PREVIOUS ANALYSES (for trend detection):**\n';
+        previousAnalyses.forEach((analysis, i) => {
+          historyContext += `\n${i + 1}. ${analysis.created_at}: ${analysis.recommendation.substring(0, 300)}...\n`;
+        });
+      } else {
+        console.log('ℹ️  No previous analyses found (first run)');
+      }
 
-Should I:
-1. Buy any new positions? (which stocks and why)
-2. Sell or trim any current positions?
-3. Rebalance sectors?
+      const question = `You are managing a $100k portfolio. Analyze and provide SPECIFIC trade recommendations.
 
-Provide specific, actionable recommendations.`;
+**Current Portfolio:**
+- Positions: ${portfolio.positions.length}
+- Total Value: $${portfolio.totalValue.toLocaleString()}
+- Cash Available: $${portfolio.cash.toLocaleString()}
+
+**Your Task:**
+1. **WATCHLIST:** Identify 5-10 stocks you're monitoring (with reasons)
+2. **BUY RECOMMENDATIONS:** Which stocks to buy NOW? (symbol, quantity, reasoning)
+3. **SELL/TRIM:** Any current positions to sell or trim?
+4. **SECTOR ANALYSIS:** Which sectors look strong/weak based on macro environment?
+5. **TREND DETECTION:** Any patterns from previous analyses?
+
+**Investment Rules:**
+- Regular stocks only (no crypto, no penny stocks)
+- Max 15% per position
+- 10-12 positions max
+- Diversify across sectors
+- YOU decide which sectors to focus/avoid based on current macro environment
+
+**Be SPECIFIC:** Don't say "consider tech stocks" - say "BUY 10 shares of AAPL at $255"
+
+${historyContext}`;
 
       console.log('📝 Sending question to Opus...');
-      console.log('⏳ Extended thinking enabled (35,000 tokens)');
-      console.log('⏳ This will take 2-5 minutes...');
+      console.log('⏳ Extended thinking enabled (50,000 tokens MAX)');
+      console.log('⏳ Temperature: 0.1 (focused, consistent)');
+      console.log('⏳ This will take 3-7 minutes...');
       console.log('');
 
       const startTime = Date.now();
@@ -447,28 +493,28 @@ Provide specific, actionable recommendations.`;
       console.log('Response length:', analysis.analysis.length, 'characters');
       console.log('Model used:', analysis.model);
       console.log('');
-      console.log('📊 ANALYSIS PREVIEW (first 1000 chars):');
+      console.log('📊 ANALYSIS PREVIEW (first 1500 chars):');
       console.log('─────────────────────────────────────');
-      console.log(analysis.analysis.substring(0, 1000));
+      console.log(analysis.analysis.substring(0, 1500));
       console.log('─────────────────────────────────────');
       console.log('');
 
       if (analysis.thinking) {
-        console.log('🧠 THINKING PROCESS (first 500 chars):');
+        console.log('🧠 THINKING PROCESS (first 800 chars):');
         console.log('─────────────────────────────────────');
-        console.log(analysis.thinking.substring(0, 500));
+        console.log(analysis.thinking.substring(0, 800));
         console.log('─────────────────────────────────────');
         console.log('');
       }
 
       console.log('💾 Saving analysis to database...');
 
-      // Log the decision
+      // Log the decision with timestamp
       await logAIDecision({
         type: 'deep-analysis',
         symbol: null,
         recommendation: analysis.analysis,
-        reasoning: 'Deep portfolio analysis with extended thinking',
+        reasoning: `Deep portfolio analysis with 50k thinking tokens. Previous analyses: ${previousAnalyses.length}`,
         model: 'opus',
         confidence: 'high'
       });
@@ -491,6 +537,26 @@ Provide specific, actionable recommendations.`;
       console.error('Stack trace:', error.stack);
       console.error('═══════════════════════════════════════');
       console.error('');
+    }
+  }
+
+  /**
+   * Get previous analyses for trend detection
+   */
+  async getPreviousAnalyses(limit = 3) {
+    try {
+      const { default: pool } = await import('./db.js');
+      const result = await pool.query(
+        `SELECT created_at, recommendation FROM ai_decisions
+         WHERE decision_type = 'deep-analysis'
+         ORDER BY created_at DESC
+         LIMIT $1`,
+        [limit]
+      );
+      return result.rows;
+    } catch (error) {
+      console.error('Error fetching previous analyses:', error.message);
+      return [];
     }
   }
 

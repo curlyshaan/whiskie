@@ -38,6 +38,7 @@ class ClaudeAPI {
       const payload = {
         model,
         max_tokens: 16000,
+        temperature: 0.1, // Consistent, focused decisions
         messages
       };
 
@@ -45,17 +46,17 @@ class ClaudeAPI {
         payload.system = systemPrompt;
       }
 
-      // Enable extended thinking for Opus with large budget
+      // Enable extended thinking for Opus with MAX budget
       if (enableThinking && model === MODELS.OPUS) {
-        console.log('🧠 Enabling extended thinking with 35,000 token budget...');
+        console.log('🧠 Enabling extended thinking with 50,000 token budget (MAX)...');
         payload.thinking = {
           type: 'enabled',
-          budget_tokens: 35000
+          budget_tokens: 50000
         };
-        console.log('⏳ This may take 2-5 minutes for deep analysis...');
+        console.log('⏳ This may take 3-7 minutes for DEEP analysis...');
       }
 
-      console.log(`📡 Calling Claude API (model: ${model})...`);
+      console.log(`📡 Calling Claude API (model: ${model}, temp: 0.1)...`);
       const response = await this.client.post('/v1/messages', payload);
       console.log('✅ Claude API response received');
 
