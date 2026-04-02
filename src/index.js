@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import dotenv from 'dotenv';
+import express from 'express';
 import tradier from './tradier.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
@@ -17,6 +18,11 @@ import {
 } from './db.js';
 
 dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
 
 /**
  * Whiskie - AI Trading Bot
@@ -82,11 +88,60 @@ class WhiskieBot {
       console.log('💡 Press Ctrl+C to stop\n');
 
       this.isRunning = true;
+
+      // Start API server for on-demand triggers
+      this.startAPIServer();
     } catch (error) {
       console.error('❌ Error starting bot:', error);
       await email.sendErrorAlert(error, 'Bot startup');
       throw error;
     }
+  }
+
+  /**
+   * Start API server for on-demand analysis
+   */
+  startAPIServer() {
+    app.get('/health', (req, res) => {
+      res.json({
+        status: 'ok',
+        bot: 'running',
+        mode: process.env.NODE_ENV || 'development'
+      });
+    });
+
+    app.post('/analyze', async (req, res) => {
+      try {
+        console.log('📡 Manual analysis triggered via API');
+
+        // Run analysis in background
+        this.runDailyAnalysis().catch(console.error);
+
+        res.json({
+          success: true,
+          message: 'Analysis started. Check logs for progress.'
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.get('/status', (req, res) => {
+      res.json({
+        running: this.isRunning,
+        mode: process.env.NODE_ENV,
+        uptime: process.uptime()
+      });
+    });
+
+    app.listen(PORT, () => {
+      console.log(`🌐 API server listening on port ${PORT}`);
+      console.log(`📡 Trigger analysis: POST https://your-app.railway.app/analyze`);
+      console.log('');
+    });
   }
 
   /**
