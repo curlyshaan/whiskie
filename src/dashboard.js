@@ -1,6 +1,5 @@
 import express from 'express';
 import db from './db.js';
-import { getPendingApprovals, updateApprovalStatus, expireOldApprovals } from './db.js';
 
 const router = express.Router();
 
@@ -9,12 +8,6 @@ const router = express.Router();
  */
 router.get('/', async (req, res) => {
   try {
-    // Expire old approvals first
-    await expireOldApprovals();
-
-    // Get pending approvals
-    const pendingApprovals = await getPendingApprovals();
-
     // Get today's analyses
     const today = new Date().toISOString().split('T')[0];
     const analyses = await db.query(
@@ -43,7 +36,7 @@ router.get('/', async (req, res) => {
        LIMIT 1`
     );
 
-    const html = generateDashboardHTML(analyses.rows, portfolio.rows, trades.rows, snapshot.rows[0], pendingApprovals);
+    const html = generateDashboardHTML(analyses.rows, portfolio.rows, trades.rows, snapshot.rows[0]);
     res.send(html);
   } catch (error) {
     console.error('Dashboard error:', error);
@@ -85,38 +78,7 @@ router.get('/api/today', async (req, res) => {
   }
 });
 
-/**
- * API endpoint - Approve trade
- */
-router.post('/api/approve/:id', async (req, res) => {
-  try {
-    const approvalId = req.params.id;
-    await updateApprovalStatus(approvalId, 'approved');
-
-    // TODO: Execute the trade here
-    // For now, just mark as approved
-
-    res.json({ success: true, message: 'Trade approved. Execution pending.' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-/**
- * API endpoint - Reject trade
- */
-router.post('/api/reject/:id', async (req, res) => {
-  try {
-    const approvalId = req.params.id;
-    await updateApprovalStatus(approvalId, 'rejected');
-
-    res.json({ success: true, message: 'Trade rejected' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-function generateDashboardHTML(analyses, positions, trades, snapshot, pendingApprovals) {
+function generateDashboardHTML(analyses, positions, trades, snapshot) {
   const totalValue = snapshot?.total_value || 100000;
   const cash = snapshot?.cash || snapshot?.cash_balance || 100000;
   const invested = totalValue - cash;
@@ -342,6 +304,25 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, pendingApp
     .refresh-btn:hover {
       opacity: 0.9;
     }
+    .analyze-btn {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+      margin-left: 10px;
+    }
+    .analyze-btn:hover {
+      opacity: 0.9;
+    }
+    .analyze-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
     .timestamp {
       color: #666;
       font-size: 0.85rem;
@@ -354,50 +335,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, pendingApp
     <p class="subtitle">AI-Powered Portfolio Manager • Paper Trading Mode</p>
 
     <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
-
-    ${pendingApprovals.length > 0 ? `
-    <div class="section">
-      <div class="section-title">⏳ Pending Approvals (${pendingApprovals.length})</div>
-      ${pendingApprovals.map(approval => {
-        const expiresIn = Math.round((new Date(approval.expires_at) - new Date()) / 1000 / 60);
-        return `
-          <div class="approval-card">
-            <div class="approval-header">
-              <div class="approval-title">
-                ${approval.action.toUpperCase()} ${approval.quantity} ${approval.symbol} @ $${approval.entry_price}
-              </div>
-              <div class="approval-expires">Expires in ${expiresIn} min</div>
-            </div>
-            <div class="approval-details">
-              <div class="approval-detail">
-                <strong>Total Value</strong>
-                $${(approval.quantity * approval.entry_price).toFixed(2)}
-              </div>
-              <div class="approval-detail">
-                <strong>Stop-Loss</strong>
-                ${approval.stop_loss ? '$' + approval.stop_loss : 'Not set'}
-              </div>
-              <div class="approval-detail">
-                <strong>Take-Profit</strong>
-                ${approval.take_profit ? '$' + approval.take_profit : 'Not set'}
-              </div>
-            </div>
-            <div class="approval-reasoning">
-              ${approval.reasoning || 'No reasoning provided'}
-            </div>
-            <div class="approval-actions">
-              <button class="btn btn-approve" onclick="approveTradeconfirm('Are you sure you want to APPROVE this trade?') && approveTrade(${approval.id})">
-                ✅ Approve Trade
-              </button>
-              <button class="btn btn-reject" onclick="confirm('Are you sure you want to REJECT this trade?') && rejectTrade(${approval.id})">
-                ❌ Reject
-              </button>
-            </div>
-          </div>
-        `;
-      }).join('')}
-    </div>
-    ` : ''}
+    <button class="analyze-btn" onclick="triggerAnalysis()" id="analyzeBtn">🤖 Analyze Now</button>
 
     <div class="stats">
       <div class="stat-card">
@@ -540,25 +478,20 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, pendingApp
   </div>
 
   <script>
-    async function approveTrade(id) {
-      try {
-        const response = await fetch(\`/api/approve/\${id}\`, { method: 'POST' });
-        const data = await response.json();
-        alert(data.message);
-        location.reload();
-      } catch (error) {
-        alert('Error approving trade: ' + error.message);
-      }
-    }
+    async function triggerAnalysis() {
+      const btn = document.getElementById('analyzeBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Analyzing... (3-7 min)';
 
-    async function rejectTrade(id) {
       try {
-        const response = await fetch(\`/api/reject/\${id}\`, { method: 'POST' });
+        const response = await fetch('/analyze', { method: 'POST' });
         const data = await response.json();
-        alert(data.message);
-        location.reload();
+        alert(data.message + '\\n\\nCheck back in 3-7 minutes for results.');
+        setTimeout(() => location.reload(), 5000);
       } catch (error) {
-        alert('Error rejecting trade: ' + error.message);
+        alert('Error triggering analysis: ' + error.message);
+        btn.disabled = false;
+        btn.textContent = '🤖 Analyze Now';
       }
     }
 

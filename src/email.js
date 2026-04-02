@@ -155,18 +155,32 @@ class EmailAlerts {
    * Send trade execution confirmation
    */
   async sendTradeConfirmation(trade) {
-    const subject = `✅ Trade Executed: ${trade.side.toUpperCase()} ${trade.quantity} ${trade.symbol}`;
+    const subject = `✅ Trade Executed: ${trade.action.toUpperCase()} ${trade.quantity} ${trade.symbol} @ $${trade.price}`;
 
     const html = `
-      <h2>Trade Confirmation</h2>
-      <p><strong>Order ID:</strong> ${trade.orderId}</p>
+      <h2>✅ Trade Executed Successfully</h2>
+
+      <h3>Trade Details:</h3>
+      <p><strong>Action:</strong> ${trade.action.toUpperCase()}</p>
       <p><strong>Symbol:</strong> ${trade.symbol}</p>
-      <p><strong>Action:</strong> ${trade.side.toUpperCase()}</p>
       <p><strong>Quantity:</strong> ${trade.quantity} shares</p>
       <p><strong>Price:</strong> $${trade.price}</p>
-      <p><strong>Total:</strong> $${(trade.quantity * trade.price).toFixed(2)}</p>
-      <p><strong>Status:</strong> ${trade.status}</p>
-      <p><strong>Time:</strong> ${new Date(trade.timestamp).toLocaleString()}</p>
+      <p><strong>Total Value:</strong> $${(trade.quantity * trade.price).toFixed(2)}</p>
+      <p><strong>Time:</strong> ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} ET</p>
+
+      <h3>Risk Management:</h3>
+      <p><strong>Stop-Loss:</strong> ${trade.stopLoss ? '$' + trade.stopLoss : 'Not set'}</p>
+      <p><strong>Take-Profit:</strong> ${trade.takeProfit ? '$' + trade.takeProfit : 'Not set'}</p>
+
+      <h3>AI Reasoning:</h3>
+      <pre style="background: #f5f5f5; padding: 10px; border-radius: 5px; white-space: pre-wrap;">${trade.reasoning || 'No reasoning provided'}</pre>
+
+      <hr>
+      <p style="color: #666; font-size: 0.9em;">This trade was executed automatically by Whiskie AI.</p>
+    `;
+
+    return await this.sendEmail(subject, html);
+  }
 
       <p><em>Trade logged to database.</em></p>
     `;

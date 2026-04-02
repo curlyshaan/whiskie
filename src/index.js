@@ -15,11 +15,7 @@ import {
   logAlert,
   savePortfolioSnapshot,
   upsertPosition,
-  deletePosition,
-  savePendingApproval,
-  getPendingApprovals,
-  updateApprovalStatus,
-  expireOldApprovals
+  deletePosition
 } from './db.js';
 
 dotenv.config();
@@ -464,12 +460,12 @@ class WhiskieBot {
 - Total Value: $${portfolio.totalValue.toLocaleString()}
 - Cash Available: $${portfolio.cash.toLocaleString()}
 
-**IMPORTANT: Deployment Strategy**
-- Only recommend trades when you have HIGH confidence (8/10 or higher)
-- Don't feel pressured to deploy capital immediately
-- It's OK to hold cash and wait for better opportunities
-- "Deploy X% now" is a suggestion IF you're confident, not a requirement
-- Quality over quantity - better to miss opportunities than make bad trades
+**Your Decision-Making Authority:**
+- You have FULL autonomy to decide when to trade and when to hold cash
+- Learn from your previous analyses and adapt your strategy
+- Deploy capital when YOU believe the risk/reward is favorable
+- It's perfectly fine to hold 100% cash if you don't see good opportunities
+- Quality over quantity - only trade when you're confident in your analysis
 
 **Your Task:**
 1. **WATCHLIST:** Identify 5-10 stocks you're monitoring (with reasons)
@@ -576,7 +572,7 @@ ${historyContext}`;
       console.log('✅ Analysis saved to database');
       console.log('');
 
-      // Parse recommendations and create pending approvals
+      // Parse recommendations and execute trades automatically
       console.log('🔍 Parsing trade recommendations...');
       const recommendations = this.parseRecommendations(analysis.analysis);
 
@@ -584,34 +580,33 @@ ${historyContext}`;
         console.log(`✅ Found ${recommendations.length} trade recommendations`);
 
         for (const rec of recommendations) {
-          // Save as pending approval
-          const approvalId = await savePendingApproval({
-            analysisId,
-            symbol: rec.symbol,
-            action: 'buy',
-            quantity: rec.quantity,
-            entryPrice: rec.entryPrice,
-            stopLoss: rec.stopLoss,
-            takeProfit: rec.takeProfit,
-            reasoning: rec.reasoning
-          });
+          console.log(`   💰 Executing trade: BUY ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
 
-          console.log(`   📧 Sending email for ${rec.symbol}...`);
+          try {
+            // Execute trade immediately
+            await this.executeTrade(rec.symbol, 'buy', rec.quantity);
 
-          // Send email notification
-          await email.sendTradeRecommendation({
-            action: 'buy',
-            symbol: rec.symbol,
-            quantity: rec.quantity,
-            price: rec.entryPrice,
-            stopLoss: rec.stopLoss,
-            takeProfit: rec.takeProfit,
-            reasoning: rec.reasoning,
-            approvalId
-          });
+            console.log(`   ✅ Trade executed successfully`);
+
+            // Send email notification AFTER execution
+            await email.sendTradeConfirmation({
+              action: 'buy',
+              symbol: rec.symbol,
+              quantity: rec.quantity,
+              price: rec.entryPrice,
+              stopLoss: rec.stopLoss,
+              takeProfit: rec.takeProfit,
+              reasoning: rec.reasoning
+            });
+
+            console.log(`   📧 Confirmation email sent`);
+          } catch (error) {
+            console.error(`   ❌ Failed to execute trade for ${rec.symbol}:`, error.message);
+            await email.sendErrorAlert(error, `Trade execution: ${rec.symbol}`);
+          }
         }
 
-        console.log('✅ All recommendation emails sent');
+        console.log('✅ All trades processed');
       } else {
         console.log('ℹ️  No trade recommendations found (holding cash)');
       }
