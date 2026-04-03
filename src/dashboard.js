@@ -471,17 +471,21 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
             </tr>
           </thead>
           <tbody>
-            ${trades.map(t => `
+            ${trades.map(t => {
+              const price = parseFloat(t.price) || 0;
+              const quantity = parseInt(t.quantity) || 0;
+              return `
               <tr>
                 <td>${new Date(t.executed_at).toLocaleDateString()}</td>
                 <td><span class="badge ${t.action}">${t.action.toUpperCase()}</span></td>
                 <td><strong>${t.symbol}</strong></td>
-                <td>${t.quantity}</td>
-                <td>$${t.price.toFixed(2)}</td>
-                <td>$${(t.quantity * t.price).toFixed(2)}</td>
+                <td>${quantity}</td>
+                <td>$${price.toFixed(2)}</td>
+                <td>$${(quantity * price).toFixed(2)}</td>
                 <td>${t.status}</td>
               </tr>
-            `).join('')}
+            `;
+            }).join('')}
           </tbody>
         </table>`
       }
