@@ -6,16 +6,34 @@ dotenv.config();
 /**
  * Email Alert System
  * Sends notifications for trades, alerts, and reports
+ * Supports both Gmail and SendGrid
  */
 class EmailAlerts {
   constructor() {
-    this.transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-      }
-    });
+    // Use SendGrid if API key is provided, otherwise fall back to Gmail
+    if (process.env.SENDGRID_API_KEY) {
+      this.transporter = nodemailer.createTransport({
+        host: 'smtp.sendgrid.net',
+        port: 587,
+        secure: false,
+        auth: {
+          user: 'apikey',
+          pass: process.env.SENDGRID_API_KEY
+        }
+      });
+      console.log('📧 Email configured with SendGrid');
+    } else {
+      this.transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS
+        }
+      });
+      console.log('📧 Email configured with Gmail');
+    }
+
+    this.fromEmail = process.env.EMAIL_FROM || process.env.EMAIL_USER;
     this.alertEmail = process.env.ALERT_EMAIL;
   }
 
@@ -207,7 +225,7 @@ class EmailAlerts {
   async sendEmail(subject, html) {
     try {
       const info = await this.transporter.sendMail({
-        from: `"Whiskie Bot" <${process.env.EMAIL_USER}>`,
+        from: `"Whiskie Bot" <${this.fromEmail}>`,
         to: this.alertEmail,
         subject,
         html
