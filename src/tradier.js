@@ -168,12 +168,64 @@ class TradierAPI {
           quantity,
           type: 'limit',
           price,
-          duration: 'day'
+          duration: 'gtc' // Good-til-canceled
         }
       });
       return response.data.order;
     } catch (error) {
       console.error(`Error placing limit order for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Place a stop-loss order
+   */
+  async placeStopOrder(symbol, side, quantity, stopPrice, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
+        params: {
+          class: 'equity',
+          symbol,
+          side,
+          quantity,
+          type: 'stop',
+          stop: stopPrice,
+          duration: 'gtc' // Good-til-canceled
+        }
+      });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error placing stop order for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Place OCO order (One-Cancels-Other) - Stop-loss + Take-profit
+   * When one executes, the other is automatically canceled
+   */
+  async placeOCOOrder(symbol, quantity, stopPrice, limitPrice, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
+        params: {
+          class: 'oco',
+          symbol,
+          side: 'sell',
+          quantity,
+          type: 'market',
+          duration: 'gtc',
+          // Leg 1: Stop-loss
+          'order[0][type]': 'stop',
+          'order[0][stop]': stopPrice,
+          // Leg 2: Take-profit (limit)
+          'order[1][type]': 'limit',
+          'order[1][price]': limitPrice
+        }
+      });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error placing OCO order for ${symbol}:`, error.message);
       throw error;
     }
   }

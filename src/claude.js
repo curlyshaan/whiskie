@@ -204,9 +204,19 @@ Analyze the portfolio and provide:
   }
 
   /**
-   * Build deep analysis prompt
+   * Build deep analysis prompt with REAL-TIME prices emphasized
    */
   buildDeepAnalysisPrompt(portfolio, market, news, economic, question) {
+    // Format market data to emphasize current prices
+    let marketPricesText = '\n**🔴 REAL-TIME STOCK PRICES (USE THESE - NOT YOUR TRAINING DATA):**\n';
+    if (market && Object.keys(market).length > 0) {
+      Object.entries(market).forEach(([symbol, data]) => {
+        marketPricesText += `- ${symbol}: $${data.price} (${data.change_percentage >= 0 ? '+' : ''}${data.change_percentage}%)\n`;
+      });
+    } else {
+      marketPricesText += '(No market data available)\n';
+    }
+
     return `You are Whiskie, an AI portfolio manager. Use extended thinking to deeply analyze this question.
 
 **Question:**
@@ -215,8 +225,12 @@ ${question}
 **Current Portfolio:**
 ${JSON.stringify(portfolio, null, 2)}
 
-**Market Context:**
-${JSON.stringify(market, null, 2)}
+${marketPricesText}
+
+**⚠️ CRITICAL INSTRUCTION:**
+The prices above are LIVE, REAL-TIME quotes from Tradier API as of RIGHT NOW.
+DO NOT use prices from your training data. ONLY use the prices listed above.
+When recommending trades, use THESE EXACT PRICES.
 
 **Recent News:**
 ${news}
@@ -231,7 +245,7 @@ ${JSON.stringify(economic, null, 2)}
 - Alternative approaches
 - What could go wrong
 
-**Provide a thorough, well-reasoned answer with specific recommendations.**`;
+**Provide a thorough, well-reasoned answer with specific recommendations using CURRENT PRICES.**`;
   }
 
   /**

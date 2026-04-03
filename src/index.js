@@ -11,6 +11,11 @@ import analysisEngine from './analysis.js';
 import * as db from './db.js';
 import { SUB_INDUSTRIES, getAllSubIndustries } from './sub-industry-data.js';
 import { updateAllEarnings } from './earnings.js';
+import { runTrimCheck } from './trimming.js';
+import { runTaxOptimizationCheck } from './tax-optimizer.js';
+import { runTrailingStopCheck, updateTrailingStops } from './trailing-stops.js';
+import { runEarningsDayAnalysis } from './earnings-analysis.js';
+import { runWeeklyReview } from './weekly-review.js';
 
 dotenv.config();
 
@@ -99,13 +104,31 @@ class WhiskieBot {
 
       // Schedule weekly earnings update - Sunday 9:00 PM ET
       cron.schedule('0 21 * * 0', async () => {
-        console.log('\n⏰ Sunday 9:00 PM - Weekly earnings update');
+        console.log('\n⏰ Sunday 9:00 PM - Weekly earnings update & portfolio review');
         try {
+          // Update earnings calendar
           await updateAllEarnings();
           console.log('✅ Earnings calendar updated successfully');
+
+          // Run weekly portfolio review with Opus
+          await runWeeklyReview();
+          console.log('✅ Weekly review complete');
         } catch (error) {
-          console.error('❌ Error updating earnings:', error);
-          await email.sendErrorAlert(error, 'Weekly earnings update failed');
+          console.error('❌ Error in weekly tasks:', error);
+          await email.sendErrorAlert(error, 'Weekly tasks failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule daily days_held update - 6:00 AM ET
+      cron.schedule('0 6 * * 1-5', async () => {
+        console.log('\n⏰ 6:00 AM - Updating days held for tax tracking');
+        try {
+          await db.updateDaysHeld();
+          console.log('✅ Days held updated successfully');
+        } catch (error) {
+          console.error('❌ Error updating days held:', error);
         }
       }, {
         timezone: 'America/New_York'
@@ -113,11 +136,12 @@ class WhiskieBot {
 
       console.log('\n✅ Whiskie Bot is running');
       console.log('📅 Analysis schedule (Mon-Fri):');
-      console.log('   • 10:00 AM ET - Morning analysis');
-      console.log('   • 12:30 PM ET - Mid-day check');
-      console.log('   • 3:30 PM ET - Before close');
+      console.log('   • 6:00 AM ET - Update days held (tax tracking)');
+      console.log('   • 10:00 AM ET - Morning analysis + trim/tax/trailing checks');
+      console.log('   • 12:30 PM ET - Mid-day check + trim/tax/trailing checks');
+      console.log('   • 3:30 PM ET - Before close + trim/tax/trailing checks');
       console.log('📊 Daily summary: 4:30 PM ET');
-      console.log('📅 Weekly earnings update: Sunday 9:00 PM ET');
+      console.log('📅 Weekly review: Sunday 9:00 PM ET (Opus deep review)');
       console.log('💤 Auto-shutdown: 4:35 PM ET (saves costs)');
       console.log('💡 Press Ctrl+C to stop\n');
 
@@ -265,7 +289,7 @@ class WhiskieBot {
         console.log('');
       }
 
-      // Handle take-profit opportunities
+      // Check and execute all trim opportunities
       if (health.opportunities.length > 0) {
         console.log('💰 OPPORTUNITIES DETECTED:');
         for (const opp of health.opportunities) {
@@ -277,6 +301,46 @@ class WhiskieBot {
         }
         console.log('');
       }
+
+      // Check for trim opportunities (graduated trimming)
+      console.log('✂️ Checking for trim opportunities...');
+      const trimResults = await runTrimCheck();
+      if (trimResults.trimmed > 0) {
+        console.log(`✅ Trimmed ${trimResults.trimmed} positions\n`);
+      }
+
+      // Check for tax optimization opportunities
+      console.log('💰 Checking for tax optimization...');
+      const taxResults = await runTaxOptimizationCheck();
+      if (taxResults.actionsCount > 0) {
+        console.log(`✅ Tax optimization: ${taxResults.actionsCount} stops tightened\n`);
+      }
+
+      // Check for trailing stop activation
+      console.log('📈 Checking for trailing stop activation...');
+      const trailingResults = await runTrailingStopCheck();
+      if (trailingResults.activated > 0) {
+        console.log(`✅ Activated ${trailingResults.activated} trailing stops\n`);
+      }
+
+      // Update existing trailing stops
+      console.log('📊 Updating trailing stops...');
+      const trailingUpdateResults = await updateTrailingStops();
+      if (trailingUpdateResults.updated > 0) {
+        console.log(`✅ Updated ${trailingUpdateResults.updated} trailing stops\n`);
+      }
+
+      // Check for earnings day analysis
+      console.log('📊 Checking for earnings today/tomorrow...');
+      const earningsResults = await runEarningsDayAnalysis();
+      if (earningsResults.analyzed > 0) {
+        console.log(`✅ Analyzed ${earningsResults.analyzed} positions with upcoming earnings\n`);
+      }
+
+      // Update days held for all lots (tax tracking)
+      console.log('📅 Updating days held for tax tracking...');
+      await db.updateDaysHeld();
+      console.log('✅ Days held updated\n');
 
       // Get market news
       console.log('📰 Fetching market news...');
@@ -1062,7 +1126,11 @@ ${historyContext}`;
   /**
    * Execute a trade (manual approval required)
    */
-  async executeTrade(symbol, action, quantity) {
+  /**
+   * Execute a trade (buy or sell)
+   * Supports hybrid positions with multiple lots
+   */
+  async executeTrade(symbol, action, quantity, options = {}) {
     try {
       console.log(`\n💼 Executing ${action.toUpperCase()} ${quantity} ${symbol}...`);
 
@@ -1077,7 +1145,7 @@ ${historyContext}`;
         symbol,
         quantity,
         price,
-        sector: 'Unknown' // TODO: Get sector
+        sector: options.sector || 'Unknown'
       };
 
       const validation = riskManager.validateTrade(trade, portfolio);
@@ -1106,14 +1174,87 @@ ${historyContext}`;
         price,
         orderId: order.id,
         status: order.status,
-        reasoning: 'Manual execution'
+        reasoning: options.reasoning || 'Manual execution'
       });
 
-      // Update position in database
+      // Handle BUY - Create lots
       if (action === 'buy') {
-        const stopLoss = riskManager.calculateStopLoss('large-cap', price);
-        const takeProfit = price * 1.15;
+        const investmentType = options.investmentType || 'long-term'; // 'long-term', 'swing', or 'hybrid'
+        const thesis = options.thesis || 'No thesis provided';
 
+        let longTermQty = 0;
+        let swingQty = 0;
+
+        // Determine lot split
+        if (investmentType === 'hybrid') {
+          // Hybrid: 75% long-term, 25% swing
+          longTermQty = Math.floor(quantity * 0.75);
+          swingQty = quantity - longTermQty;
+        } else if (investmentType === 'long-term') {
+          longTermQty = quantity;
+        } else if (investmentType === 'swing') {
+          swingQty = quantity;
+        }
+
+        console.log(`📦 Creating lots: ${longTermQty} long-term, ${swingQty} swing`);
+
+        // Create long-term lot
+        if (longTermQty > 0) {
+          const stopLoss = riskManager.calculateStopLoss('large-cap', price);
+          const takeProfit = price * 1.50; // +50% for long-term
+
+          const lot = await db.createPositionLot({
+            symbol,
+            lot_type: 'long-term',
+            quantity: longTermQty,
+            cost_basis: price,
+            current_price: price,
+            entry_date: new Date().toISOString().split('T')[0],
+            stop_loss: stopLoss,
+            take_profit: takeProfit,
+            thesis
+          });
+
+          // Place OCO order for long-term lot
+          try {
+            console.log(`📋 Placing OCO for long-term lot (Stop: $${stopLoss.toFixed(2)}, Target: $${takeProfit.toFixed(2)})...`);
+            const ocoOrder = await tradier.placeOCOOrder(symbol, longTermQty, stopLoss, takeProfit);
+            await db.updatePositionLot(lot.id, { oco_order_id: ocoOrder.id });
+            console.log(`✅ Long-term OCO placed: ${ocoOrder.id}`);
+          } catch (error) {
+            console.error(`⚠️ Failed to place long-term OCO: ${error.message}`);
+          }
+        }
+
+        // Create swing lot
+        if (swingQty > 0) {
+          const stopLoss = price * 0.92; // -8% for swing
+          const takeProfit = price * 1.15; // +15% for swing
+
+          const lot = await db.createPositionLot({
+            symbol,
+            lot_type: 'swing',
+            quantity: swingQty,
+            cost_basis: price,
+            current_price: price,
+            entry_date: new Date().toISOString().split('T')[0],
+            stop_loss: stopLoss,
+            take_profit: takeProfit,
+            thesis
+          });
+
+          // Place OCO order for swing lot
+          try {
+            console.log(`📋 Placing OCO for swing lot (Stop: $${stopLoss.toFixed(2)}, Target: $${takeProfit.toFixed(2)})...`);
+            const ocoOrder = await tradier.placeOCOOrder(symbol, swingQty, stopLoss, takeProfit);
+            await db.updatePositionLot(lot.id, { oco_order_id: ocoOrder.id });
+            console.log(`✅ Swing OCO placed: ${ocoOrder.id}`);
+          } catch (error) {
+            console.error(`⚠️ Failed to place swing OCO: ${error.message}`);
+          }
+        }
+
+        // Update aggregate position
         await db.upsertPosition({
           symbol,
           quantity,
@@ -1121,22 +1262,15 @@ ${historyContext}`;
           current_price: price,
           sector: trade.sector,
           stock_type: 'large-cap',
-          stop_loss: stopLoss,
-          take_profit: takeProfit
+          investment_type: investmentType,
+          total_lots: (longTermQty > 0 ? 1 : 0) + (swingQty > 0 ? 1 : 0),
+          long_term_lots: longTermQty > 0 ? 1 : 0,
+          swing_lots: swingQty > 0 ? 1 : 0,
+          thesis
         });
 
-        // Place OCO order (stop-loss + take-profit) with Tradier
-        // This way Tradier automatically handles the exit
-        try {
-          console.log(`📋 Placing OCO order (Stop: $${stopLoss}, Target: $${takeProfit})...`);
-          const ocoOrder = await tradier.placeOCOOrder(symbol, quantity, stopLoss, takeProfit);
-          console.log(`✅ OCO order placed: ${ocoOrder.id}`);
-        } catch (error) {
-          console.error(`⚠️ Failed to place OCO order: ${error.message}`);
-          console.error(`   Stop-loss and take-profit stored in DB but not with broker`);
-        }
-
       } else if (action === 'sell') {
+        // Handle SELL - handled by trimming.js or manual
         const position = portfolio.positions.find(p => p.symbol === symbol);
         if (position && position.quantity <= quantity) {
           await db.deletePosition(symbol);
@@ -1151,7 +1285,7 @@ ${historyContext}`;
         price: price,
         stopLoss: null,
         takeProfit: null,
-        reasoning: 'Trade executed via executeTrade method'
+        reasoning: options.reasoning || 'Trade executed via executeTrade method'
       });
 
       // Record trade

@@ -430,18 +430,22 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
           </thead>
           <tbody>
             ${positions.map(p => {
-              const gainLoss = ((p.current_price - p.cost_basis) / p.cost_basis * 100).toFixed(2);
+              const costBasis = parseFloat(p.cost_basis) || 0;
+              const currentPrice = parseFloat(p.current_price) || 0;
+              const stopLoss = parseFloat(p.stop_loss) || null;
+              const takeProfit = parseFloat(p.take_profit) || null;
+              const gainLoss = costBasis > 0 ? ((currentPrice - costBasis) / costBasis * 100).toFixed(2) : '0.00';
               return `
                 <tr>
                   <td><strong>${p.symbol}</strong></td>
                   <td>${p.quantity}</td>
-                  <td>$${p.cost_basis.toFixed(2)}</td>
-                  <td>$${p.current_price.toFixed(2)}</td>
+                  <td>$${costBasis.toFixed(2)}</td>
+                  <td>$${currentPrice.toFixed(2)}</td>
                   <td class="${gainLoss >= 0 ? 'positive' : 'negative'}">
                     ${gainLoss >= 0 ? '+' : ''}${gainLoss}%
                   </td>
-                  <td>${p.stop_loss ? '$' + p.stop_loss.toFixed(2) : '-'}</td>
-                  <td>${p.take_profit ? '$' + p.take_profit.toFixed(2) : '-'}</td>
+                  <td>${stopLoss ? '$' + stopLoss.toFixed(2) : '-'}</td>
+                  <td>${takeProfit ? '$' + takeProfit.toFixed(2) : '-'}</td>
                 </tr>
               `;
             }).join('')}

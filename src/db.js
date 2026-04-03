@@ -177,6 +177,50 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_earnings_date ON earnings_calendar(earnings_date);
     `);
 
+    // Position lots - track individual lots (long-term vs swing)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS position_lots (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        lot_type VARCHAR(20) NOT NULL,
+        quantity INTEGER NOT NULL,
+        cost_basis DECIMAL(10, 2) NOT NULL,
+        current_price DECIMAL(10, 2),
+        entry_date DATE NOT NULL,
+        stop_loss DECIMAL(10, 2),
+        take_profit DECIMAL(10, 2),
+        oco_order_id VARCHAR(50),
+        thesis TEXT,
+        trim_level INTEGER DEFAULT 0,
+        days_held INTEGER DEFAULT 0,
+        days_to_long_term INTEGER,
+        trailing_stop_active BOOLEAN DEFAULT FALSE,
+        last_reviewed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_position_lots_symbol ON position_lots(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_position_lots_type ON position_lots(lot_type);
+    `);
+
+    // Update positions table with new columns (if they don't exist)
+    await client.query(`
+      ALTER TABLE positions
+      ADD COLUMN IF NOT EXISTS investment_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS total_lots INTEGER DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS long_term_lots INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS swing_lots INTEGER DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS thesis TEXT,
+      ADD COLUMN IF NOT EXISTS days_to_long_term INTEGER,
+      ADD COLUMN IF NOT EXISTS next_earnings_date DATE,
+      ADD COLUMN IF NOT EXISTS trim_history JSONB;
+    `);
+
     console.log('✅ Database schema initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
@@ -664,6 +708,157 @@ export async function cleanupOldEarnings() {
     return result.rowCount;
   } catch (error) {
     console.error('Error cleaning up old earnings:', error);
+    throw error;
+  }
+}
+
+/**
+ * Create a position lot
+ */
+export async function createPositionLot(lot) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO position_lots (
+        symbol, lot_type, quantity, cost_basis, current_price,
+        entry_date, stop_loss, take_profit, oco_order_id, thesis,
+        days_to_long_term
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *`,
+      [
+        lot.symbol,
+        lot.lot_type,
+        lot.quantity,
+        lot.cost_basis,
+        lot.current_price || lot.cost_basis,
+        lot.entry_date || new Date().toISOString().split('T')[0],
+        lot.stop_loss,
+        lot.take_profit,
+        lot.oco_order_id || null,
+        lot.thesis || null,
+        lot.lot_type === 'long-term' ? 365 : null
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error creating position lot:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get all lots for a symbol
+ */
+export async function getPositionLots(symbol) {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM position_lots
+       WHERE symbol = $1
+       ORDER BY created_at ASC`,
+      [symbol]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error(`Error fetching lots for ${symbol}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get a specific lot by ID
+ */
+export async function getPositionLot(lotId) {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM position_lots WHERE id = $1`,
+      [lotId]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error(`Error fetching lot ${lotId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Update a position lot
+ */
+export async function updatePositionLot(lotId, updates) {
+  try {
+    const fields = [];
+    const values = [];
+    let paramCount = 1;
+
+    Object.entries(updates).forEach(([key, value]) => {
+      fields.push(`${key} = $${paramCount}`);
+      values.push(value);
+      paramCount++;
+    });
+
+    values.push(lotId);
+
+    const result = await pool.query(
+      `UPDATE position_lots
+       SET ${fields.join(', ')}, last_reviewed = CURRENT_TIMESTAMP
+       WHERE id = $${paramCount}
+       RETURNING *`,
+      values
+    );
+
+    return result.rows[0];
+  } catch (error) {
+    console.error(`Error updating lot ${lotId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Delete a position lot
+ */
+export async function deletePositionLot(lotId) {
+  try {
+    await pool.query(`DELETE FROM position_lots WHERE id = $1`, [lotId]);
+    console.log(`Deleted lot ${lotId}`);
+  } catch (error) {
+    console.error(`Error deleting lot ${lotId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get all position lots (for daily updates)
+ */
+export async function getAllPositionLots() {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM position_lots
+       WHERE quantity > 0
+       ORDER BY symbol, lot_type`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching all lots:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update days held for all lots (run daily)
+ */
+export async function updateDaysHeld() {
+  try {
+    const result = await pool.query(
+      `UPDATE position_lots
+       SET days_held = CURRENT_DATE - entry_date,
+           days_to_long_term = CASE
+             WHEN lot_type = 'long-term' THEN GREATEST(0, 365 - (CURRENT_DATE - entry_date))
+             ELSE NULL
+           END
+       WHERE quantity > 0`
+    );
+    console.log(`Updated days_held for ${result.rowCount} lots`);
+    return result.rowCount;
+  } catch (error) {
+    console.error('Error updating days held:', error);
     throw error;
   }
 }
