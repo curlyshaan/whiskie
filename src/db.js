@@ -84,6 +84,11 @@ export async function initDatabase() {
         model_used VARCHAR(50),
         confidence VARCHAR(20),
         executed BOOLEAN DEFAULT FALSE,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        total_tokens INTEGER,
+        cost_estimate DECIMAL(10, 4),
+        duration_seconds INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -129,6 +134,47 @@ export async function initDatabase() {
         approved_at TIMESTAMP,
         rejected_at TIMESTAMP
       );
+    `);
+
+    // Watchlist - track stocks to monitor with target entry prices
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS watchlist (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) UNIQUE NOT NULL,
+        sub_industry VARCHAR(100),
+        current_price DECIMAL(10, 2),
+        target_entry_price DECIMAL(10, 2),
+        target_exit_price DECIMAL(10, 2),
+        why_watching TEXT,
+        why_not_buying_now TEXT,
+        status VARCHAR(20) DEFAULT 'watching',
+        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_reviewed TIMESTAMP,
+        price_when_added DECIMAL(10, 2),
+        highest_price DECIMAL(10, 2),
+        lowest_price DECIMAL(10, 2)
+      );
+    `);
+
+    // Earnings calendar - track earnings dates for all 400 stocks
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS earnings_calendar (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        earnings_date DATE NOT NULL,
+        earnings_time VARCHAR(10),
+        source VARCHAR(20) DEFAULT 'yahoo',
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(symbol, earnings_date)
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_earnings_symbol ON earnings_calendar(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_earnings_date ON earnings_calendar(earnings_date);
     `);
 
     console.log('✅ Database schema initialized successfully');
@@ -268,8 +314,11 @@ export async function savePortfolioSnapshot(snapshot) {
 export async function logAIDecision(decision) {
   try {
     const result = await pool.query(
-      `INSERT INTO ai_decisions (decision_type, symbol, recommendation, reasoning, model_used, confidence, executed)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      `INSERT INTO ai_decisions (
+        decision_type, symbol, recommendation, reasoning, model_used, confidence, executed,
+        input_tokens, output_tokens, total_tokens, cost_estimate, duration_seconds
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [
         decision.type,
         decision.symbol,
@@ -277,7 +326,12 @@ export async function logAIDecision(decision) {
         decision.reasoning,
         decision.model,
         decision.confidence,
-        decision.executed || false
+        decision.executed || false,
+        decision.input_tokens || null,
+        decision.output_tokens || null,
+        decision.total_tokens || null,
+        decision.cost_estimate || null,
+        decision.duration_seconds || null
       ]
     );
     return result.rows[0];
@@ -419,6 +473,197 @@ export async function getPerformanceHistory(days = 30) {
     return result.rows;
   } catch (error) {
     console.error('Error fetching performance:', error);
+    throw error;
+  }
+}
+
+/**
+ * Add stock to watchlist
+ */
+export async function addToWatchlist(watchItem) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO watchlist (
+        symbol, sub_industry, current_price, target_entry_price, target_exit_price,
+        why_watching, why_not_buying_now, price_when_added, highest_price, lowest_price
+      )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (symbol)
+       DO UPDATE SET
+         sub_industry = $2,
+         current_price = $3,
+         target_entry_price = $4,
+         target_exit_price = $5,
+         why_watching = $6,
+         why_not_buying_now = $7,
+         last_reviewed = CURRENT_TIMESTAMP,
+         highest_price = GREATEST(watchlist.highest_price, $9),
+         lowest_price = LEAST(watchlist.lowest_price, $10)
+       RETURNING *`,
+      [
+        watchItem.symbol,
+        watchItem.sub_industry,
+        watchItem.current_price,
+        watchItem.target_entry_price,
+        watchItem.target_exit_price,
+        watchItem.why_watching,
+        watchItem.why_not_buying_now,
+        watchItem.current_price,
+        watchItem.current_price,
+        watchItem.current_price
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error adding to watchlist:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get all watchlist items
+ */
+export async function getWatchlist() {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM watchlist WHERE status = 'watching' ORDER BY added_date DESC`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching watchlist:', error);
+    throw error;
+  }
+}
+
+/**
+ * Update watchlist item prices
+ */
+export async function updateWatchlistPrice(symbol, currentPrice) {
+  try {
+    const result = await pool.query(
+      `UPDATE watchlist
+       SET current_price = $2,
+           highest_price = GREATEST(highest_price, $2),
+           lowest_price = LEAST(lowest_price, $2),
+           last_reviewed = CURRENT_TIMESTAMP
+       WHERE symbol = $1
+       RETURNING *`,
+      [symbol, currentPrice]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error updating watchlist price:', error);
+    throw error;
+  }
+}
+
+/**
+ * Remove from watchlist
+ */
+export async function removeFromWatchlist(symbol) {
+  try {
+    await pool.query(
+      `UPDATE watchlist SET status = 'removed' WHERE symbol = $1`,
+      [symbol]
+    );
+  } catch (error) {
+    console.error('Error removing from watchlist:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get watchlist items at or below target entry price
+ */
+export async function getWatchlistBuyOpportunities() {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM watchlist
+       WHERE status = 'watching'
+       AND current_price <= target_entry_price
+       ORDER BY (target_entry_price - current_price) DESC`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching buy opportunities:', error);
+    throw error;
+  }
+}
+
+/**
+ * Upsert earnings date for a symbol
+ */
+export async function upsertEarning(symbol, earningsDate, earningsTime = 'unknown') {
+  try {
+    const result = await pool.query(
+      `INSERT INTO earnings_calendar (symbol, earnings_date, earnings_time, last_updated)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+       ON CONFLICT (symbol, earnings_date)
+       DO UPDATE SET
+         earnings_time = $3,
+         last_updated = CURRENT_TIMESTAMP
+       RETURNING *`,
+      [symbol, earningsDate, earningsTime]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error(`Error upserting earning for ${symbol}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get next earnings date for a symbol
+ */
+export async function getNextEarning(symbol) {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM earnings_calendar
+       WHERE symbol = $1
+       AND earnings_date >= CURRENT_DATE
+       ORDER BY earnings_date ASC
+       LIMIT 1`,
+      [symbol]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error(`Error fetching next earning for ${symbol}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get upcoming earnings (next N days)
+ */
+export async function getUpcomingEarnings(days = 30) {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM earnings_calendar
+       WHERE earnings_date >= CURRENT_DATE
+       AND earnings_date <= CURRENT_DATE + INTERVAL '${days} days'
+       ORDER BY earnings_date ASC`,
+      []
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching upcoming earnings:', error);
+    throw error;
+  }
+}
+
+/**
+ * Clean up old earnings (past dates)
+ */
+export async function cleanupOldEarnings() {
+  try {
+    const result = await pool.query(
+      `DELETE FROM earnings_calendar
+       WHERE earnings_date < CURRENT_DATE`
+    );
+    console.log(`🧹 Cleaned up ${result.rowCount} old earnings dates`);
+    return result.rowCount;
+  } catch (error) {
+    console.error('Error cleaning up old earnings:', error);
     throw error;
   }
 }

@@ -78,6 +78,28 @@ router.get('/api/today', async (req, res) => {
   }
 });
 
+/**
+ * API endpoint - Get watchlist with earnings dates
+ */
+router.get('/api/watchlist', async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT
+        w.*,
+        e.earnings_date,
+        e.earnings_time
+       FROM watchlist w
+       LEFT JOIN earnings_calendar e ON w.symbol = e.symbol
+       WHERE w.status = 'watching'
+       AND (e.earnings_date IS NULL OR e.earnings_date >= CURRENT_DATE)
+       ORDER BY w.added_date DESC`
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 function generateDashboardHTML(analyses, positions, trades, snapshot) {
   const totalValue = snapshot?.total_value || 100000;
   const cash = snapshot?.cash || snapshot?.cash_balance || 100000;

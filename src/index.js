@@ -8,15 +8,9 @@ import tavily from './tavily.js';
 import email from './email.js';
 import riskManager from './risk-manager.js';
 import analysisEngine from './analysis.js';
-import {
-  initDatabase,
-  logTrade,
-  logAIDecision,
-  logAlert,
-  savePortfolioSnapshot,
-  upsertPosition,
-  deletePosition
-} from './db.js';
+import * as db from './db.js';
+import { SUB_INDUSTRIES, getAllSubIndustries } from './sub-industry-data.js';
+import { updateAllEarnings } from './earnings.js';
 
 dotenv.config();
 
@@ -47,7 +41,7 @@ class WhiskieBot {
 
     try {
       // Initialize database
-      await initDatabase();
+      await db.initDatabase();
 
       // Start API server FIRST so Railway knows we're alive
       this.startAPIServer();
@@ -103,12 +97,27 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
+      // Schedule weekly earnings update - Sunday 9:00 PM ET
+      cron.schedule('0 21 * * 0', async () => {
+        console.log('\n⏰ Sunday 9:00 PM - Weekly earnings update');
+        try {
+          await updateAllEarnings();
+          console.log('✅ Earnings calendar updated successfully');
+        } catch (error) {
+          console.error('❌ Error updating earnings:', error);
+          await email.sendErrorAlert(error, 'Weekly earnings update failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
       console.log('\n✅ Whiskie Bot is running');
       console.log('📅 Analysis schedule (Mon-Fri):');
       console.log('   • 10:00 AM ET - Morning analysis');
       console.log('   • 12:30 PM ET - Mid-day check');
       console.log('   • 3:30 PM ET - Before close');
       console.log('📊 Daily summary: 4:30 PM ET');
+      console.log('📅 Weekly earnings update: Sunday 9:00 PM ET');
       console.log('💤 Auto-shutdown: 4:35 PM ET (saves costs)');
       console.log('💡 Press Ctrl+C to stop\n');
 
@@ -236,7 +245,7 @@ class WhiskieBot {
           console.log(`   - ${issue.message} (${issue.severity})`);
 
           // Log alert
-          await logAlert({
+          await db.logAlert({
             type: issue.type,
             symbol: issue.symbol,
             message: issue.message,
@@ -324,7 +333,7 @@ class WhiskieBot {
     );
 
     // Log AI decision
-    await logAIDecision({
+    await db.logAIDecision({
       type: 'stop-loss',
       symbol,
       recommendation: evaluation.analysis,
@@ -369,7 +378,7 @@ class WhiskieBot {
     );
 
     // Log AI decision
-    await logAIDecision({
+    await db.logAIDecision({
       type: 'position-review',
       symbol,
       recommendation: evaluation.analysis,
@@ -406,7 +415,7 @@ class WhiskieBot {
     });
 
     // Log AI decision
-    await logAIDecision({
+    await db.logAIDecision({
       type: 'take-profit',
       symbol,
       recommendation: `Sell ${action.percentage * 100}% of position`,
@@ -419,7 +428,7 @@ class WhiskieBot {
   }
 
   /**
-   * Run deep analysis with Claude Opus
+   * Run deep analysis with Claude Opus (Two-Phase Approach)
    */
   async runDeepAnalysis(portfolio, news) {
     try {
@@ -432,10 +441,44 @@ class WhiskieBot {
       console.log('Cash:', '$' + portfolio.cash.toLocaleString());
       console.log('');
 
-      // Fetch real-time market data
-      console.log('📊 Fetching real-time market data...');
-      const marketData = await this.fetchMarketData();
-      console.log('✅ Market data fetched');
+      // PHASE 1: Fetch market context (indices + portfolio stocks only)
+      console.log('📊 PHASE 1: Fetching market context...');
+      const portfolioSymbols = portfolio.positions.map(p => p.symbol);
+      const marketIndices = ['SPY', 'QQQ', 'DIA', 'IWM', 'VIX', 'TLT', 'GLD', 'USO'];
+      const phase1Symbols = [...new Set([...portfolioSymbols, ...marketIndices])];
+
+      const phase1Quotes = await tradier.getQuotes(phase1Symbols.join(','));
+      const marketContext = {};
+      const quoteArray = Array.isArray(phase1Quotes) ? phase1Quotes : [phase1Quotes];
+
+      quoteArray.forEach(q => {
+        if (q && q.symbol) {
+          marketContext[q.symbol] = {
+            price: q.last,
+            change: q.change,
+            change_percentage: q.change_percentage,
+            volume: q.volume
+          };
+        }
+      });
+
+      console.log(`✅ Fetched ${Object.keys(marketContext).length} market quotes`);
+      console.log('');
+
+      // Refresh portfolio prices with phase 1 data
+      console.log('💰 Refreshing portfolio prices...');
+      let pricesUpdated = 0;
+      for (const position of portfolio.positions) {
+        if (marketContext[position.symbol]) {
+          const oldPrice = position.currentPrice;
+          position.currentPrice = marketContext[position.symbol].price;
+          if (oldPrice !== position.currentPrice) {
+            console.log(`   ${position.symbol}: $${oldPrice} → $${position.currentPrice}`);
+            pricesUpdated++;
+          }
+        }
+      }
+      console.log(`✅ Updated ${pricesUpdated} position prices`);
       console.log('');
 
       // Get previous analyses for trend detection
@@ -453,7 +496,120 @@ class WhiskieBot {
         console.log('ℹ️  No previous analyses found (first run)');
       }
 
-      const question = `You are managing a $100k portfolio. Analyze and provide SPECIFIC trade recommendations.
+      // Check watchlist for buy opportunities
+      console.log('👀 Checking watchlist for buy opportunities...');
+      const watchlist = await db.getWatchlist();
+      const buyOpportunities = await db.getWatchlistBuyOpportunities();
+
+      let watchlistContext = '';
+      if (watchlist.length > 0) {
+        watchlistContext = '\n\n**WATCHLIST (stocks you are monitoring):**\n';
+        watchlist.forEach(item => {
+          const atTarget = item.current_price <= item.target_entry_price ? '✅ AT TARGET' : '';
+          watchlistContext += `- ${item.symbol} (${item.sub_industry}): Current $${item.current_price}, Target Entry $${item.target_entry_price} ${atTarget}\n`;
+          watchlistContext += `  Why watching: ${item.why_watching}\n`;
+          watchlistContext += `  Why not buying now: ${item.why_not_buying_now}\n\n`;
+        });
+        console.log(`   Found ${watchlist.length} stocks on watchlist`);
+        if (buyOpportunities.length > 0) {
+          console.log(`   🎯 ${buyOpportunities.length} stocks at or below target entry price!`);
+        }
+      } else {
+        console.log('   Watchlist is empty');
+      }
+      console.log('');
+
+      // PHASE 1 PROMPT: Identify promising sub-industries and stocks
+      const phase1Question = `You are managing a $100k portfolio.
+
+**PHASE 1: Identify promising sub-industries and stocks to analyze**
+
+**Current Portfolio:**
+- Positions: ${portfolio.positions.length}
+- Total Value: $${portfolio.totalValue.toLocaleString()}
+- Cash Available: $${portfolio.cash.toLocaleString()}
+
+**Market Context:**
+${Object.entries(marketContext).map(([sym, data]) => `- ${sym}: $${data.price} (${data.change_percentage >= 0 ? '+' : ''}${data.change_percentage}%)`).join('\n')}
+
+**Recent News:**
+${news}
+
+${watchlistContext}
+
+**Your Task for Phase 1:**
+1. Identify 3-5 promising sub-industries based on current market conditions and news
+2. From those sub-industries, select 15-20 specific stocks to analyze in Phase 2
+3. Prioritize watchlist stocks that are at or near target entry prices
+
+**Available Sub-Industries (40 total):**
+Cloud Computing, Cybersecurity, Semiconductors, Software & SaaS, IT Hardware & Networking, IT Services & Consulting, E-commerce & Online Retail, Digital Advertising & Social Media, Streaming & Digital Entertainment, Video Gaming & Esports, Telecom Services, Biotechnology, Pharmaceuticals, Medical Devices & Equipment, Health Care Services & Managed Care, Life Sciences Tools & Diagnostics, Banks & Diversified Financials, Insurance, Fintech & Payments, Asset Management & Capital Markets, Aerospace & Defense, Industrial Machinery & Equipment, Transportation & Logistics, Building Products & Construction, Electrical Equipment & Automation, Restaurants & Food Services, Automotive & EV, Retail & Apparel, Travel & Leisure, Food & Beverage, Household & Personal Products, Grocery & Consumer Retail, Oil & Gas Exploration & Production, Renewable Energy & Clean Tech, Oil & Gas Services & Midstream, Electric Utilities, Water & Gas Utilities, REITs & Real Estate, Specialty & Industrial REITs, Chemicals & Specialty Materials, Metals & Mining
+
+Format your response EXACTLY like this:
+PROMISING_SUB_INDUSTRIES:
+- Cloud Computing: [reason]
+- Cybersecurity: [reason]
+- Biotechnology: [reason]
+
+TICKERS_TO_ANALYZE:
+MSFT
+PANW
+CRWD
+LLY
+ABBV
+...
+
+${historyContext}`;
+
+      console.log('📝 PHASE 1: Asking Opus to identify stocks...');
+      console.log('⏳ This will take 1-2 minutes...');
+      console.log('');
+
+      const phase1Start = Date.now();
+      const phase1Analysis = await claude.deepAnalysis(
+        portfolio,
+        marketContext,
+        news,
+        {},
+        phase1Question
+      );
+      const phase1Duration = ((Date.now() - phase1Start) / 1000).toFixed(1);
+
+      console.log(`✅ Phase 1 complete (${phase1Duration}s)`);
+      console.log('');
+
+      // Extract tickers from Phase 1 response
+      const tickersToAnalyze = this.extractTickers(phase1Analysis.analysis);
+      console.log(`🎯 Opus identified ${tickersToAnalyze.length} stocks to analyze:`);
+      console.log(`   ${tickersToAnalyze.join(', ')}`);
+      console.log('');
+
+      // PHASE 2: Fetch prices for identified stocks
+      console.log('📊 PHASE 2: Fetching prices for identified stocks...');
+      const allSymbols = [...new Set([...portfolioSymbols, ...marketIndices, ...tickersToAnalyze])];
+      const phase2Quotes = await tradier.getQuotes(allSymbols.join(','));
+
+      const fullMarketData = {};
+      const phase2Array = Array.isArray(phase2Quotes) ? phase2Quotes : [phase2Quotes];
+
+      phase2Array.forEach(q => {
+        if (q && q.symbol) {
+          fullMarketData[q.symbol] = {
+            price: q.last,
+            change: q.change,
+            change_percentage: q.change_percentage,
+            volume: q.volume,
+            bid: q.bid,
+            ask: q.ask
+          };
+        }
+      });
+
+      console.log(`✅ Fetched ${Object.keys(fullMarketData).length} total quotes`);
+      console.log('');
+
+      // PHASE 2 PROMPT: Make final trade decisions with current prices
+      const phase2Question = `You are managing a $100k portfolio. Analyze and provide SPECIFIC trade recommendations.
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
@@ -467,8 +623,18 @@ class WhiskieBot {
 - It's perfectly fine to hold 100% cash if you don't see good opportunities
 - Quality over quantity - only trade when you're confident in your analysis
 
+${watchlistContext}
+
 **Your Task:**
-1. **WATCHLIST:** Identify 5-10 stocks you're monitoring (with reasons)
+1. **WATCHLIST UPDATE:** For each stock you want to monitor (but not buy yet):
+   - Symbol, Sub-industry, Current Price
+   - Target Entry Price (price you'd buy at)
+   - Target Exit Price (profit target)
+   - Why watching (what makes it interesting)
+   - Why not buying now (what you're waiting for)
+
+   Format: WATCHLIST_ADD: AAPL | Cloud Computing | $280 | $250 | $320 | Strong fundamentals | Waiting for pullback
+
 2. **BUY RECOMMENDATIONS:** Which stocks to buy NOW? For EACH recommendation provide:
    - Symbol and company name
    - Quantity (exact number of shares)
@@ -502,29 +668,30 @@ class WhiskieBot {
 
 ${historyContext}`;
 
-      console.log('📝 Sending question to Opus...');
+      console.log('📝 PHASE 2: Sending final question to Opus...');
       console.log('⏳ Extended thinking enabled (50,000 tokens MAX)');
       console.log('⏳ Temperature: 0.1 (focused, consistent)');
       console.log('⏳ This will take 3-7 minutes...');
       console.log('');
 
-      const startTime = Date.now();
-
+      const phase2Start = Date.now();
       const analysis = await claude.deepAnalysis(
         portfolio,
-        marketData,
+        fullMarketData,
         news,
         {},
-        question
+        phase2Question
       );
-
-      const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+      const phase2Duration = ((Date.now() - phase2Start) / 1000).toFixed(1);
+      const totalDuration = ((Date.now() - phase1Start) / 1000).toFixed(1);
 
       console.log('');
       console.log('═══════════════════════════════════════');
       console.log('✅ OPUS ANALYSIS COMPLETE');
       console.log('═══════════════════════════════════════');
-      console.log('Duration:', duration, 'seconds');
+      console.log('Phase 1 Duration:', phase1Duration, 'seconds');
+      console.log('Phase 2 Duration:', phase2Duration, 'seconds');
+      console.log('Total Duration:', totalDuration, 'seconds');
       console.log('Response length:', analysis.analysis.length, 'characters');
       console.log('Model used:', analysis.model);
 
@@ -556,17 +723,17 @@ ${historyContext}`;
       console.log('💾 Saving analysis to database...');
 
       // Log the decision with token usage
-      const analysisId = await logAIDecision({
+      const analysisId = await db.logAIDecision({
         type: 'deep-analysis',
         symbol: null,
         recommendation: analysis.analysis,
-        reasoning: `Deep portfolio analysis with 50k thinking tokens. Previous analyses: ${previousAnalyses.length}`,
+        reasoning: `Two-phase deep analysis. Phase 1: ${tickersToAnalyze.length} stocks identified. Phase 2: Final recommendations with real-time prices.`,
         model: 'opus',
         confidence: 'high',
         inputTokens: analysis.usage?.input_tokens,
         outputTokens: analysis.usage?.output_tokens,
         totalTokens: (analysis.usage?.input_tokens || 0) + (analysis.usage?.output_tokens || 0),
-        durationSeconds: parseInt(duration)
+        durationSeconds: parseInt(totalDuration)
       });
 
       console.log('✅ Analysis saved to database');
@@ -612,6 +779,28 @@ ${historyContext}`;
       }
       console.log('');
 
+      // Parse and update watchlist
+      console.log('👀 Parsing watchlist updates...');
+      const watchlistItems = this.parseWatchlist(analysis.analysis);
+
+      if (watchlistItems.length > 0) {
+        console.log(`✅ Found ${watchlistItems.length} watchlist items`);
+
+        for (const item of watchlistItems) {
+          try {
+            await db.addToWatchlist(item);
+            console.log(`   ✅ Added ${item.symbol} to watchlist (target: $${item.target_entry_price})`);
+          } catch (error) {
+            console.error(`   ❌ Failed to add ${item.symbol} to watchlist:`, error.message);
+          }
+        }
+
+        console.log('✅ Watchlist updated');
+      } else {
+        console.log('ℹ️  No watchlist updates');
+      }
+      console.log('');
+
     } catch (error) {
       console.error('');
       console.error('═══════════════════════════════════════');
@@ -626,6 +815,42 @@ ${historyContext}`;
       console.error('═══════════════════════════════════════');
       console.error('');
     }
+  }
+
+  /**
+   * Extract ticker symbols from Phase 1 analysis
+   */
+  extractTickers(analysisText) {
+    const tickers = [];
+
+    // Look for "TICKERS_TO_ANALYZE:" section
+    const tickerSection = analysisText.match(/TICKERS_TO_ANALYZE:[\s\S]*?(?=\n\n|$)/i);
+
+    if (tickerSection) {
+      const lines = tickerSection[0].split('\n');
+      for (const line of lines) {
+        const match = line.match(/\b([A-Z]{1,5})\b/);
+        if (match && match[1] !== 'TICKERS' && match[1] !== 'TO' && match[1] !== 'ANALYZE') {
+          tickers.push(match[1]);
+        }
+      }
+    }
+
+    // Fallback: extract any stock tickers mentioned
+    if (tickers.length === 0) {
+      const matches = analysisText.match(/\b[A-Z]{2,5}\b/g);
+      if (matches) {
+        const commonWords = new Set(['THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HER', 'WAS', 'ONE', 'OUR', 'OUT', 'DAY', 'GET', 'HAS', 'HIM', 'HIS', 'HOW', 'ITS', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'TWO', 'WAY', 'WHO', 'BOY', 'DID', 'ITS', 'LET', 'PUT', 'SAY', 'SHE', 'TOO', 'USE']);
+        matches.forEach(ticker => {
+          if (!commonWords.has(ticker) && ticker.length >= 2 && ticker.length <= 5) {
+            tickers.push(ticker);
+          }
+        });
+      }
+    }
+
+    // Remove duplicates and limit to 20
+    return [...new Set(tickers)].slice(0, 20);
   }
 
   /**
@@ -649,59 +874,30 @@ ${historyContext}`;
   }
 
   /**
-   * Fetch real-time market data
-   */
-  async fetchMarketData() {
-    try {
-      const symbols = ['SPY', 'QQQ', 'DIA', 'IWM', 'VIX', 'TLT', 'GLD', 'USO'];
-      const quotes = await tradier.getQuotes(symbols);
-
-      const marketData = {};
-      if (Array.isArray(quotes)) {
-        quotes.forEach(q => {
-          marketData[q.symbol] = {
-            price: q.last,
-            change: q.change,
-            change_percentage: q.change_percentage,
-            volume: q.volume
-          };
-        });
-      } else {
-        // Single quote
-        marketData[quotes.symbol] = {
-          price: quotes.last,
-          change: quotes.change,
-          change_percentage: quotes.change_percentage,
-          volume: quotes.volume
-        };
-      }
-
-      return marketData;
-    } catch (error) {
-      console.error('Error fetching market data:', error.message);
-      return {};
-    }
-  }
-
-  /**
-   * Parse trade recommendations from Opus analysis
+   * Parse trade recommendations from Opus analysis (handles multiple formats)
    */
   parseRecommendations(analysisText) {
     const recommendations = [];
 
     try {
-      // Look for BUY recommendations with pattern matching
-      const buyPattern = /BUY\s+(\d+)\s+(?:shares?\s+)?([A-Z]{1,5})\s+at\s+\$?([\d.]+)/gi;
-      const stopLossPattern = /Stop-loss:\s*\$?([\d.]+)/gi;
-      const takeProfitPattern = /Take-profit:\s*\$?([\d.]+)/gi;
+      // Pattern 1: "BUY X shares SYMBOL at $PRICE"
+      const buyPattern1 = /BUY\s+(\d+)\s+(?:shares?\s+)?([A-Z]{1,5})\s+at\s+\$?([\d.]+)/gi;
+
+      // Pattern 2: "BUY SYMBOL: X shares @ $PRICE"
+      const buyPattern2 = /BUY\s+([A-Z]{1,5}):\s*(\d+)\s+shares?\s+@\s*\$?([\d.]+)/gi;
+
+      // Pattern 3: Markdown table format "| BUY | SYMBOL | X | $PRICE |"
+      const tablePattern = /\|\s*BUY\s*\|\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*\$?([\d.]+)/gi;
+
+      const stopLossPattern = /Stop-?loss:?\s*\$?([\d.]+)/gi;
+      const takeProfitPattern = /Take-?profit:?\s*\$?([\d.]+)/gi;
 
       let match;
       const matches = [];
 
-      // Find all BUY statements
-      while ((match = buyPattern.exec(analysisText)) !== null) {
+      // Try all patterns
+      while ((match = buyPattern1.exec(analysisText)) !== null) {
         matches.push({
-          fullMatch: match[0],
           quantity: parseInt(match[1]),
           symbol: match[2],
           entryPrice: parseFloat(match[3]),
@@ -709,9 +905,29 @@ ${historyContext}`;
         });
       }
 
+      buyPattern2.lastIndex = 0;
+      while ((match = buyPattern2.exec(analysisText)) !== null) {
+        matches.push({
+          quantity: parseInt(match[2]),
+          symbol: match[1],
+          entryPrice: parseFloat(match[3]),
+          index: match.index
+        });
+      }
+
+      tablePattern.lastIndex = 0;
+      while ((match = tablePattern.exec(analysisText)) !== null) {
+        matches.push({
+          quantity: parseInt(match[2]),
+          symbol: match[1],
+          entryPrice: parseFloat(match[3]),
+          index: match.index
+        });
+      }
+
       // For each BUY, find the nearest stop-loss and take-profit
       for (const buyMatch of matches) {
-        const textAfterBuy = analysisText.substring(buyMatch.index, buyMatch.index + 1000);
+        const textAfterBuy = analysisText.substring(buyMatch.index, buyMatch.index + 2000);
 
         // Find stop-loss
         stopLossPattern.lastIndex = 0;
@@ -723,8 +939,8 @@ ${historyContext}`;
         const tpMatch = takeProfitPattern.exec(textAfterBuy);
         const takeProfit = tpMatch ? parseFloat(tpMatch[1]) : null;
 
-        // Extract reasoning (next 500 chars after the BUY statement)
-        const reasoning = textAfterBuy.substring(0, 500).trim();
+        // Extract reasoning (next 800 chars after the BUY statement)
+        const reasoning = textAfterBuy.substring(0, 800).trim();
 
         recommendations.push({
           symbol: buyMatch.symbol,
@@ -736,9 +952,49 @@ ${historyContext}`;
         });
       }
 
-      return recommendations;
+      // Remove duplicates (same symbol)
+      const uniqueRecs = [];
+      const seen = new Set();
+      for (const rec of recommendations) {
+        if (!seen.has(rec.symbol)) {
+          seen.add(rec.symbol);
+          uniqueRecs.push(rec);
+        }
+      }
+
+      return uniqueRecs;
     } catch (error) {
       console.error('Error parsing recommendations:', error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Parse watchlist items from analysis
+   * Format: WATCHLIST_ADD: SYMBOL | Sub-industry | $CurrentPrice | $TargetEntry | $TargetExit | Why watching | Why not now
+   */
+  parseWatchlist(analysisText) {
+    const watchlistItems = [];
+
+    try {
+      const watchlistPattern = /WATCHLIST_ADD:\s*([A-Z]{1,5})\s*\|\s*([^|]+)\|\s*\$?([\d.]+)\s*\|\s*\$?([\d.]+)\s*\|\s*\$?([\d.]+)\s*\|\s*([^|]+)\|\s*([^|\n]+)/gi;
+
+      let match;
+      while ((match = watchlistPattern.exec(analysisText)) !== null) {
+        watchlistItems.push({
+          symbol: match[1].trim(),
+          sub_industry: match[2].trim(),
+          current_price: parseFloat(match[3]),
+          target_entry_price: parseFloat(match[4]),
+          target_exit_price: parseFloat(match[5]),
+          why_watching: match[6].trim(),
+          why_not_buying_now: match[7].trim()
+        });
+      }
+
+      return watchlistItems;
+    } catch (error) {
+      console.error('Error parsing watchlist:', error.message);
       return [];
     }
   }
@@ -750,7 +1006,7 @@ ${historyContext}`;
     try {
       const today = new Date().toISOString().split('T')[0];
 
-      await savePortfolioSnapshot({
+      await db.savePortfolioSnapshot({
         total_value: portfolio.totalValue,
         cash: portfolio.cash,
         positions_value: portfolio.positionsValue,
@@ -843,7 +1099,7 @@ ${historyContext}`;
       console.log(`✅ Order placed: ${order.id}`);
 
       // Log trade
-      await logTrade({
+      await db.logTrade({
         symbol,
         action,
         quantity,
@@ -855,32 +1111,47 @@ ${historyContext}`;
 
       // Update position in database
       if (action === 'buy') {
-        await upsertPosition({
+        const stopLoss = riskManager.calculateStopLoss('large-cap', price);
+        const takeProfit = price * 1.15;
+
+        await db.upsertPosition({
           symbol,
           quantity,
           cost_basis: price,
           current_price: price,
           sector: trade.sector,
           stock_type: 'large-cap',
-          stop_loss: riskManager.calculateStopLoss('large-cap', price),
-          take_profit: price * 1.15
+          stop_loss: stopLoss,
+          take_profit: takeProfit
         });
+
+        // Place OCO order (stop-loss + take-profit) with Tradier
+        // This way Tradier automatically handles the exit
+        try {
+          console.log(`📋 Placing OCO order (Stop: $${stopLoss}, Target: $${takeProfit})...`);
+          const ocoOrder = await tradier.placeOCOOrder(symbol, quantity, stopLoss, takeProfit);
+          console.log(`✅ OCO order placed: ${ocoOrder.id}`);
+        } catch (error) {
+          console.error(`⚠️ Failed to place OCO order: ${error.message}`);
+          console.error(`   Stop-loss and take-profit stored in DB but not with broker`);
+        }
+
       } else if (action === 'sell') {
         const position = portfolio.positions.find(p => p.symbol === symbol);
         if (position && position.quantity <= quantity) {
-          await deletePosition(symbol);
+          await db.deletePosition(symbol);
         }
       }
 
       // Send confirmation email
       await email.sendTradeConfirmation({
-        orderId: order.id,
-        symbol,
-        side: action,
-        quantity,
-        price,
-        status: order.status,
-        timestamp: new Date()
+        action: action,
+        symbol: symbol,
+        quantity: quantity,
+        price: price,
+        stopLoss: null,
+        takeProfit: null,
+        reasoning: 'Trade executed via executeTrade method'
       });
 
       // Record trade
