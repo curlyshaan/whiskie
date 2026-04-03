@@ -58,10 +58,25 @@ class AnalysisEngine {
 
       const dbPos = dbPositions.find(p => p.symbol === tp.symbol);
 
+      // Calculate per-share cost basis
+      // Tradier sometimes returns total cost, not per-share
+      let costBasis = dbPos?.cost_basis || 0;
+      if (tp.cost_basis && tp.quantity) {
+        const tradierCostBasis = parseFloat(tp.cost_basis);
+        const quantity = parseInt(tp.quantity);
+
+        // If Tradier's cost_basis is much larger than current price, it's likely total cost
+        if (tradierCostBasis > tp.last * 2) {
+          costBasis = tradierCostBasis / quantity; // Convert to per-share
+        } else {
+          costBasis = tradierCostBasis; // Already per-share
+        }
+      }
+
       merged.push({
         symbol: tp.symbol,
         quantity: tp.quantity,
-        cost_basis: tp.cost_basis || dbPos?.cost_basis || 0,
+        cost_basis: costBasis,
         currentPrice: tp.last || 0,
         sector: dbPos?.sector || 'Unknown',
         stock_type: dbPos?.stock_type || 'large-cap',
