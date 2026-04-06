@@ -27,7 +27,9 @@ class EmailAlerts {
       console.log('📧 Email configured with SendGrid');
     } else {
       this.transporter = nodemailer.createTransport({
-        service: 'gmail',
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false, // Use STARTTLS
         auth: {
           user: process.env.EMAIL_USER,
           pass: process.env.EMAIL_PASS
