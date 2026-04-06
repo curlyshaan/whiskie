@@ -103,20 +103,39 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule weekly earnings update - Sunday 9:00 PM ET
-      cron.schedule('0 21 * * 0', async () => {
-        console.log('\n⏰ Sunday 9:00 PM - Weekly earnings update & portfolio review');
+      // Schedule weekly earnings update - Friday 3:00 PM ET
+      cron.schedule('0 15 * * 5', async () => {
+        console.log('\n⏰ Friday 3:00 PM - Weekly earnings calendar refresh');
         try {
-          // Update earnings calendar
-          await updateAllEarnings();
-          console.log('✅ Earnings calendar updated successfully');
+          // Run Python script to update earnings calendar
+          const { exec } = await import('child_process');
+          const { promisify } = await import('util');
+          const execAsync = promisify(exec);
 
+          console.log('📅 Running earnings calendar update...');
+          const { stdout, stderr } = await execAsync('python3 fetch-earnings.py');
+
+          if (stderr) console.error('Earnings update stderr:', stderr);
+          console.log(stdout);
+          console.log('✅ Earnings calendar updated successfully');
+        } catch (error) {
+          console.error('❌ Error updating earnings calendar:', error);
+          await email.sendErrorAlert(error, 'Earnings calendar update failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule weekly portfolio review - Sunday 9:00 PM ET
+      cron.schedule('0 21 * * 0', async () => {
+        console.log('\n⏰ Sunday 9:00 PM - Weekly portfolio review');
+        try {
           // Run weekly portfolio review with Opus
           await runWeeklyReview();
           console.log('✅ Weekly review complete');
         } catch (error) {
-          console.error('❌ Error in weekly tasks:', error);
-          await email.sendErrorAlert(error, 'Weekly tasks failed');
+          console.error('❌ Error in weekly review:', error);
+          await email.sendErrorAlert(error, 'Weekly review failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -142,6 +161,7 @@ class WhiskieBot {
       console.log('   • 12:30 PM ET - Mid-day check + trim/tax/trailing checks');
       console.log('   • 3:30 PM ET - Before close + trim/tax/trailing checks');
       console.log('📊 Daily summary: 4:30 PM ET');
+      console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
       console.log('📅 Weekly review: Sunday 9:00 PM ET (Opus deep review)');
       console.log('💤 Auto-shutdown: 4:35 PM ET (saves costs)');
       console.log('💡 Press Ctrl+C to stop\n');

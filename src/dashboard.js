@@ -135,6 +135,39 @@ router.get('/api/watchlist', async (req, res) => {
   }
 });
 
+/**
+ * Logs endpoint - View detailed system logs
+ */
+router.get('/logs', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 100;
+
+    // Get recent AI decisions
+    const analyses = await db.query(
+      `SELECT * FROM ai_decisions ORDER BY created_at DESC LIMIT $1`,
+      [limit]
+    );
+
+    // Get recent trades
+    const trades = await db.query(
+      `SELECT * FROM trades ORDER BY executed_at DESC LIMIT $1`,
+      [limit]
+    );
+
+    // Get recent alerts
+    const alerts = await db.query(
+      `SELECT * FROM alerts ORDER BY sent_at DESC LIMIT $1`,
+      [limit]
+    );
+
+    const html = generateLogsHTML(analyses.rows, trades.rows, alerts.rows);
+    res.send(html);
+  } catch (error) {
+    console.error('Logs error:', error);
+    res.status(500).send('Error loading logs');
+  }
+});
+
 function generateDashboardHTML(analyses, positions, trades, snapshot) {
   const totalValue = snapshot?.total_value || 100000;
   const cash = snapshot?.cash || snapshot?.cash_balance || 100000;
@@ -591,6 +624,170 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
       }
     }
 
+    // Auto-refresh every 2 minutes
+    setTimeout(() => location.reload(), 120000);
+  </script>
+</body>
+</html>
+  `;
+}
+
+function generateLogsHTML(analyses, trades, alerts) {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Whiskie Logs</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0e27;
+      color: #e0e0e0;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      color: #888;
+      margin-bottom: 30px;
+      font-size: 1.1rem;
+    }
+    .section {
+      background: #1a1f3a;
+      padding: 25px;
+      border-radius: 12px;
+      margin-bottom: 25px;
+      border: 1px solid #2a2f4a;
+    }
+    .section-title {
+      font-size: 1.5rem;
+      margin-bottom: 20px;
+      color: #fff;
+    }
+    .log-entry {
+      background: #0f1425;
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      border-left: 4px solid #667eea;
+    }
+    .log-entry.trade { border-left-color: #10b981; }
+    .log-entry.alert { border-left-color: #f59e0b; }
+    .log-entry.error { border-left-color: #ef4444; }
+    .log-time {
+      color: #888;
+      font-size: 0.85rem;
+      margin-bottom: 5px;
+    }
+    .log-type {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-right: 10px;
+    }
+    .log-type.analysis { background: #667eea20; color: #667eea; }
+    .log-type.trade { background: #10b98120; color: #10b981; }
+    .log-type.alert { background: #f59e0b20; color: #f59e0b; }
+    .log-content {
+      color: #d0d0d0;
+      margin-top: 10px;
+      font-size: 0.9rem;
+    }
+    .back-btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .back-btn:hover { opacity: 0.9; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📋 System Logs</h1>
+    <p class="subtitle">Detailed activity logs from Whiskie AI</p>
+
+    <a href="/" class="back-btn">← Back to Dashboard</a>
+
+    <div class="section">
+      <div class="section-title">AI Decisions & Analysis</div>
+      ${analyses.length === 0 ? '<p style="color: #666;">No analyses logged yet.</p>' :
+        analyses.map(a => `
+          <div class="log-entry">
+            <div class="log-time">${new Date(a.created_at).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET</div>
+            <span class="log-type analysis">${a.decision_type}</span>
+            ${a.symbol ? `<strong>${a.symbol}</strong>` : ''}
+            <div class="log-content">
+              <strong>Recommendation:</strong> ${a.recommendation.substring(0, 200)}${a.recommendation.length > 200 ? '...' : ''}
+              ${a.model_used ? `<br><em>Model: ${a.model_used}</em>` : ''}
+              ${a.total_tokens ? `<br><em>Tokens: ${a.total_tokens.toLocaleString()}</em>` : ''}
+            </div>
+          </div>
+        `).join('')
+      }
+    </div>
+
+    <div class="section">
+      <div class="section-title">Trade Executions</div>
+      ${trades.length === 0 ? '<p style="color: #666;">No trades executed yet.</p>' :
+        trades.map(t => `
+          <div class="log-entry trade">
+            <div class="log-time">${new Date(t.executed_at).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET</div>
+            <span class="log-type trade">${t.action.toUpperCase()}</span>
+            <strong>${t.symbol}</strong> - ${t.quantity} shares @ $${t.price}
+            <div class="log-content">
+              <strong>Total Value:</strong> $${t.total_value}
+              <br><strong>Status:</strong> ${t.status}
+              ${t.order_id ? `<br><strong>Order ID:</strong> ${t.order_id}` : ''}
+              ${t.reasoning ? `<br><strong>Reasoning:</strong> ${t.reasoning.substring(0, 150)}...` : ''}
+            </div>
+          </div>
+        `).join('')
+      }
+    </div>
+
+    <div class="section">
+      <div class="section-title">Alerts & Notifications</div>
+      ${alerts.length === 0 ? '<p style="color: #666;">No alerts sent yet.</p>' :
+        alerts.map(a => `
+          <div class="log-entry alert ${a.severity === 'high' ? 'error' : ''}">
+            <div class="log-time">${new Date(a.sent_at).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET</div>
+            <span class="log-type alert">${a.alert_type}</span>
+            ${a.symbol ? `<strong>${a.symbol}</strong>` : ''}
+            <div class="log-content">
+              ${a.message}
+              ${a.severity ? `<br><em>Severity: ${a.severity}</em>` : ''}
+            </div>
+          </div>
+        `).join('')
+      }
+    </div>
+
+    <p style="color: #666; text-align: center; margin-top: 30px;">
+      Showing last 100 entries per category • Auto-refresh every 2 minutes
+    </p>
+  </div>
+
+  <script>
     // Auto-refresh every 2 minutes
     setTimeout(() => location.reload(), 120000);
   </script>

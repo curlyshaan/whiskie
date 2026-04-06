@@ -22,59 +22,58 @@ if not DATABASE_URL:
 
 def get_all_stocks():
     """Get all stock symbols from sub-industry data"""
-    conn = psycopg2.connect(DATABASE_URL)
-    cur = conn.cursor()
+    # Read from the JavaScript file and extract all unique symbols
+    import re
 
-    # Get unique symbols from the stocks we track
-    # For now, just use a hardcoded list of common stocks
-    # You can expand this to read from your sub-industry-data.js
-    stocks = [
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK.B',
-        'V', 'JPM', 'JNJ', 'WMT', 'PG', 'MA', 'HD', 'CVX', 'MRK', 'ABBV',
-        'KO', 'PEP', 'COST', 'AVGO', 'TMO', 'MCD', 'CSCO', 'ACN', 'LIN',
-        'ABT', 'DHR', 'NKE', 'TXN', 'NEE', 'PM', 'UNP', 'RTX', 'COP',
-        'QCOM', 'HON', 'UPS', 'INTU', 'LOW', 'SPGI', 'AMD', 'SBUX', 'GS',
-        'BA', 'CAT', 'DE', 'AXP', 'BLK', 'GILD', 'MDLZ', 'ADI', 'ISRG',
-        'LMT', 'MMC', 'CI', 'BKNG', 'SYK', 'VRTX', 'PLD', 'REGN', 'ZTS',
-        'CB', 'DUK', 'SO', 'TGT', 'BMY', 'SCHW', 'MO', 'PGR', 'EOG',
-        'CL', 'ITW', 'HUM', 'BDX', 'APD', 'SLB', 'GD', 'NOC', 'TJX',
-        'USB', 'AON', 'CME', 'ICE', 'PNC', 'MCO', 'CCI', 'NSC', 'ETN'
-    ]
+    try:
+        with open('src/sub-industry-data.js', 'r') as f:
+            content = f.read()
 
-    conn.close()
-    return stocks
+        # Extract all arrays of stock symbols
+        # Pattern matches: ["SYMBOL1", "SYMBOL2", ...]
+        pattern = r'\[([^\]]+)\]'
+        matches = re.findall(pattern, content)
+
+        stocks = set()
+        for match in matches:
+            # Extract individual symbols from the array
+            symbols = re.findall(r'"([A-Z][A-Z0-9.]*)"', match)
+            stocks.update(symbols)
+
+        return sorted(list(stocks))
+    except Exception as e:
+        print(f"Error reading sub-industry-data.js: {e}")
+        print("Falling back to hardcoded list")
+        # Fallback to a smaller list if file reading fails
+        return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA']
 
 def fetch_earnings_date(symbol):
     """Fetch earnings date for a symbol using yfinance"""
     try:
         ticker = yf.Ticker(symbol)
 
-        # Get earnings dates
-        earnings_dates = ticker.earnings_dates
+        # Get calendar data which includes earnings date
+        calendar = ticker.calendar
 
-        if earnings_dates is None or len(earnings_dates) == 0:
+        if calendar is None or not isinstance(calendar, dict):
             return None, None
 
-        # Get the next upcoming earnings date
-        # Convert datetime.now() to timezone-aware to match pandas DatetimeIndex
-        from datetime import timezone
-        now = datetime.now(timezone.utc)
+        # Calendar returns a dict with 'Earnings Date' key
+        if 'Earnings Date' in calendar:
+            earnings_dates = calendar['Earnings Date']
 
-        # Filter for future dates
-        future_dates = earnings_dates[earnings_dates.index >= now]
+            # earnings_dates is a list of datetime.date objects
+            if isinstance(earnings_dates, list) and len(earnings_dates) > 0:
+                # Get the first (next) earnings date
+                next_earnings = earnings_dates[0]
 
-        if len(future_dates) == 0:
-            return None, None
+                # Check if it's in the future
+                from datetime import date
+                if next_earnings >= date.today():
+                    earnings_date = next_earnings.strftime('%Y-%m-%d')
+                    return earnings_date, 'unknown'
 
-        # Get the first future date
-        next_earnings = future_dates.index[0]
-        earnings_date = next_earnings.strftime('%Y-%m-%d')
-
-        # Try to determine if BMO or AMC
-        # yfinance doesn't always provide this, so default to unknown
-        earnings_time = 'unknown'
-
-        return earnings_date, earnings_time
+        return None, None
 
     except Exception as e:
         print(f"Error fetching {symbol}: {str(e)}")
