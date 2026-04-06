@@ -1,5 +1,6 @@
 import express from 'express';
 import db from './db.js';
+import { stripThinkingBlocks } from './utils.js';
 
 const router = express.Router();
 
@@ -399,13 +400,14 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
           const outputTokens = a.output_tokens || 0;
           const totalTokens = a.total_tokens || (inputTokens + outputTokens);
 
+          const cleanedRecommendation = stripThinkingBlocks(a.recommendation || 'No recommendation');
           return `
             <details>
               <summary>
                 ${time} ET Analysis <span class="timestamp">(${date})</span>
                 ${totalTokens > 0 ? `<span class="token-usage"> • ${totalTokens.toLocaleString()} tokens</span>` : ''}
               </summary>
-              <div class="analysis-content">${a.recommendation || 'No recommendation'}</div>
+              <div class="analysis-content">${cleanedRecommendation}</div>
             </details>
           `;
         }).join('')

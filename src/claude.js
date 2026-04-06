@@ -260,17 +260,19 @@ ${JSON.stringify(economic, null, 2)}
 
     // Strip out thinking protocol tags if they appear in the text
     // Some APIs return thinking inline wrapped in <thinking_protocol> tags
-    if (analysisText.includes('<thinking_protocol>')) {
-      const thinkingStart = analysisText.indexOf('<thinking_protocol>');
-      const thinkingEnd = analysisText.indexOf('</thinking_protocol>');
-      if (thinkingStart !== -1 && thinkingEnd !== -1) {
-        // Remove everything from <thinking_protocol> to </thinking_protocol>
-        analysisText = analysisText.substring(0, thinkingStart) +
-                      analysisText.substring(thinkingEnd + '</thinking_protocol>'.length);
-        // Clean up extra whitespace
-        analysisText = analysisText.trim();
-      }
-    }
+    // This is more aggressive - removes ALL thinking blocks regardless of format
+
+    // Remove <thinking_protocol>...</thinking_protocol> blocks
+    analysisText = analysisText.replace(/<thinking_protocol>[\s\S]*?<\/thinking_protocol>/gi, '');
+
+    // Remove any remaining thinking tags
+    analysisText = analysisText.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+
+    // Remove markdown thinking blocks
+    analysisText = analysisText.replace(/```thinking[\s\S]*?```/gi, '');
+
+    // Clean up excessive whitespace left behind
+    analysisText = analysisText.replace(/\n{3,}/g, '\n\n').trim();
 
     return {
       analysis: analysisText,
