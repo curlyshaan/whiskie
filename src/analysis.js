@@ -59,26 +59,21 @@ class AnalysisEngine {
       const dbPos = dbPositions.find(p => p.symbol === tp.symbol);
 
       // Calculate per-share cost basis
-      // Tradier sometimes returns total cost, not per-share
+      // IMPORTANT: Tradier API returns cost_basis as TOTAL COST, not per-share
+      // See: https://docs.tradier.com/reference/brokerage-api-accounts-get-account-positions
       let costBasis = dbPos?.cost_basis || 0;
       if (tp.cost_basis && tp.quantity) {
-        const tradierCostBasis = parseFloat(tp.cost_basis);
+        const tradierTotalCost = parseFloat(tp.cost_basis);
         const quantity = parseInt(tp.quantity);
 
-        // If Tradier's cost_basis is much larger than current price, it's likely total cost
-        // Use a more robust check: if cost_basis / quantity is close to current price, it's total cost
-        const perShareIfTotal = tradierCostBasis / quantity;
-        const currentPrice = parseFloat(tp.last);
-
-        // If dividing by quantity gives us something within 50% of current price, it's total cost
-        if (Math.abs(perShareIfTotal - currentPrice) / currentPrice < 0.5) {
-          costBasis = perShareIfTotal; // Convert to per-share
-        } else if (tradierCostBasis > currentPrice * 2) {
-          // Fallback: if cost basis is way higher than current price, likely total cost
-          costBasis = tradierCostBasis / quantity;
-        } else {
-          costBasis = tradierCostBasis; // Already per-share
+        // CRITICAL: Guard against division by zero
+        if (quantity === 0) {
+          console.warn(`⚠️ Skipping ${tp.symbol}: quantity is zero`);
+          continue;
         }
+
+        // Always divide by abs(quantity) to get per-share cost (handles shorts)
+        costBasis = tradierTotalCost / Math.abs(quantity);
       }
 
       merged.push({

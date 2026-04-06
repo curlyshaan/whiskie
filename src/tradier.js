@@ -5,6 +5,14 @@ dotenv.config();
 
 const isPaperTrading = process.env.NODE_ENV === 'paper';
 
+// CRITICAL SAFETY: Hardcode sandbox URL to prevent accidental live trading
+const BASE_URL = 'https://sandbox.tradier.com/v1';
+
+// Runtime assertion to ensure we're using sandbox
+if (!BASE_URL.includes('sandbox')) {
+  throw new Error('SAFETY CHECK FAILED: Refusing to run against live Tradier API. BASE_URL must contain "sandbox".');
+}
+
 // Use sandbox credentials for paper trading
 const TRADIER_API_KEY = isPaperTrading
   ? process.env.TRADIER_SANDBOX_API_KEY
@@ -13,10 +21,6 @@ const TRADIER_API_KEY = isPaperTrading
 const TRADIER_ACCOUNT_ID = isPaperTrading
   ? process.env.TRADIER_SANDBOX_ACCOUNT_ID
   : process.env.TRADIER_ACCOUNT_ID;
-
-const BASE_URL = isPaperTrading
-  ? process.env.TRADIER_SANDBOX_URL
-  : process.env.TRADIER_BASE_URL;
 
 /**
  * Tradier API Wrapper
@@ -29,23 +33,45 @@ class TradierAPI {
       headers: {
         'Authorization': `Bearer ${TRADIER_API_KEY}`,
         'Accept': 'application/json'
-      }
+      },
+      timeout: 30000 // 30 second timeout
     });
+
+    this.MAX_RETRIES = 3;
+    this.BACKOFF_MS = [2000, 5000, 15000]; // Exponential backoff
+  }
+
+  /**
+   * Execute API call with retry logic and graceful degradation
+   */
+  async executeWithRetry(apiCall, operationName) {
+    for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
+      try {
+        return await apiCall();
+      } catch (error) {
+        const isLastAttempt = attempt === this.MAX_RETRIES - 1;
+
+        if (isLastAttempt) {
+          console.error(`❌ ${operationName} failed after ${this.MAX_RETRIES} attempts:`, error.message);
+          throw new Error(`Tradier API unavailable: ${operationName} failed`);
+        }
+
+        console.warn(`⚠️ ${operationName} attempt ${attempt + 1} failed, retrying in ${this.BACKOFF_MS[attempt]}ms...`);
+        await new Promise(resolve => setTimeout(resolve, this.BACKOFF_MS[attempt]));
+      }
+    }
   }
 
   /**
    * Get current stock quote
    */
   async getQuote(symbol) {
-    try {
+    return this.executeWithRetry(async () => {
       const response = await this.client.get('/markets/quotes', {
         params: { symbols: symbol }
       });
       return response.data.quotes.quote;
-    } catch (error) {
-      console.error(`Error fetching quote for ${symbol}:`, error.message);
-      throw error;
-    }
+    }, `getQuote(${symbol})`);
   }
 
   /**
@@ -111,13 +137,10 @@ class TradierAPI {
    * Get current positions
    */
   async getPositions(accountId = TRADIER_ACCOUNT_ID) {
-    try {
+    return this.executeWithRetry(async () => {
       const response = await this.client.get(`/accounts/${accountId}/positions`);
       return response.data.positions?.position || [];
-    } catch (error) {
-      console.error('Error fetching positions:', error.message);
-      throw error;
-    }
+    }, 'getPositions');
   }
 
   /**

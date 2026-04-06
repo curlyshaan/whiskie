@@ -7,6 +7,7 @@ import claude from './claude.js';
 import tavily from './tavily.js';
 import email from './email.js';
 import riskManager from './risk-manager.js';
+import tradeSafeguard from './trade-safeguard.js';
 import analysisEngine from './analysis.js';
 import * as db from './db.js';
 import { SUB_INDUSTRIES, getAllSubIndustries } from './sub-industry-data.js';
@@ -1173,6 +1174,14 @@ ${historyContext}`;
       if (validation.warnings.length > 0) {
         console.log('⚠️ Warnings:');
         validation.warnings.forEach(warn => console.log(`   - ${warn}`));
+      }
+
+      // CRITICAL: Check trade safeguards (code-enforced limits)
+      const safeguardCheck = await tradeSafeguard.canTrade(symbol, action, quantity, price);
+      if (!safeguardCheck.allowed) {
+        console.log('🚫 Trade blocked by safeguards:');
+        safeguardCheck.errors.forEach(err => console.log(`   - ${err}`));
+        return { success: false, errors: safeguardCheck.errors };
       }
 
       // Place order
