@@ -796,13 +796,7 @@ ${historyContext}`;
       console.log('─────────────────────────────────────');
       console.log('');
 
-      if (analysis.thinking) {
-        console.log('🧠 THINKING PROCESS (first 800 chars):');
-        console.log('─────────────────────────────────────');
-        console.log(analysis.thinking.substring(0, 800));
-        console.log('─────────────────────────────────────');
-        console.log('');
-      }
+      // Thinking block is stored internally but not displayed to user
 
       console.log('💾 Saving analysis to database...');
 
