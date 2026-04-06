@@ -277,6 +277,43 @@ class WhiskieBot {
       console.log(`   Positions: ${portfolio.positions.length}`);
       console.log(`   Drawdown: ${(portfolio.drawdown * 100).toFixed(2)}%\n`);
 
+      // Sync positions to database (reconcile Tradier with database)
+      console.log('📦 Syncing positions with Tradier...');
+      const dbPositions = await db.getPositions();
+
+      // Get symbols from both sources
+      const tradierSymbols = new Set(portfolio.positions.map(p => p.symbol));
+      const dbSymbols = new Set(dbPositions.map(p => p.symbol));
+
+      // Remove positions from database that no longer exist in Tradier
+      for (const dbPos of dbPositions) {
+        if (!tradierSymbols.has(dbPos.symbol)) {
+          console.log(`   🗑️ Removing ${dbPos.symbol} (no longer in Tradier)`);
+          await db.query('DELETE FROM positions WHERE symbol = $1', [dbPos.symbol]);
+          await db.query('DELETE FROM position_lots WHERE symbol = $1', [dbPos.symbol]);
+        }
+      }
+
+      // Add/update positions from Tradier to database
+      for (const pos of portfolio.positions) {
+        await db.upsertPosition({
+          symbol: pos.symbol,
+          quantity: pos.quantity,
+          cost_basis: pos.cost_basis,
+          current_price: pos.currentPrice,
+          sector: pos.sector,
+          stock_type: pos.stock_type
+        });
+
+        if (!dbSymbols.has(pos.symbol)) {
+          console.log(`   ✅ Added ${pos.symbol}`);
+        } else {
+          console.log(`   🔄 Updated ${pos.symbol}`);
+        }
+      }
+
+      console.log('');
+
       // Analyze portfolio health
       console.log('🔍 Analyzing portfolio health...');
       const health = await analysisEngine.analyzePortfolioHealth(portfolio);

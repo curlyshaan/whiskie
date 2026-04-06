@@ -19,7 +19,10 @@ class EmailAlerts {
         auth: {
           user: 'apikey',
           pass: process.env.SENDGRID_API_KEY
-        }
+        },
+        connectionTimeout: 60000, // 60 seconds
+        greetingTimeout: 30000,
+        socketTimeout: 60000
       });
       console.log('📧 Email configured with SendGrid');
     } else {
@@ -28,7 +31,10 @@ class EmailAlerts {
         auth: {
           user: process.env.EMAIL_USER,
           pass: process.env.EMAIL_PASS
-        }
+        },
+        connectionTimeout: 60000, // 60 seconds
+        greetingTimeout: 30000,
+        socketTimeout: 60000
       });
       console.log('📧 Email configured with Gmail');
     }
@@ -223,19 +229,32 @@ class EmailAlerts {
    * Generic email sender
    */
   async sendEmail(subject, html) {
-    try {
-      const info = await this.transporter.sendMail({
-        from: `"Whiskie Bot" <${this.fromEmail}>`,
-        to: this.alertEmail,
-        subject,
-        html
-      });
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY_MS = 5000; // 5 seconds
 
-      console.log('Email sent:', info.messageId);
-      return info;
-    } catch (error) {
-      console.error('Email error:', error.message);
-      throw error;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const info = await this.transporter.sendMail({
+          from: `"Whiskie Bot" <${this.fromEmail}>`,
+          to: this.alertEmail,
+          subject,
+          html
+        });
+
+        console.log('Email sent:', info.messageId);
+        return info;
+      } catch (error) {
+        const isLastAttempt = attempt === MAX_RETRIES;
+
+        if (isLastAttempt) {
+          console.error(`Email failed after ${MAX_RETRIES} attempts:`, error.message);
+          // Don't throw - log and continue (email failure shouldn't stop analysis)
+          return null;
+        }
+
+        console.warn(`Email attempt ${attempt} failed, retrying in ${RETRY_DELAY_MS}ms...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+      }
     }
   }
 
