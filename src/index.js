@@ -465,7 +465,7 @@ class WhiskieBot {
     });
 
     // Send email alert
-    await email.sendTradeRecommendation({
+    const emailResult = await email.sendTradeRecommendation({
       action: 'sell',
       symbol,
       quantity: position.quantity,
@@ -476,7 +476,11 @@ class WhiskieBot {
       takeProfit: 0
     });
 
-    console.log(`   📧 Email sent for approval`);
+    if (emailResult) {
+      console.log(`   📧 Email sent successfully`);
+    } else {
+      console.log(`   ⚠️ Email failed to send (check SendGrid sender verification)`);
+    }
   }
 
   /**
