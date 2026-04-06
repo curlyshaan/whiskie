@@ -256,8 +256,24 @@ ${JSON.stringify(economic, null, 2)}
     const textBlock = response.content.find(b => b.type === 'text');
     const thinkingBlock = response.content.find(b => b.type === 'thinking');
 
+    let analysisText = textBlock?.text || '';
+
+    // Strip out thinking protocol tags if they appear in the text
+    // Some APIs return thinking inline wrapped in <thinking_protocol> tags
+    if (analysisText.includes('<thinking_protocol>')) {
+      const thinkingStart = analysisText.indexOf('<thinking_protocol>');
+      const thinkingEnd = analysisText.indexOf('</thinking_protocol>');
+      if (thinkingStart !== -1 && thinkingEnd !== -1) {
+        // Remove everything from <thinking_protocol> to </thinking_protocol>
+        analysisText = analysisText.substring(0, thinkingStart) +
+                      analysisText.substring(thinkingEnd + '</thinking_protocol>'.length);
+        // Clean up extra whitespace
+        analysisText = analysisText.trim();
+      }
+    }
+
     return {
-      analysis: textBlock?.text || '',
+      analysis: analysisText,
       thinking: thinkingBlock?.thinking || null, // Stored but not displayed
       model: response.model,
       usage: response.usage
