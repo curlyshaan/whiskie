@@ -12,6 +12,37 @@ function markdownToHtml(text) {
 
   let html = text;
 
+  // Convert markdown tables to HTML
+  const tableRegex = /\|(.+)\|\n\|[-:\s|]+\|\n((?:\|.+\|\n?)+)/g;
+  html = html.replace(tableRegex, (match, header, rows) => {
+    const headers = header.split('|').map(h => h.trim()).filter(h => h);
+    const rowData = rows.trim().split('\n').map(row =>
+      row.split('|').map(cell => cell.trim()).filter(cell => cell)
+    );
+
+    let table = '<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">';
+
+    // Header
+    table += '<thead><tr>';
+    headers.forEach(h => {
+      table += `<th style="border: 1px solid #2a2f4a; padding: 8px; background: #0f1425; text-align: left;">${h}</th>`;
+    });
+    table += '</tr></thead>';
+
+    // Body
+    table += '<tbody>';
+    rowData.forEach(row => {
+      table += '<tr>';
+      row.forEach(cell => {
+        table += `<td style="border: 1px solid #2a2f4a; padding: 8px;">${cell}</td>`;
+      });
+      table += '</tr>';
+    });
+    table += '</tbody></table>';
+
+    return table;
+  });
+
   // Convert headers
   html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
   html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
