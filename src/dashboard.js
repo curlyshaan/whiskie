@@ -5,6 +5,40 @@ import { stripThinkingBlocks } from './utils.js';
 const router = express.Router();
 
 /**
+ * Convert markdown to HTML for display
+ */
+function markdownToHtml(text) {
+  if (!text) return '';
+
+  let html = text;
+
+  // Convert headers
+  html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+  html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+  html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+
+  // Convert bold
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+  // Convert bullet points
+  html = html.replace(/^- (.*$)/gim, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+
+  // Convert numbered lists
+  html = html.replace(/^\d+\. (.*$)/gim, '<li>$1</li>');
+
+  // Convert line breaks to paragraphs
+  html = html.split('\n\n').map(para => {
+    if (para.trim() && !para.startsWith('<')) {
+      return `<p>${para}</p>`;
+    }
+    return para;
+  }).join('\n');
+
+  return html;
+}
+
+/**
  * Dashboard UI - View all analyses and recommendations
  */
 router.get('/', async (req, res) => {
@@ -266,11 +300,40 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
       margin-top: 10px;
       border-radius: 8px;
       color: #d0d0d0;
-      white-space: pre-wrap;
       font-size: 0.95rem;
       line-height: 1.8;
       max-height: 600px;
       overflow-y: auto;
+    }
+    .analysis-content h1, .analysis-content h2, .analysis-content h3 {
+      color: #fff;
+      margin-top: 20px;
+      margin-bottom: 10px;
+    }
+    .analysis-content h1 { font-size: 1.5rem; }
+    .analysis-content h2 { font-size: 1.3rem; }
+    .analysis-content h3 { font-size: 1.1rem; }
+    .analysis-content strong { color: #fff; font-weight: 600; }
+    .analysis-content ul, .analysis-content ol {
+      margin-left: 20px;
+      margin-top: 10px;
+      margin-bottom: 10px;
+    }
+    .analysis-content li { margin-bottom: 5px; }
+    .analysis-content p { margin-bottom: 10px; }
+    .analysis-content code {
+      background: #1a1f3a;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      color: #10b981;
+    }
+    .analysis-content pre {
+      background: #1a1f3a;
+      padding: 15px;
+      border-radius: 5px;
+      overflow-x: auto;
+      margin: 10px 0;
     }
     .token-usage {
       color: #888;
@@ -401,13 +464,14 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
           const totalTokens = a.total_tokens || (inputTokens + outputTokens);
 
           const cleanedRecommendation = stripThinkingBlocks(a.recommendation || 'No recommendation');
+          const htmlContent = markdownToHtml(cleanedRecommendation);
           return `
             <details>
               <summary>
                 ${time} ET Analysis <span class="timestamp">(${date})</span>
                 ${totalTokens > 0 ? `<span class="token-usage"> • ${totalTokens.toLocaleString()} tokens</span>` : ''}
               </summary>
-              <div class="analysis-content">${cleanedRecommendation}</div>
+              <div class="analysis-content">${htmlContent}</div>
             </details>
           `;
         }).join('')
