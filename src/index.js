@@ -184,6 +184,26 @@ class WhiskieBot {
       }
     });
 
+    app.post('/weekly-review', async (req, res) => {
+      try {
+        console.log('📡 Manual weekly review triggered via API');
+
+        // Import and run weekly review
+        const { runWeeklyReview } = await import('./weekly-review.js');
+        runWeeklyReview().catch(console.error);
+
+        res.json({
+          success: true,
+          message: 'Weekly review started. This will take 5-10 minutes. Check logs for progress.'
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
     app.get('/status', (req, res) => {
       res.json({
         running: this.isRunning,
