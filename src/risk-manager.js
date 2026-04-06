@@ -167,7 +167,14 @@ class RiskManager {
    */
   shouldTriggerStopLoss(position, currentPrice) {
     const loss = (currentPrice - position.cost_basis) / position.cost_basis;
-    const stopLossLevel = this.calculateStopLoss(position.stockType, position.cost_basis);
+    const stockType = position.stock_type || position.stockType || 'large-cap';
+    const stopLossLevel = this.calculateStopLoss(stockType, position.cost_basis);
+
+    // Debug logging
+    console.log(`Stop-loss check for ${position.symbol}:`);
+    console.log(`  Current: $${currentPrice}, Cost basis: $${position.cost_basis}`);
+    console.log(`  Stop-loss level: $${stopLossLevel.toFixed(2)}`);
+    console.log(`  Trigger: ${currentPrice <= stopLossLevel}`);
 
     return currentPrice <= stopLossLevel;
   }
