@@ -22,6 +22,20 @@ class AnalysisEngine {
       const positions = await tradier.getPositions();
       const dbPositions = await getPositions();
 
+      // Merge positions
+      const mergedPositions = this.mergePositions(positions, dbPositions);
+
+      // Fetch current prices for each position
+      for (const position of mergedPositions) {
+        try {
+          const quote = await tradier.getQuote(position.symbol);
+          position.currentPrice = quote.last || quote.close || 0;
+        } catch (error) {
+          console.warn(`⚠️ Failed to fetch price for ${position.symbol}:`, error.message);
+          position.currentPrice = 0;
+        }
+      }
+
       // Calculate portfolio metrics
       const cash = balances.total_cash || balances.cash?.cash_available || 0;
       const positionsValue = balances.long_market_value || 0;
@@ -34,7 +48,7 @@ class AnalysisEngine {
         totalValue,
         cash,
         positionsValue,
-        positions: this.mergePositions(positions, dbPositions),
+        positions: mergedPositions,
         drawdown,
         balances
       };
@@ -76,11 +90,13 @@ class AnalysisEngine {
         costBasis = tradierTotalCost / Math.abs(quantity);
       }
 
+      // NOTE: Tradier positions API doesn't include current price
+      // We'll fetch it separately in getPortfolioState
       merged.push({
         symbol: tp.symbol,
         quantity: tp.quantity,
         cost_basis: costBasis,
-        currentPrice: tp.last || 0,
+        currentPrice: 0, // Will be updated with quote data
         sector: dbPos?.sector || 'Unknown',
         stock_type: dbPos?.stock_type || 'large-cap',
         entry_date: dbPos?.entry_date || new Date(),
