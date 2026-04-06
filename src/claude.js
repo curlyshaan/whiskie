@@ -250,6 +250,7 @@ ${JSON.stringify(economic, null, 2)}
 
   /**
    * Parse Claude's response
+   * Note: thinking blocks are kept internal, only text is returned to user
    */
   parseAnalysisResponse(response) {
     const textBlock = response.content.find(b => b.type === 'text');
@@ -257,7 +258,7 @@ ${JSON.stringify(economic, null, 2)}
 
     return {
       analysis: textBlock?.text || '',
-      thinking: thinkingBlock?.thinking || null,
+      thinking: thinkingBlock?.thinking || null, // Stored but not displayed
       model: response.model,
       usage: response.usage
     };

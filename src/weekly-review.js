@@ -107,6 +107,7 @@ OTHER: [Any other actions]
 
     console.log(`\n🧠 Opus Review for ${symbol}:`);
     console.log(analysis.analysis);
+    // Note: Thinking block is stored but not displayed
 
     // Parse recommendations
     const recommendations = parseOpusRecommendations(analysis.analysis, lots, currentPrice);

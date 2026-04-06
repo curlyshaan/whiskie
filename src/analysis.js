@@ -66,8 +66,16 @@ class AnalysisEngine {
         const quantity = parseInt(tp.quantity);
 
         // If Tradier's cost_basis is much larger than current price, it's likely total cost
-        if (tradierCostBasis > tp.last * 2) {
-          costBasis = tradierCostBasis / quantity; // Convert to per-share
+        // Use a more robust check: if cost_basis / quantity is close to current price, it's total cost
+        const perShareIfTotal = tradierCostBasis / quantity;
+        const currentPrice = parseFloat(tp.last);
+
+        // If dividing by quantity gives us something within 50% of current price, it's total cost
+        if (Math.abs(perShareIfTotal - currentPrice) / currentPrice < 0.5) {
+          costBasis = perShareIfTotal; // Convert to per-share
+        } else if (tradierCostBasis > currentPrice * 2) {
+          // Fallback: if cost basis is way higher than current price, likely total cost
+          costBasis = tradierCostBasis / quantity;
         } else {
           costBasis = tradierCostBasis; // Already per-share
         }

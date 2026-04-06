@@ -142,12 +142,30 @@
    - 1000 searches/month free
    - Web search for news
 
+4. **Railway (Hosting):**
+   - Project Token: `bce52b45-fc6c-4031-9645-1613bf9f9a1c`
+   - App URL: `https://whiskie-production.up.railway.app`
+   - Service Name: `whiskie`
+   - Environment: `production`
+   
+   **Railway CLI Usage:**
+   ```bash
+   # Set token for Railway commands
+   export RAILWAY_TOKEN=bce52b45-fc6c-4031-9645-1613bf9f9a1c
+   
+   # View logs
+   railway logs --service whiskie
+   
+   # Check status
+   railway status
+   ```
+
 ### Need to Add:
-4. **FRED API** (Federal Reserve Economic Data)
+5. **FRED API** (Federal Reserve Economic Data)
    - FREE - no key needed for basic use
    - Economic indicators (interest rates, inflation, GDP)
 
-5. **Alpha Vantage** (optional)
+6. **Alpha Vantage** (optional)
    - FREE tier: 500 calls/day
    - Company fundamentals
 
@@ -299,6 +317,40 @@ Whiskie/
 6. **Cash is a position** - 5% cash reserve for opportunities
 7. **Stop-losses are mental, not automatic** - Avoid flash crash triggers
 8. **Trailing stops after 20% gain** - Create "free trades" where you can't lose
+
+---
+
+## 🔄 Scheduled Tasks & Manual Triggers
+
+### Cron Schedule (Automatic):
+- **10:00 AM ET (Mon-Fri):** Morning market analysis
+- **12:30 PM ET (Mon-Fri):** Mid-day check
+- **3:30 PM ET (Mon-Fri):** Before market close analysis
+- **4:30 PM ET (Mon-Fri):** Daily summary email
+- **9:00 PM ET (Sunday):** Weekly portfolio review with Claude Opus
+
+### Manual Trigger Endpoints:
+```bash
+# Trigger daily analysis manually
+curl -X POST https://whiskie-production.up.railway.app/analyze
+
+# Trigger weekly review manually (takes 5-10 minutes)
+curl -X POST https://whiskie-production.up.railway.app/weekly-review
+
+# Check bot health
+curl https://whiskie-production.up.railway.app/health
+
+# Check bot status
+curl https://whiskie-production.up.railway.app/status
+```
+
+### Weekly Review Details:
+- Reviews all positions with Claude Opus
+- Checks if investment thesis is still valid
+- Adjusts stop-loss/take-profit levels if needed
+- Checks portfolio balance and rebalancing needs
+- Sends comprehensive email summary with recommendations
+- Takes 5-10 minutes to complete (Opus is slow but thorough)
 
 ---
 
