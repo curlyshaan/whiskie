@@ -95,10 +95,7 @@ class WhiskieBot {
       cron.schedule('30 16 * * 1-5', async () => {
         console.log('\n⏰ End of day summary triggered');
         await this.sendDailySummary();
-
-        // Shut down after evening summary (save costs)
-        console.log('\n💤 Market closed. Shutting down until tomorrow...');
-        setTimeout(() => process.exit(0), 5000);
+        console.log('✅ Daily summary complete');
       }, {
         timezone: 'America/New_York'
       });
@@ -163,7 +160,6 @@ class WhiskieBot {
       console.log('📊 Daily summary: 4:30 PM ET');
       console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
       console.log('📅 Weekly review: Sunday 9:00 PM ET (Opus deep review)');
-      console.log('💤 Auto-shutdown: 4:35 PM ET (saves costs)');
       console.log('💡 Press Ctrl+C to stop\n');
 
       this.isRunning = true;
