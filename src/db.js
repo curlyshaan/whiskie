@@ -218,7 +218,9 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS thesis TEXT,
       ADD COLUMN IF NOT EXISTS days_to_long_term INTEGER,
       ADD COLUMN IF NOT EXISTS next_earnings_date DATE,
-      ADD COLUMN IF NOT EXISTS trim_history JSONB;
+      ADD COLUMN IF NOT EXISTS trim_history JSONB,
+      ADD COLUMN IF NOT EXISTS oco_order_id VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS order_modification_history JSONB;
     `);
 
     console.log('✅ Database schema initialized successfully');

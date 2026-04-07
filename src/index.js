@@ -9,6 +9,7 @@ import email from './email.js';
 import riskManager from './risk-manager.js';
 import tradeSafeguard from './trade-safeguard.js';
 import analysisEngine from './analysis.js';
+import orderManager from './order-manager.js';
 import * as db from './db.js';
 import { SUB_INDUSTRIES, getAllSubIndustries } from './sub-industry-data.js';
 import { updateAllEarnings } from './earnings.js';
@@ -48,6 +49,10 @@ class WhiskieBot {
     try {
       // Initialize database
       await db.initDatabase();
+
+      // Load active orders from database
+      await orderManager.loadActiveOrders();
+      console.log('✅ Order manager initialized\n');
 
       // Start API server FIRST so Railway knows we're alive
       this.startAPIServer();
@@ -409,6 +414,25 @@ class WhiskieBot {
       const earningsResults = await runEarningsDayAnalysis();
       if (earningsResults.analyzed > 0) {
         console.log(`✅ Analyzed ${earningsResults.analyzed} positions with upcoming earnings\n`);
+      }
+
+      // Analyze and modify orders based on news/events
+      console.log('🔄 Analyzing orders for potential modifications...');
+      let ordersModified = 0;
+      for (const position of portfolio.positions) {
+        const result = await orderManager.analyzeAndModifyOrders(
+          position.symbol,
+          position,
+          position.currentPrice
+        );
+        if (result && result.success && result.action !== 'NO_ACTION') {
+          ordersModified++;
+        }
+      }
+      if (ordersModified > 0) {
+        console.log(`✅ Modified ${ordersModified} orders based on AI analysis\n`);
+      } else {
+        console.log(`✅ All orders remain appropriate\n`);
       }
 
       // Update days held for all lots (tax tracking)
