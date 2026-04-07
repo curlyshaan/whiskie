@@ -14,43 +14,80 @@ class OrderManager {
 
   /**
    * Place initial position with OCO (stop-loss + take-profit)
+   * Can use market entry or limit entry (OTOCO)
    */
-  async placePositionWithProtection(symbol, quantity, entryPrice, stopLoss, takeProfit) {
+  async placePositionWithProtection(symbol, quantity, entryPrice, stopLoss, takeProfit, useLimit = false) {
     try {
       console.log(`📋 Placing position for ${symbol} with protection orders...`);
 
-      // Place market buy order
-      const buyOrder = await tradier.placeOrder(symbol, 'buy', quantity, 'market');
-      console.log(`✅ Buy order placed: ${buyOrder.id}`);
+      if (useLimit) {
+        // Use OTOCO: limit entry with automatic OCO bracket
+        console.log(`   Using OTOCO: Limit entry at ${entryPrice}`);
+        const otocoOrder = await tradier.placeOTOCOOrder(
+          symbol,
+          'buy',
+          quantity,
+          entryPrice,
+          stopLoss,
+          takeProfit
+        );
+        console.log(`✅ OTOCO order placed: Entry ${entryPrice}, Stop ${stopLoss}, Limit ${takeProfit}`);
 
-      // Wait a moment for fill
-      await new Promise(resolve => setTimeout(resolve, 2000));
+        // Store order details
+        this.activeOrders.set(symbol, {
+          symbol,
+          quantity,
+          entryPrice,
+          stopLoss,
+          takeProfit,
+          otocoOrderId: otocoOrder.id,
+          orderType: 'otoco',
+          lastModified: new Date(),
+          modificationHistory: []
+        });
 
-      // Place OCO order (stop-loss + take-profit)
-      const ocoOrder = await tradier.placeOCOOrder(symbol, quantity, stopLoss, takeProfit);
-      console.log(`✅ OCO order placed: Stop ${stopLoss}, Limit ${takeProfit}`);
+        return {
+          otocoOrder,
+          success: true,
+          orderType: 'otoco'
+        };
+      } else {
+        // Use market entry + OCO
+        console.log(`   Using market entry with OCO bracket`);
+        const buyOrder = await tradier.placeOrder(symbol, 'buy', quantity, 'market');
+        console.log(`✅ Buy order placed: ${buyOrder.id}`);
 
-      // Store order details
-      this.activeOrders.set(symbol, {
-        symbol,
-        quantity,
-        entryPrice,
-        stopLoss,
-        takeProfit,
-        ocoOrderId: ocoOrder.id,
-        buyOrderId: buyOrder.id,
-        lastModified: new Date(),
-        modificationHistory: []
-      });
+        // Wait a moment for fill
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Place OCO order (stop-loss + take-profit)
+        const ocoOrder = await tradier.placeOCOOrder(symbol, quantity, stopLoss, takeProfit);
+        console.log(`✅ OCO order placed: Stop ${stopLoss}, Limit ${takeProfit}`);
+
+        // Store order details
+        this.activeOrders.set(symbol, {
+          symbol,
+          quantity,
+          entryPrice,
+          stopLoss,
+          takeProfit,
+          ocoOrderId: ocoOrder.id,
+          buyOrderId: buyOrder.id,
+          orderType: 'market-oco',
+          lastModified: new Date(),
+          modificationHistory: []
+        });
+
+        return {
+          buyOrder,
+          ocoOrder,
+          success: true,
+          orderType: 'market-oco'
+        };
+      }
 
       // Save to database
       await this.saveOrderToDatabase(symbol);
-
-      return {
-        buyOrder,
-        ocoOrder,
-        success: true
-      };
     } catch (error) {
       console.error(`Error placing position with protection for ${symbol}:`, error);
       throw error;

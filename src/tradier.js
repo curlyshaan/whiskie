@@ -254,6 +254,77 @@ class TradierAPI {
   }
 
   /**
+   * Place OTOCO order (One-Triggers-Other-Cancels-Other)
+   * Entry order that automatically sets up OCO bracket when filled
+   * Example: Buy at limit $100, then auto-place stop $95 + limit $110
+   */
+  async placeOTOCOOrder(symbol, side, quantity, entryPrice, stopPrice, limitPrice, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
+        params: {
+          class: 'otoco',
+          symbol,
+          side,
+          quantity,
+          type: 'limit',
+          price: entryPrice,
+          duration: 'gtc',
+          // Leg 1: Stop-loss (triggers after entry fills)
+          'order[0][type]': 'stop',
+          'order[0][stop]': stopPrice,
+          // Leg 2: Take-profit (triggers after entry fills)
+          'order[1][type]': 'limit',
+          'order[1][price]': limitPrice
+        }
+      });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error placing OTOCO order for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Place stop-limit order
+   * Triggers at stop price, then becomes limit order
+   */
+  async placeStopLimitOrder(symbol, side, quantity, stopPrice, limitPrice, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
+        params: {
+          class: 'equity',
+          symbol,
+          side,
+          quantity,
+          type: 'stop_limit',
+          stop: stopPrice,
+          price: limitPrice,
+          duration: 'gtc'
+        }
+      });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error placing stop-limit order for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Modify an existing order
+   */
+  async modifyOrder(orderId, updates, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.put(`/accounts/${accountId}/orders/${orderId}`, null, {
+        params: updates
+      });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error modifying order ${orderId}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Cancel an order
    */
   async cancelOrder(orderId, accountId = TRADIER_ACCOUNT_ID) {
@@ -262,6 +333,127 @@ class TradierAPI {
       return response.data;
     } catch (error) {
       console.error(`Error canceling order ${orderId}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get order status
+   */
+  async getOrderStatus(orderId, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.get(`/accounts/${accountId}/orders/${orderId}`);
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error getting order status ${orderId}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Place trailing stop order (dollar amount)
+   */
+  async placeTrailingStopOrder(symbol, side, quantity, trailAmount, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
+        params: {
+          class: 'equity',
+          symbol,
+          side,
+          quantity,
+          type: 'trailing_stop',
+          trail: trailAmount,
+          duration: 'gtc'
+        }
+      });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error placing trailing stop order for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Place trailing stop order (percentage)
+   */
+  async placeTrailingStopPercentOrder(symbol, side, quantity, trailPercent, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
+        params: {
+          class: 'equity',
+          symbol,
+          side,
+          quantity,
+          type: 'trailing_stop',
+          trail_percent: trailPercent,
+          duration: 'gtc'
+        }
+      });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error placing trailing stop % order for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Preview order before placing (get estimated costs)
+   */
+  async previewOrder(symbol, side, quantity, orderType, price = null, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const params = {
+        class: 'equity',
+        symbol,
+        side,
+        quantity,
+        type: orderType,
+        duration: 'day'
+      };
+      if (price) params.price = price;
+
+      const response = await this.client.post(`/accounts/${accountId}/orders/preview`, null, { params });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error previewing order for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Replace existing order (modify without cancel+replace)
+   */
+  async replaceOrder(orderId, updates, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.put(`/accounts/${accountId}/orders/${orderId}`, null, {
+        params: updates
+      });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error replacing order ${orderId}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Place order with extended hours trading
+   */
+  async placeExtendedHoursOrder(symbol, side, quantity, orderType, price = null, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const params = {
+        class: 'equity',
+        symbol,
+        side,
+        quantity,
+        type: orderType,
+        duration: 'day',
+        extended_hours: true
+      };
+      if (price) params.price = price;
+
+      const response = await this.client.post(`/accounts/${accountId}/orders`, null, { params });
+      return response.data.order;
+    } catch (error) {
+      console.error(`Error placing extended hours order for ${symbol}:`, error.message);
       throw error;
     }
   }
