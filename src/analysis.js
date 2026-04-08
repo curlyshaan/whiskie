@@ -21,7 +21,7 @@ class AnalysisEngine {
     try {
       const balances = await tradier.getBalances();
       const positions = await tradier.getPositions();
-      const dbPositions = await getPositions();
+      const dbPositions = await db.getPositions();
 
       // Merge positions
       const mergedPositions = this.mergePositions(positions, dbPositions);
