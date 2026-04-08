@@ -928,6 +928,25 @@ ${trendContext}`;
       console.log(`   Market regime: ${marketRegime.toUpperCase()}`);
       console.log(`   Target allocation: ${(targetAllocation.long * 100).toFixed(0)}% long, ${(targetAllocation.short * 100).toFixed(0)}% short, ${(targetAllocation.cash * 100).toFixed(0)}% cash`);
 
+      // Calculate current sector allocation
+      const sectorAllocation = {};
+      for (const position of portfolio.positions) {
+        const sector = position.sector || 'Unknown';
+        const value = position.quantity * position.currentPrice;
+        sectorAllocation[sector] = (sectorAllocation[sector] || 0) + value;
+      }
+
+      let sectorAllocationText = '\n**CURRENT SECTOR ALLOCATION:**\n';
+      const sortedSectors = Object.entries(sectorAllocation).sort((a, b) => b[1] - a[1]);
+      for (const [sector, value] of sortedSectors) {
+        const pct = (value / portfolio.totalValue) * 100;
+        sectorAllocationText += `- ${sector}: $${value.toLocaleString()} (${pct.toFixed(1)}%)\n`;
+      }
+      sectorAllocationText += `\n**SECTOR LIMITS:**\n`;
+      sectorAllocationText += `- Maximum per sector: 30% (soft limit)\n`;
+      sectorAllocationText += `- If adding to existing sector, ensure total stays under 30%\n`;
+      sectorAllocationText += `- Diversify across multiple sectors to avoid concentration\n`;
+
       const marketRegimeContext = `\n\n**MARKET REGIME: ${marketRegime.toUpperCase()}**
 - SPY vs 200MA: ${marketRegime === 'bull' ? 'Above rising 200MA (bullish)' : marketRegime === 'bear' ? 'Below declining 200MA (bearish)' : 'Mixed signals (transitional)'}
 - Target allocation: ${(targetAllocation.long * 100).toFixed(0)}% long, ${(targetAllocation.short * 100).toFixed(0)}% short, ${(targetAllocation.cash * 100).toFixed(0)}% cash
@@ -943,6 +962,8 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 - Cash Available: $${portfolio.cash.toLocaleString()}
 
 ${marketRegimeContext}
+
+${sectorAllocationText}
 
 **Capital Deployment Mandate:**
 - You are managing $100,000 and holding $${portfolio.cash.toLocaleString()} in cash (${((portfolio.cash/portfolio.totalValue)*100).toFixed(1)}% idle)
