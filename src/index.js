@@ -64,17 +64,10 @@ class WhiskieBot {
       this.startAPIServer();
       console.log('✅ API server started\n');
 
-      // Check if we should run now
-      const shouldRun = await this.shouldRunNow();
-
-      if (shouldRun) {
-        // Run initial analysis (in background so it doesn't block)
-        console.log('📊 Running initial portfolio analysis...\n');
-        this.runDailyAnalysis().catch(console.error);
-      } else {
-        console.log('⏰ Outside trading hours. Bot will wait for scheduled cron jobs.');
-        console.log('📅 Next scheduled run: 10:00 AM ET (Mon-Fri)\n');
-      }
+      // Disable auto-start on deployment - only run on schedule or manual trigger
+      console.log('⏰ Auto-start disabled. Bot will wait for scheduled cron jobs or manual trigger.');
+      console.log('📅 Scheduled runs: 10:00 AM ET, 2:00 PM ET (Mon-Fri)');
+      console.log('📡 Manual trigger: POST /analyze\n');
 
       // Schedule daily analysis at 10:00 AM and 2:00 PM ET
       cron.schedule('0 10 * * 1-5', async () => {
@@ -1028,7 +1021,7 @@ ${historyContext}`;
 
       console.log('📝 PHASE 2: Sending final question to Opus...');
       console.log('⏳ Extended thinking enabled (50,000 tokens MAX)');
-      console.log('⏳ Temperature: 0.1 (focused, consistent)');
+      console.log('⏳ Temperature: 1 (creative, diverse)');
       console.log('⏳ This will take 3-7 minutes...');
       console.log('');
 
