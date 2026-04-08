@@ -201,6 +201,52 @@ export async function markInsightApplied(insightId, effectiveness = 'pending') {
 }
 
 /**
+ * Build a human-readable learning summary for the last N days
+ * Used to inject into Claude's analysis prompt
+ */
+export async function getLearningSummary(days = 30) {
+  try {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+
+    // Get analyses with known outcomes
+    const result = await db.query(`
+      SELECT symbol, recommendation, outcome, price_change_pct, days_to_outcome
+      FROM stock_analysis_history
+      WHERE analysis_date >= $1
+        AND outcome IS NOT NULL
+      ORDER BY analysis_date DESC
+      LIMIT 50
+    `, [cutoff.toISOString().split('T')[0]]);
+
+    if (result.rows.length === 0) return null;
+
+    const correct = result.rows.filter(r => r.outcome === 'correct');
+    const incorrect = result.rows.filter(r => r.outcome === 'incorrect');
+
+    // Find symbols where AI was wrong repeatedly
+    const wrongSymbols = {};
+    incorrect.forEach(r => {
+      wrongSymbols[r.symbol] = (wrongSymbols[r.symbol] || 0) + 1;
+    });
+    const repeatMistakes = Object.entries(wrongSymbols)
+      .filter(([_, count]) => count > 1)
+      .map(([sym, count]) => `${sym} (wrong ${count}x)`);
+
+    let summary = `AI accuracy last ${days} days: ${correct.length}/${result.rows.length} correct (${((correct.length/result.rows.length)*100).toFixed(0)}%)`;
+    if (repeatMistakes.length > 0) {
+      summary += `\nRepeated wrong calls: ${repeatMistakes.join(', ')} — avoid these stocks`;
+    }
+
+    return summary;
+  } catch (error) {
+    console.error('Error building learning summary:', error);
+    return null;
+  }
+}
+}
+
+/**
  * Ask Opus to learn from historical patterns (daily)
  */
 export async function runDailyTrendLearning(currentPositions, recentTrades) {

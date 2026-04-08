@@ -1,4 +1,5 @@
 import tradier from './tradier.js';
+import yahooFinance from './yahoo-finance.js';
 import * as db from './db.js';
 
 /**
@@ -25,6 +26,7 @@ class ShortManager {
    */
   async isShortable(symbol, marketCap) {
     const errors = [];
+    const warnings = [];
 
     // Check market cap
     if (marketCap < this.MIN_MARKET_CAP) {
@@ -46,9 +48,39 @@ class ShortManager {
       errors.push(`Failed to verify ETB status: ${error.message}`);
     }
 
+    // Check short interest as % of float (squeeze risk)
+    try {
+      const shortStats = await yahooFinance.getShortInterest(symbol);
+
+      if (shortStats && shortStats.shortPercentOfFloat) {
+        const shortPct = shortStats.shortPercentOfFloat;
+
+        if (shortPct > 0.30) {
+          // >30% short float = very high squeeze risk, hard block
+          errors.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — extreme squeeze risk, cannot short`);
+        } else if (shortPct > 0.20) {
+          // 20-30% = elevated risk, warn but allow
+          warnings.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — elevated squeeze risk, use smaller position (5% max)`);
+        } else if (shortPct > 0.15) {
+          warnings.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — moderate squeeze risk, monitor closely`);
+        }
+
+        // Log for decision tracking
+        await db.query(
+          `UPDATE stock_universe SET short_float_pct = $1, last_updated = NOW() WHERE symbol = $2`,
+          [shortPct, symbol]
+        ).catch(() => {}); // Non-blocking
+      }
+    } catch (error) {
+      // Short interest check is non-blocking — log but don't prevent the trade
+      console.warn(`⚠️ Could not fetch short interest for ${symbol}: ${error.message}`);
+      warnings.push(`Short interest data unavailable for ${symbol} — verify manually before shorting`);
+    }
+
     return {
       shortable: errors.length === 0,
-      errors
+      errors,
+      warnings
     };
   }
 

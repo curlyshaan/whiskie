@@ -11,8 +11,13 @@ import tradeSafeguard from './trade-safeguard.js';
 import analysisEngine from './analysis.js';
 import orderManager from './order-manager.js';
 import shortManager from './short-manager.js';
-import trendLearning from './trend-learning.js';
+import trendLearning, { getLearningSummary } from './trend-learning.js';
 import correlationAnalysis from './correlation-analysis.js';
+import performanceAnalyzer from './performance-analyzer.js';
+import optionsAnalyzer from './options-analyzer.js';
+import vixRegime from './vix-regime.js';
+import sectorRotation from './sector-rotation.js';
+import { runPreMarketScan } from './pre-market-scanner.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
 import { SUB_INDUSTRIES, getAllSubIndustries } from './sub-industry-data.js';
@@ -42,6 +47,7 @@ class WhiskieBot {
     this.botStarted = false;
     this.analysisRunning = false;
     this.apiServerStarted = false;
+    this.latestGapReport = null; // Store pre-market gap scan results
     this.isPaperTrading = process.env.NODE_ENV === 'paper';
     console.log(`🤖 Whiskie Bot initialized in ${this.isPaperTrading ? 'PAPER TRADING' : 'LIVE'} mode`);
   }
@@ -66,8 +72,16 @@ class WhiskieBot {
 
       // Disable auto-start on deployment - only run on schedule or manual trigger
       console.log('⏰ Auto-start disabled. Bot will wait for scheduled cron jobs or manual trigger.');
-      console.log('📅 Scheduled runs: 10:00 AM ET, 2:00 PM ET (Mon-Fri)');
+      console.log('📅 Scheduled runs: 9:00 AM (pre-market), 10:00 AM, 2:00 PM ET (Mon-Fri)');
       console.log('📡 Manual trigger: POST /analyze\n');
+
+      // Schedule pre-market gap scanner at 9:00 AM ET
+      cron.schedule('0 9 * * 1-5', async () => {
+        console.log('\n⏰ 9:00 AM Pre-Market Gap Scan');
+        this.latestGapReport = await runPreMarketScan();
+      }, {
+        timezone: 'America/New_York'
+      });
 
       // Schedule daily analysis at 10:00 AM and 2:00 PM ET
       cron.schedule('0 10 * * 1-5', async () => {
@@ -532,6 +546,95 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       const sentiment = await claude.quickSentimentCheck(headlines);
       console.log('📊 Market Sentiment:', sentiment.analysis.substring(0, 100) + '...\n');
 
+      // Gather additional context for Claude's analysis
+      console.log('📊 Gathering market context...');
+
+      // VIX regime context
+      const vixContext = await vixRegime.buildPromptContext();
+
+      // Pre-market gap report context
+      const gapContext = this.latestGapReport
+        ? `\nPRE-MARKET GAP REPORT (9:00 AM scan):\n${this.latestGapReport.summary}`
+        : '\nPRE-MARKET: No gap scan data available.';
+
+      // Performance feedback context
+      let performanceContext = '';
+      try {
+        const perf = await performanceAnalyzer.analyzePerformance();
+        const learning = await getLearningSummary(30);
+
+        if (perf) {
+          performanceContext = `
+RECENT TRADING PERFORMANCE (last 30 days — use to calibrate confidence):
+- Win rate: ${perf.winRate} (target: 55-60%)
+- Profit factor: ${perf.profitFactor} (target: 2.0+)
+- Avg winner: ${perf.avgWin} | Avg loser: ${perf.avgLoss}
+- Top losers: ${perf.topLosers.map(l => `${l.symbol} (${l.gainLossPercent}, held ${l.daysHeld}d)`).join(', ')}
+${perf.patterns ? perf.patterns.map(p => `- Pattern: ${p}`).join('\n') : ''}
+${learning ? `\nLEARNING INSIGHTS:\n${learning}` : ''}
+
+→ If win rate < 50%: Be more selective, raise conviction bar for new entries.
+→ If a symbol appears in repeated losers: Avoid re-entering that stock for 2 weeks.
+→ If avg loser hold > avg winner hold: The bot is holding losses too long — tighten stops.
+`;
+        }
+      } catch (error) {
+        console.warn('⚠️ Could not fetch performance context:', error.message);
+      }
+
+      // Sector rotation context
+      let sectorContext = '';
+      try {
+        const cached = await db.query(
+          `SELECT metric_value FROM performance_metrics
+           WHERE metric_name = 'sector_rotation_cache'
+           ORDER BY calculated_at DESC LIMIT 1`
+        );
+        if (cached.rows[0]) {
+          const ranking = JSON.parse(cached.rows[0].metric_value);
+          sectorContext = sectorRotation.buildPromptContext(ranking);
+        }
+      } catch (e) {
+        console.warn('⚠️ Could not fetch sector rotation context:', e.message);
+      }
+
+      // Options flow context (Feature 2)
+      let optionsContext = '';
+      try {
+        const positionSymbols = portfolio.positions.map(p => p.symbol);
+        const watchlistItems = await db.getWatchlist();
+        const watchlistSymbols = watchlistItems.slice(0, 10).map(w => w.symbol);
+        const symbolsToCheck = [...new Set([...positionSymbols, ...watchlistSymbols])];
+
+        if (symbolsToCheck.length > 0) {
+          console.log('📊 Fetching options chain data...');
+          const optionsData = await optionsAnalyzer.analyzeMultipleSymbols(symbolsToCheck);
+
+          const optionsSummary = optionsData.map(o =>
+            `${o.symbol}: P/C ratio ${o.putCallVolumeRatio} (${o.sentiment}), IV ${o.impliedVolatility}` +
+            (o.unusualActivity.calls > 3 ? `, ⚠️ ${o.unusualActivity.calls} unusual call strikes` : '') +
+            (o.unusualActivity.puts > 3 ? `, ⚠️ ${o.unusualActivity.puts} unusual put strikes` : '')
+          ).join('\n');
+
+          optionsContext = `
+OPTIONS FLOW DATA (institutional sentiment signals):
+${optionsSummary}
+
+Interpretation guide:
+- P/C ratio < 0.7 = bullish options positioning
+- P/C ratio > 1.3 = bearish options positioning
+- Unusual call volume = potential large buyer positioning for upside
+- Unusual put volume = hedging or directional bet on downside
+- High IV = market expects large price move (earnings, catalyst, risk event)
+Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
+`;
+        }
+      } catch (error) {
+        console.warn('⚠️ Could not fetch options context:', error.message);
+      }
+
+      console.log('✅ Market context gathered\n');
+
       // Check if we need deep analysis (Opus)
       const cashPercent = portfolio.cash / portfolio.totalValue;
       const needsDeepAnalysis =
@@ -543,7 +646,14 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
 
       if (needsDeepAnalysis) {
         console.log('🧠 Running deep analysis with Claude Opus...');
-        await this.runDeepAnalysis(portfolio, wrappedNews);
+        // Pass all context to deep analysis
+        await this.runDeepAnalysis(portfolio, wrappedNews, {
+          vixContext,
+          gapContext,
+          performanceContext,
+          sectorContext,
+          optionsContext
+        });
       } else {
         console.log('✅ Portfolio looks healthy, no deep analysis needed');
       }
@@ -577,11 +687,14 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
     const position = portfolio.positions.find(p => p.symbol === symbol);
     if (!position) return;
 
-    // Auto-execute stop-loss sell
-    console.log(`🔴 Auto-executing stop-loss sell for ${symbol}...`);
+    // Determine action based on position type
+    const isShort = position.position_type === 'short';
+    const action = isShort ? 'buy' : 'sell'; // Short: buy-to-close, Long: sell-to-close
+
+    console.log(`🔴 Auto-executing stop-loss ${action} for ${symbol} (${isShort ? 'SHORT' : 'LONG'})...`);
 
     try {
-      const result = await this.executeTrade(symbol, 'sell', position.quantity, {
+      const result = await this.executeTrade(symbol, action, position.quantity, {
         reasoning: `Stop-loss triggered at $${position.currentPrice.toFixed(2)} (cost basis: $${position.cost_basis.toFixed(2)})`,
         sector: position.sector
       });
@@ -675,7 +788,7 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
   /**
    * Run deep analysis with Claude Opus (Two-Phase Approach)
    */
-  async runDeepAnalysis(portfolio, news) {
+  async runDeepAnalysis(portfolio, news, additionalContext = {}) {
     try {
       console.log('');
       console.log('═══════════════════════════════════════');
@@ -685,6 +798,15 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       console.log('Positions:', portfolio.positions.length);
       console.log('Cash:', '$' + portfolio.cash.toLocaleString());
       console.log('');
+
+      // Extract additional context
+      const {
+        vixContext = '',
+        gapContext = '',
+        performanceContext = '',
+        sectorContext = '',
+        optionsContext = ''
+      } = additionalContext;
 
       // PHASE 1: Fetch market context (indices + portfolio stocks only)
       console.log('📊 PHASE 1: Fetching market context...');
@@ -979,6 +1101,16 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 - Total Value: $${portfolio.totalValue.toLocaleString()}
 - Cash Available: $${portfolio.cash.toLocaleString()}
 
+${vixContext}
+
+${gapContext}
+
+${performanceContext}
+
+${sectorContext}
+
+${optionsContext}
+
 ${marketRegimeContext}
 
 ${sectorAllocationText}
@@ -1070,6 +1202,24 @@ ${earningsAndTaxContext}
 **Be SPECIFIC:**
 ✅ "BUY 10 shares AAPL at $255. Stop-loss: $230 (-9.8%). Take-profit: $295 (+15.7%). Reasoning: Strong iPhone sales..."
 ❌ "Consider buying tech stocks"
+
+**OPTIONAL: For easier parsing, you can also provide a JSON block at the end:**
+\`\`\`json
+{
+  "trades": [
+    {
+      "action": "buy",
+      "symbol": "MSFT",
+      "quantity": 50,
+      "entry_price": 415.00,
+      "stop_loss": 385.00,
+      "take_profit": 460.00,
+      "sector": "Technology",
+      "reasoning": "Strong Azure growth..."
+    }
+  ]
+}
+\`\`\`
 
 ${historyContext}`;
 
@@ -1422,6 +1572,30 @@ ${historyContext}`;
     const recommendations = [];
 
     try {
+      // Try JSON parsing first
+      const jsonMatch = analysisText.match(/```json\n([\s\S]*?)\n```/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1]);
+          if (parsed.trades && Array.isArray(parsed.trades)) {
+            console.log('✅ Parsed trades from JSON block');
+            return parsed.trades.map(t => ({
+              type: t.action === 'short' ? 'short' : 'long',
+              symbol: t.symbol,
+              quantity: t.quantity,
+              entryPrice: t.entry_price,
+              stopLoss: t.stop_loss,
+              takeProfit: t.take_profit,
+              sector: t.sector || 'Unknown',
+              reasoning: t.reasoning || ''
+            }));
+          }
+        } catch (jsonError) {
+          console.warn('⚠️ JSON block found but failed to parse, falling back to regex');
+        }
+      }
+
+      // Fallback to regex parsing
       // Parse EXECUTE_BUY
       const buyPattern = /EXECUTE_BUY:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/gi;
 

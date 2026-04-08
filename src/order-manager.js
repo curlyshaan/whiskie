@@ -65,11 +65,20 @@ class OrderManager {
         if (!filledOrder) {
           throw new Error(`Buy order ${buyOrder.id} for ${symbol} did not fill within 30 seconds`);
         }
-        console.log(`✅ Buy order filled at $${filledOrder.avg_fill_price}`);
+        const actualFillPrice = parseFloat(filledOrder.avg_fill_price);
+        console.log(`✅ Buy order filled at $${actualFillPrice} (estimated: $${entryPrice})`);
+
+        // Recalculate stop/target based on actual fill price
+        const stopLossAdjusted = actualFillPrice * (stopLoss / entryPrice);
+        const takeProfitAdjusted = actualFillPrice * (takeProfit / entryPrice);
+
+        if (Math.abs(actualFillPrice - entryPrice) > entryPrice * 0.01) {
+          console.log(`📊 Adjusting bracket: Stop $${stopLossAdjusted.toFixed(2)}, Target $${takeProfitAdjusted.toFixed(2)}`);
+        }
 
         // Place OCO order (stop-loss + take-profit)
-        const ocoOrder = await tradier.placeOCOOrder(symbol, quantity, stopLoss, takeProfit);
-        console.log(`✅ OCO order placed: Stop ${stopLoss}, Limit ${takeProfit}`);
+        const ocoOrder = await tradier.placeOCOOrder(symbol, quantity, stopLossAdjusted, takeProfitAdjusted);
+        console.log(`✅ OCO order placed: Stop ${stopLossAdjusted.toFixed(2)}, Limit ${takeProfitAdjusted.toFixed(2)}`);
 
         // Store order details
         this.activeOrders.set(symbol, {

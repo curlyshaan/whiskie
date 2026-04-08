@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import correlationAnalysis from './correlation-analysis.js';
+import vixRegime from './vix-regime.js';
 import * as db from './db.js';
 
 dotenv.config();
@@ -10,14 +11,15 @@ dotenv.config();
  */
 class RiskManager {
   constructor() {
-    this.MAX_POSITION_SIZE = parseFloat(process.env.MAX_POSITION_SIZE) || 0.15; // 15% for longs
+    // 3-Pillar Strategy: Long-term anchors (35-40%) + Swing/momentum (30-35%) + Shorts (15-20%)
+    this.MAX_POSITION_SIZE = parseFloat(process.env.MAX_POSITION_SIZE) || 0.12; // 12% max per position (down from 15%)
     this.MAX_SHORT_POSITION_SIZE = 0.10; // 10% for shorts (tighter due to unlimited loss risk)
     this.MAX_DAILY_TRADES = parseInt(process.env.MAX_DAILY_TRADES) || 3;
     this.MAX_PORTFOLIO_DRAWDOWN = parseFloat(process.env.MAX_PORTFOLIO_DRAWDOWN) || 0.20; // 20%
-    this.MIN_CASH_RESERVE = parseFloat(process.env.MIN_CASH_RESERVE) || 0.03; // 3%
+    this.MIN_CASH_RESERVE = parseFloat(process.env.MIN_CASH_RESERVE) || 0.10; // 10% minimum cash (up from 3%)
     this.MAX_SECTOR_ALLOCATION = parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.30; // 30% per sector (both long and short)
     this.MAX_SHORT_SECTOR_ALLOCATION = 0.30; // 30% shorts per sector
-    this.MAX_TOTAL_SHORT_EXPOSURE = 0.30; // 30% total shorts (typical), hard limit 0.20 (20%)
+    this.MAX_TOTAL_SHORT_EXPOSURE = parseFloat(process.env.MAX_TOTAL_SHORT_EXPOSURE) || 0.20; // 20% total shorts (down from 30%, scale up after 60 days)
     this.TARGET_LONG_ALLOCATION = 0.70; // 70% long (typical)
     this.MAX_LONG_ALLOCATION = 0.80; // 80% long (hard limit)
   }
@@ -75,8 +77,8 @@ class RiskManager {
       errors.push(`Portfolio drawdown ${(portfolio.drawdown * 100).toFixed(1)}% exceeds max ${(this.MAX_PORTFOLIO_DRAWDOWN * 100)}% - DEFENSIVE MODE`);
     }
 
-    // Add additional warnings from generateWarnings
-    const additionalWarnings = this.generateWarnings(trade, portfolio);
+    // Add additional warnings from generateWarnings (now async)
+    const additionalWarnings = await this.generateWarnings(trade, portfolio);
     warnings.push(...additionalWarnings);
 
     return {
@@ -101,8 +103,31 @@ class RiskManager {
   /**
    * Generate warnings (not blocking, but important)
    */
-  generateWarnings(trade, portfolio) {
+  async generateWarnings(trade, portfolio) {
     const warnings = [];
+
+    // Check VIX regime constraints
+    try {
+      const regime = await vixRegime.getRegime();
+
+      // Warn if attempting new shorts in elevated volatility
+      if (trade.action === 'buy' && trade.position_type === 'short' && !regime.newShortsAllowed) {
+        warnings.push(`VIX regime (${regime.name}) does not allow new short positions - volatility too high`);
+      }
+
+      // Warn if attempting any new positions in panic mode
+      if (!regime.newPositionsAllowed) {
+        warnings.push(`VIX regime (${regime.name}) - DEFENSIVE MODE: no new positions allowed`);
+      }
+
+      // Warn if cash reserve below regime requirement
+      const cashPercent = portfolio.cash / portfolio.totalValue;
+      if (cashPercent < regime.minCashReserve) {
+        warnings.push(`Cash reserve ${(cashPercent * 100).toFixed(1)}% below ${regime.name} regime requirement of ${(regime.minCashReserve * 100).toFixed(0)}%`);
+      }
+    } catch (error) {
+      console.warn('Could not fetch VIX regime for warnings:', error.message);
+    }
 
     // Warn if approaching limits
     const tradeValue = trade.quantity * trade.price;

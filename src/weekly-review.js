@@ -5,6 +5,7 @@ import tavily from './tavily.js';
 import email from './email.js';
 import performanceAnalyzer from './performance-analyzer.js';
 import trendLearning from './trend-learning.js';
+import sectorRotation from './sector-rotation.js';
 import { getWeeklyEarningsReport } from './earnings-analysis.js';
 
 /**
@@ -35,9 +36,29 @@ async function auditWatchlist() {
       }
     }
 
-    // Remove stale/missed entries
-    for (const item of [...stale, ...missed]) {
-      await db.removeFromWatchlist(item.symbol);
+    // Archive stale/missed entries instead of deleting
+    for (const item of stale) {
+      await db.query(
+        `UPDATE watchlist
+         SET status = 'archived_stale',
+             last_reviewed = NOW(),
+             why_not_buying_now = $1
+         WHERE symbol = $2`,
+        [`Archived: On watchlist ${item.daysOnWatchlist} days, price moved >10% above target entry`, item.symbol]
+      );
+      console.log(`   📦 Archived stale entry: ${item.symbol}`);
+    }
+
+    for (const item of missed) {
+      await db.query(
+        `UPDATE watchlist
+         SET status = 'missed_opportunity',
+             last_reviewed = NOW(),
+             why_not_buying_now = $1
+         WHERE symbol = $2`,
+        [`Missed: Price $${item.currentPrice.toFixed(2)} exceeded target exit $${item.target_exit_price} without entry`, item.symbol]
+      );
+      console.log(`   📦 Archived missed opportunity: ${item.symbol} (ran to $${item.currentPrice.toFixed(2)})`);
     }
 
     return {
@@ -348,7 +369,7 @@ export async function executeReviewRecommendations(review) {
 /**
  * Run weekly synthesis with extended thinking
  */
-async function runWeeklySynthesis(reviews, weeklyPerf, watchlistAudit) {
+async function runWeeklySynthesis(reviews, weeklyPerf, watchlistAudit, sectorRanking) {
   try {
     console.log('\n🧠 Running weekly strategic synthesis with Opus...');
 
@@ -414,11 +435,27 @@ export async function runWeeklyReview() {
     console.log('📊 Analyzing weekly performance...');
     const weeklyPerf = await performanceAnalyzer.analyzePerformance();
 
+    // Run sector rotation analysis
+    console.log('📊 Running sector rotation analysis...');
+    const sectorRanking = await sectorRotation.analyzeSectorStrength();
+
+    // Save to database for the week's daily analyses to use
+    if (sectorRanking && sectorRanking.length > 0) {
+      await db.query(
+        `INSERT INTO performance_metrics (metric_name, metric_value, period, calculated_at)
+         VALUES ('sector_rotation_cache', $1, 'weekly', NOW())
+         ON CONFLICT (metric_name, period) DO UPDATE
+         SET metric_value = $1, calculated_at = NOW()`,
+        [JSON.stringify(sectorRanking)]
+      ).catch(() => {});
+      console.log(`✅ Sector rotation cached for daily use\n`);
+    }
+
     // Audit watchlist
     console.log('🔍 Auditing watchlist...');
     const watchlistAudit = await auditWatchlist();
-    console.log(`   Removed ${watchlistAudit.stale.length} stale entries`);
-    console.log(`   Removed ${watchlistAudit.missed.length} missed opportunities`);
+    console.log(`   Archived ${watchlistAudit.stale.length} stale entries`);
+    console.log(`   Archived ${watchlistAudit.missed.length} missed opportunities`);
     console.log(`   ${watchlistAudit.remaining} entries remaining\n`);
 
     const reviews = [];
@@ -442,7 +479,7 @@ export async function runWeeklyReview() {
     }
 
     // Run weekly synthesis with extended thinking
-    const synthesis = await runWeeklySynthesis(reviews, weeklyPerf, watchlistAudit);
+    const synthesis = await runWeeklySynthesis(reviews, weeklyPerf, watchlistAudit, sectorRanking);
 
     // Run weekly trend learning (strategic patterns)
     console.log('🧠 Running weekly trend learning...');
