@@ -82,8 +82,8 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      cron.schedule('30 12 * * 1-5', async () => {
-        console.log('\n⏰ 12:30 PM Analysis - Mid-day check');
+      cron.schedule('0 14 * * 1-5', async () => {
+        console.log('\n⏰ 2:00 PM Analysis - Afternoon check');
         await this.runDailyAnalysis();
       }, {
         timezone: 'America/New_York'
@@ -160,7 +160,7 @@ class WhiskieBot {
       console.log('📅 Analysis schedule (Mon-Fri):');
       console.log('   • 6:00 AM ET - Update days held (tax tracking)');
       console.log('   • 10:00 AM ET - Morning analysis + trim/tax/trailing checks');
-      console.log('   • 12:30 PM ET - Mid-day check + trim/tax/trailing checks');
+      console.log('   • 2:00 PM ET - Afternoon check + trim/tax/trailing checks');
       console.log('   • 3:30 PM ET - Before close + trim/tax/trailing checks');
       console.log('📊 Daily summary: 4:30 PM ET');
       console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
@@ -440,11 +440,18 @@ class WhiskieBot {
       await db.updateDaysHeld();
       console.log('✅ Days held updated\n');
 
-      // Get market news
-      console.log('📰 Fetching market news...');
-      const marketNews = await tavily.searchMarketNews(5);
-      const formattedNews = tavily.formatResults(marketNews);
-      console.log(`   Found ${marketNews.length} articles\n`);
+      // Get enriched news
+      console.log('📰 Fetching enriched news...');
+      const marketNews = await tavily.searchMarketNews(8);
+      const techNews = await tavily.searchSectorNews('technology', 3);
+      const healthNews = await tavily.searchSectorNews('healthcare', 3);
+      const macroResults = await tavily.searchNews(
+        'Federal Reserve interest rates inflation earnings season 2026',
+        5
+      );
+      const allNews = [...marketNews, ...techNews, ...healthNews, ...macroResults];
+      const formattedNews = tavily.formatResults(allNews);
+      console.log(`   Found ${allNews.length} articles\n`);
 
       // Quick sentiment check
       const headlines = marketNews.map(n => n.title).join('. ');
@@ -452,10 +459,13 @@ class WhiskieBot {
       console.log('📊 Market Sentiment:', sentiment.analysis.substring(0, 100) + '...\n');
 
       // Check if we need deep analysis (Opus)
+      const cashPercent = portfolio.cash / portfolio.totalValue;
       const needsDeepAnalysis =
         health.issues.some(i => i.severity === 'high') ||
-        portfolio.positions.length < 8 || // Need more positions
-        riskManager.isDefensiveMode(portfolio);
+        portfolio.positions.length < 10 ||          // Target 10-12, not 8
+        cashPercent > 0.25 ||                       // Cash > 25% = too idle
+        riskManager.isDefensiveMode(portfolio) ||
+        health.opportunities.length > 0;            // Any take-profit opportunity = re-evaluate
 
       if (needsDeepAnalysis) {
         console.log('🧠 Running deep analysis with Claude Opus...');
@@ -782,14 +792,23 @@ ${historyContext}`;
 - Total Value: $${portfolio.totalValue.toLocaleString()}
 - Cash Available: $${portfolio.cash.toLocaleString()}
 
-**Your Decision-Making Authority:**
-- You have FULL autonomy to decide when to trade and when to hold cash
-- Learn from your previous analyses and adapt your strategy
-- Deploy capital when YOU believe the risk/reward is favorable
-- It's perfectly fine to hold 100% cash if you don't see good opportunities
-- Quality over quantity - only trade when you're confident in your analysis
+**Capital Deployment Mandate:**
+- You are managing $100,000 and holding $${portfolio.cash.toLocaleString()} in cash (${((portfolio.cash/portfolio.totalValue)*100).toFixed(1)}% idle)
+- Idle cash is a drag on performance. The TARGET is 10-20% cash maximum (dry powder for dips).
+- With ${portfolio.positions.length} positions and a target of 10-12, you have room for ${12 - portfolio.positions.length} more positions.
+- You do NOT need perfect conditions to deploy. Good enough is good enough.
+- If you can identify 2-3 high-quality setups, deploy into them.
+- Holding >50% cash REQUIRES a specific written justification (e.g., "VIX > 30 + inverted yield curve").
+- Quality AND quantity matter. A portfolio of 2 stocks is not diversified — it's concentrated risk.
 
 ${watchlistContext}
+
+**Portfolio Construction Mandate:**
+- Current cash: $${portfolio.cash.toLocaleString()} (${((portfolio.cash/portfolio.totalValue)*100).toFixed(1)}% of portfolio)
+- Current positions: ${portfolio.positions.length} (target: 10-12)
+- Positions needed to reach target: ${Math.max(0, 10 - portfolio.positions.length)}
+- If you recommend ZERO new positions, you MUST provide specific reasoning why current market conditions justify staying in cash (e.g., "VIX > 25 + negative breadth" or "Awaiting Fed decision tomorrow").
+- Default posture: deploy into good setups. Cash requires justification, not deployment.
 
 **Your Task:**
 1. **WATCHLIST UPDATE:** For each stock you want to monitor (but not buy yet):

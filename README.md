@@ -9,77 +9,77 @@
 Whiskie is an intelligent trading bot that uses Claude AI (Opus with extended thinking) to make professional investment decisions. It analyzes market data, news, economic indicators, and company fundamentals to build and manage a diversified stock portfolio.
 
 **Key Features:**
-- 🤖 AI-driven investment decisions using Claude Opus
-- 📊 Multi-factor analysis (70% fundamentals, 30% technicals)
-- 🛡️ Built-in risk management and stop-loss automation
-- 📧 Email alerts before every trade
+- 🤖 AI-driven investment decisions using Claude Opus 4.6
+- 📊 Multi-factor analysis (fundamentals, technicals, sentiment, timing)
+- 🛡️ Built-in risk management with dynamic stop-loss automation
+- 📧 Email alerts for trade execution
 - 📈 Performance tracking vs S&P 500 benchmark
-- 🧪 Paper trading mode for testing strategies
+- 🧪 Paper trading mode (Tradier sandbox with $100k virtual funds)
+- 🎯 Long/short capability with ETB verification
+- 🔄 Dynamic order management (modify stops based on news/events)
+- 📊 Advanced order types (limit, stop, stop-limit, OCO, OTOCO, trailing stop)
 
 ---
 
-## 💼 Investment Strategy
+## 💼 Investment Strategy: Beta Play
+
+**"The way to build superior long-term returns is through preservation of capital and home runs."** — Stanley Druckenmiller
 
 ### Portfolio Allocation:
-- **60% Core Foundation:** Stable blue-chips and index ETFs
-- **25% Growth Satellite:** High-growth stocks
-- **15% Opportunistic:** Tactical plays on market opportunities
+- **70-80% Long Exposure:** Quality stocks with asymmetric upside potential
+- **0-30% Short Exposure:** Opportunistic shorts in overvalued/deteriorating names
+- **10-20% Cash:** Dry powder for opportunities and risk buffer
 
-### Risk Parameters:
-- **Max positions:** 10-12 stocks
-- **Max per position:** 15% of portfolio
-- **Stop-loss:** 10-20% depending on stock type
-- **Time horizon:** Months to years (not day trading)
-- **Risk tolerance:** Moderate
+### Position Sizing:
+- **Standard long:** 10% of portfolio
+- **High conviction long:** up to 15%
+- **Standard short:** 5-10% of portfolio
+- **Max single short:** 10%
+- **Max total shorts:** 30%
 
-### Sector Diversification:
-- Technology: 20-22%
-- Index ETFs: 16-18%
-- Healthcare: 13-15%
-- Financials: 10-12%
-- Consumer Staples: 8-10%
-- Industrials: 8-10%
-- Energy: 6-8%
-- Cash Reserve: 5%
+### Stock Universe:
+- **~365 stocks** across 41 sub-industries
+- Large-cap ($10B+) and mid-cap ($2B-10B) only
+- US-listed NYSE/NASDAQ stocks
+- Covers all 11 GICS sectors
+- ETB (Easy-to-Borrow) status tracked for shorting
+
+See [BETA_PLAY_STRATEGY.md](docs/BETA_PLAY_STRATEGY.md) for complete strategy documentation.
 
 ---
 
 ## 🏗️ How It Works
 
-1. **Daily Analysis (9 AM ET):**
-   - Fetch portfolio from Tradier
-   - Get market data and news
-   - Analyze with Claude Sonnet (quick check)
+### Automated Trading Schedule (3x Daily):
+1. **10:00 AM ET** - Morning analysis after market open volatility settles
+2. **2:00 PM ET** - Afternoon analysis during peak liquidity
+3. **3:30 PM ET** - Pre-close analysis for overnight positioning
 
-2. **Deep Analysis (when needed):**
-   - Major decisions trigger Claude Opus + extended thinking
-   - Multi-factor analysis of fundamentals and technicals
-   - Risk assessment and position sizing
+### Analysis Workflow:
+1. **Portfolio Sync:** Fetch positions and account data from Tradier
+2. **Market Data:** Get quotes, intraday momentum, block trades, options sentiment
+3. **News Analysis:** Tavily search for stock-specific, sector, and macro news
+4. **AI Decision:** Claude Opus with extended thinking (50k token budget)
+5. **Trade Execution:** Place orders with protective stops via Tradier API
+6. **Order Management:** Monitor and modify stops based on news/events
 
-3. **Trade Execution:**
-   - Email you with trade recommendations
-   - Wait for your approval
-   - Execute approved trades via Tradier API
-   - Log everything to database
-
-4. **Performance Tracking:**
-   - Daily portfolio value updates
-   - Weekly performance reports
-   - Monthly strategy reviews
-   - Quarterly rebalancing
+### Deep Analysis Triggers:
+- Positions < 10 OR cash > 25%
+- Major market events or volatility spikes
+- Earnings announcements for held positions
+- Weekly performance review (Sundays)
 
 ---
 
 ## 🔧 Technology Stack
 
-- **AI:** Claude Opus 4-6 (with extended thinking)
-- **Trading API:** Tradier (real-time data + execution)
-- **News:** Tavily API
-- **Economic Data:** FRED API (Federal Reserve)
-- **Backend:** Node.js
-- **Database:** PostgreSQL
-- **Hosting:** Railway
-- **Scheduling:** Cron jobs
+- **AI:** Claude Opus 4.6 with extended thinking (50k token budget)
+- **Trading API:** Tradier (sandbox for paper trading, 15-min delayed data)
+- **News:** Tavily API (advanced search depth)
+- **Backend:** Node.js with ES modules
+- **Database:** PostgreSQL (Railway)
+- **Hosting:** Railway (auto-deploy from GitHub)
+- **Scheduling:** Node-cron (3x daily during market hours)
 
 ---
 
@@ -88,8 +88,8 @@ Whiskie is an intelligent trading bot that uses Claude AI (Opus with extended th
 ### Prerequisites:
 - Node.js 20+
 - PostgreSQL database
-- Tradier account (paper trading or live)
-- Claude API key (via Quatarly)
+- Tradier account (sandbox for paper trading)
+- Anthropic API key (Claude Opus)
 - Tavily API key
 
 ### Installation:
@@ -107,90 +107,124 @@ cp .env.example .env
 # Initialize database
 npm run db:init
 
-# Start in paper trading mode
-npm run start:paper
+# Populate stock universe
+npm run populate-stocks
+
+# Update ETB status for shorting
+npm run update-etb
+
+# Start bot (runs 24/7)
+npm start
 ```
 
 ---
 
-## 📊 Performance Metrics
+## 📊 Advanced Features
 
-The bot tracks:
-- **Total Return:** Portfolio value change over time
-- **vs S&P 500:** Benchmark comparison
-- **Sharpe Ratio:** Risk-adjusted returns
-- **Max Drawdown:** Largest peak-to-trough decline
-- **Win Rate:** Percentage of profitable trades
-- **Sector Performance:** Which sectors are outperforming
+### Order Types:
+- **Market orders:** Immediate execution (emergency exits only)
+- **Limit orders:** Better entry prices (default for entries)
+- **Stop-loss orders:** Automatic risk management
+- **Stop-limit orders:** Controlled exit prices
+- **OCO (One-Cancels-Other):** Bracket orders with stop + take-profit
+- **OTOCO (One-Triggers-OCO):** Entry order that triggers protective bracket
+- **Trailing stops:** Lock in profits on winning positions
+- **Extended hours:** Pre-market and after-hours trading
+
+### Dynamic Order Management:
+- AI analyzes news and modifies stop-loss/take-profit levels
+- Tighten stops before earnings if profitable
+- Widen stops if thesis strengthens
+- Emergency market sell if thesis breaks
+- Automatic order modification history tracking
+
+### Shorting Capability:
+- ETB (Easy-to-Borrow) verification via Tradier API
+- Mid/large-cap only (market cap > $2B)
+- 10% max per short position
+- 30% max total short exposure
+- Inverse stop-loss logic (triggers on price RISE)
+- Required stop-loss for all shorts
+
+### Market Timing:
+- Avoids first 15 minutes (high volatility)
+- Avoids last 15 minutes (closing auction)
+- Avoids lunch hour (low liquidity)
+- Intraday momentum analysis (2-hour window)
+- Block trade detection (institutional activity)
+
+### Performance Learning:
+- Analyzes gain/loss reports from Tradier
+- Identifies winning vs losing patterns
+- Tracks hold duration optimization
+- Detects repeated mistakes
+- Compares current positions to historical performance
 
 ---
 
 ## ⚠️ Safety Features
 
-### Hard-Coded Limits:
-- Max 15% per position (cannot be overridden)
-- Max 3 trades per day
-- Max 20% portfolio drawdown triggers defensive mode
-- Min 3% cash reserve at all times
-- Max 25% in any single sector
+### Hard-Coded Limits (Cannot Be Overridden):
+- **Max 5 trades per day**
+- **Max $15,000 per single trade** (15% of $100k)
+- **Max $50,000 daily exposure change**
+- **Max 10% per short position**
+- **Max 30% total short exposure**
+- **Stop-loss REQUIRED for all shorts**
 
 ### AI Guardrails:
-- All trades require email approval initially
-- Stop-losses are mental (not automatic) to avoid flash crashes
-- Major decisions (>$10k) require Opus analysis
-- Every decision is logged with full reasoning
+- All trades logged with full reasoning
+- Major decisions require Opus + extended thinking
+- Trade safeguard validates every order
+- Position validation prevents accidental shorts
+- ETB verification before shorting
 
 ---
 
-## 📈 Current Status
+## 📈 Performance Metrics
 
-**Phase:** Strategy Design Complete ✅  
-**Next:** Infrastructure Setup  
-**Model Used:** Claude Opus 4-6 with Extended Thinking  
-**Budget:** $35/month for Claude API  
+The bot tracks:
+- **Total Return:** Portfolio value change over time
+- **vs S&P 500:** Benchmark comparison
+- **Win Rate:** Percentage of profitable trades
+- **Profit Factor:** Winners vs losers ratio
+- **Max Drawdown:** Largest peak-to-trough decline
+- **Sharpe Ratio:** Risk-adjusted returns
+- **Long/Short Exposure:** Current positioning
 
 ---
 
 ## 📝 Documentation
 
-- **CLAUDE_NOTES.md** - Comprehensive technical notes for future sessions
-- **INVESTMENT_STRATEGY.md** - Full strategy designed by Claude Opus
-- **README.md** - This file
+- **[README.md](README.md)** - This file (overview and setup)
+- **[BETA_PLAY_STRATEGY.md](docs/BETA_PLAY_STRATEGY.md)** - Complete investment strategy
+- **[WHISKIE_MASTER_DOCUMENTATION.md](docs/WHISKIE_MASTER_DOCUMENTATION.md)** - Technical documentation
+- **[CLAUDE_NOTES.md](CLAUDE_NOTES.md)** - Developer notes for future sessions
 
 ---
 
-## 🔗 Related Projects
-
-- **Nora** - AI investing learning assistant (educational tool, no real trades)
-- **Whiskie** - AI trading bot (this project - real money, autonomous)
-
----
-
-## ⚡ Quick Commands
+## 🔗 Scripts
 
 ```bash
-# Paper trading mode (test with fake money)
-npm run start:paper
+# Populate stock universe from sub-industry-data.js
+npm run populate-stocks
 
-# Live trading mode (real money - use with caution!)
-npm run start:live
+# Update ETB (Easy-to-Borrow) status for shorting
+npm run update-etb
 
-# View performance dashboard
-npm run dashboard
+# Start bot (runs 24/7 with cron schedule)
+npm start
 
-# Generate monthly report
-npm run report:monthly
-
-# Rebalance portfolio
-npm run rebalance
+# Initialize database schema
+npm run db:init
 ```
 
 ---
 
 ## 📞 Support
 
-For questions or issues, refer to CLAUDE_NOTES.md for detailed technical documentation.
+For questions or issues, refer to documentation files or check the codebase.
 
 ---
 
-**⚠️ Disclaimer:** This bot manages real money. Always start with paper trading, understand the strategy, and never invest more than you can afford to lose. Past performance does not guarantee future results.
+**⚠️ Disclaimer:** This bot uses paper trading (Tradier sandbox with $100k virtual funds). Market data is delayed by 15 minutes. Always understand the strategy before deploying with real money. Past performance does not guarantee future results.

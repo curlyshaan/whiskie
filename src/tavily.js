@@ -47,8 +47,14 @@ class TavilyAPI {
    * Search for market news
    */
   async searchMarketNews(maxResults = 5) {
-    const query = 'stock market news today';
-    return await this.search(query, { maxResults });
+    return await this.search('stock market news today', { depth: 'advanced', maxResults });
+  }
+
+  /**
+   * Generic news search (missing method referenced in weekly-review.js)
+   */
+  async searchNews(query, maxResults = 5) {
+    return await this.search(query, { depth: 'advanced', maxResults });
   }
 
   /**

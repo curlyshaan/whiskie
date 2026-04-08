@@ -223,6 +223,42 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS order_modification_history JSONB;
     `);
 
+    // Stock universe table - all stocks Whiskie analyzes
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS stock_universe (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) UNIQUE NOT NULL,
+        sector VARCHAR(100),
+        sub_industry VARCHAR(100),
+        market_cap_tier VARCHAR(20),
+        shortable BOOLEAN DEFAULT FALSE,
+        last_etb_check TIMESTAMP,
+        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        removed_date TIMESTAMP,
+        status VARCHAR(20) DEFAULT 'active'
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_symbol ON stock_universe(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_sector ON stock_universe(sector);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_sub_industry ON stock_universe(sub_industry);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_status ON stock_universe(status);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_shortable ON stock_universe(shortable);
+    `);
+
     console.log('✅ Database schema initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
@@ -861,6 +897,103 @@ export async function updateDaysHeld() {
     return result.rowCount;
   } catch (error) {
     console.error('Error updating days held:', error);
+    throw error;
+  }
+}
+
+/**
+ * Upsert stock to universe
+ */
+export async function upsertStockUniverse(stock) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO stock_universe (symbol, sector, sub_industry, market_cap_tier, shortable, last_etb_check)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (symbol)
+       DO UPDATE SET
+         sector = $2,
+         sub_industry = $3,
+         market_cap_tier = $4,
+         shortable = $5,
+         last_etb_check = $6,
+         status = 'active'
+       RETURNING *`,
+      [
+        stock.symbol,
+        stock.sector,
+        stock.sub_industry,
+        stock.market_cap_tier || 'large-cap',
+        stock.shortable || false,
+        stock.last_etb_check || null
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error(`Error upserting stock ${stock.symbol}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Get all active stocks from universe
+ */
+export async function getStockUniverse() {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM stock_universe WHERE status = 'active' ORDER BY symbol`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching stock universe:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get shortable stocks from universe
+ */
+export async function getShortableStocks() {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM stock_universe WHERE status = 'active' AND shortable = true ORDER BY symbol`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching shortable stocks:', error);
+    throw error;
+  }
+}
+
+/**
+ * Mark stock as removed
+ */
+export async function removeStockFromUniverse(symbol) {
+  try {
+    await pool.query(
+      `UPDATE stock_universe SET status = 'removed', removed_date = CURRENT_TIMESTAMP WHERE symbol = $1`,
+      [symbol]
+    );
+  } catch (error) {
+    console.error(`Error removing stock ${symbol}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Update ETB status for stock
+ */
+export async function updateETBStatus(symbol, shortable) {
+  try {
+    const result = await pool.query(
+      `UPDATE stock_universe
+       SET shortable = $2, last_etb_check = CURRENT_TIMESTAMP
+       WHERE symbol = $1
+       RETURNING *`,
+      [symbol, shortable]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error(`Error updating ETB status for ${symbol}:`, error);
     throw error;
   }
 }

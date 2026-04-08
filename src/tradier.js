@@ -475,6 +475,142 @@ class TradierAPI {
   }
 
   /**
+   * Get options chain for a symbol
+   */
+  async getOptionsChain(symbol, expiration = null, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const params = { symbol, greeks: true };
+      if (expiration) params.expiration = expiration;
+
+      const response = await this.client.get('/markets/options/chains', { params });
+      return response.data.options?.option || [];
+    } catch (error) {
+      console.error(`Error fetching options chain for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get options expirations for a symbol
+   */
+  async getOptionsExpirations(symbol) {
+    try {
+      const response = await this.client.get('/markets/options/expirations', {
+        params: { symbol, includeAllRoots: true }
+      });
+      return response.data.expirations?.date || [];
+    } catch (error) {
+      console.error(`Error fetching options expirations for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get time and sales (tick data) for a symbol
+   */
+  async getTimeSales(symbol, interval = '1min', start = null, end = null) {
+    try {
+      const params = { symbol, interval };
+      if (start) params.start = start;
+      if (end) params.end = end;
+
+      const response = await this.client.get('/markets/timesales', { params });
+      return response.data.series?.data || [];
+    } catch (error) {
+      console.error(`Error fetching time & sales for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get market clock (status, next open/close)
+   */
+  async getMarketClock() {
+    try {
+      const response = await this.client.get('/markets/clock');
+      return response.data.clock;
+    } catch (error) {
+      console.error('Error fetching market clock:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get ETB (Easy-to-Borrow) list for shorting
+   */
+  async getETBList(accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.get(`/accounts/${accountId}/orders/etb`);
+      return response.data.securities?.security || [];
+    } catch (error) {
+      console.error('Error fetching ETB list:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get historical intraday data (minute/hourly bars)
+   */
+  async getIntradayHistory(symbol, interval = '5min', start = null, end = null) {
+    try {
+      const params = { symbol, interval };
+      if (start) params.start = start;
+      if (end) params.end = end;
+
+      const response = await this.client.get('/markets/timesales', { params });
+      return response.data.series?.data || [];
+    } catch (error) {
+      console.error(`Error fetching intraday history for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Get gain/loss report
+   */
+  async getGainLoss(accountId = TRADIER_ACCOUNT_ID, page = 1, limit = 100) {
+    try {
+      const response = await this.client.get(`/accounts/${accountId}/gainloss`, {
+        params: { page, limit }
+      });
+      return response.data.gainloss;
+    } catch (error) {
+      console.error('Error fetching gain/loss report:', error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Search symbols
+   */
+  async searchSymbols(query, indexes = true) {
+    try {
+      const response = await this.client.get('/markets/search', {
+        params: { q: query, indexes }
+      });
+      return response.data.securities?.security || [];
+    } catch (error) {
+      console.error(`Error searching symbols for ${query}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Lookup symbol details
+   */
+  async lookupSymbol(query) {
+    try {
+      const response = await this.client.get('/markets/lookup', {
+        params: { q: query }
+      });
+      return response.data.securities?.security || [];
+    } catch (error) {
+      console.error(`Error looking up symbol ${query}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Get market calendar (trading days, holidays)
    */
   async getCalendar(month = null, year = null) {
