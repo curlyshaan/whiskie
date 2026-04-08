@@ -244,7 +244,6 @@ export async function getLearningSummary(days = 30) {
     return null;
   }
 }
-}
 
 /**
  * Ask Opus to learn from historical patterns (daily)
