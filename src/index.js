@@ -10,6 +10,9 @@ import riskManager from './risk-manager.js';
 import tradeSafeguard from './trade-safeguard.js';
 import analysisEngine from './analysis.js';
 import orderManager from './order-manager.js';
+import shortManager from './short-manager.js';
+import trendLearning from './trend-learning.js';
+import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
 import { SUB_INDUSTRIES, getAllSubIndustries } from './sub-industry-data.js';
 import { updateAllEarnings } from './earnings.js';
@@ -35,7 +38,8 @@ app.use('/', dashboard);
  */
 class WhiskieBot {
   constructor() {
-    this.isRunning = false;
+    this.botStarted = false;
+    this.analysisRunning = false;
     this.isPaperTrading = process.env.NODE_ENV === 'paper';
     console.log(`🤖 Whiskie Bot initialized in ${this.isPaperTrading ? 'PAPER TRADING' : 'LIVE'} mode`);
   }
@@ -167,7 +171,7 @@ class WhiskieBot {
       console.log('📅 Weekly review: Sunday 9:00 PM ET (Opus deep review)');
       console.log('💡 Press Ctrl+C to stop\n');
 
-      this.isRunning = true;
+      this.botStarted = true;
     } catch (error) {
       console.error('❌ Error starting bot:', error);
       await email.sendErrorAlert(error, 'Bot startup');
@@ -228,7 +232,7 @@ class WhiskieBot {
 
     app.get('/status', (req, res) => {
       res.json({
-        running: this.isRunning,
+        running: this.botStarted,
         mode: process.env.NODE_ENV,
         uptime: process.uptime()
       });
@@ -274,12 +278,12 @@ class WhiskieBot {
    * Run daily portfolio analysis
    */
   async runDailyAnalysis() {
-    if (this.isRunning) {
+    if (this.analysisRunning) {
       console.log('⚠️ Analysis already running, skipping...');
       return;
     }
 
-    this.isRunning = true;
+    this.analysisRunning = true;
 
     try {
       console.log('═══════════════════════════════════════');
@@ -450,8 +454,17 @@ class WhiskieBot {
         5
       );
       const allNews = [...marketNews, ...techNews, ...healthNews, ...macroResults];
-      const formattedNews = tavily.formatResults(allNews);
-      console.log(`   Found ${allNews.length} articles\n`);
+
+      // Sanitize news content to prevent prompt injection
+      const sanitizedNews = allNews.map(article => ({
+        ...article,
+        title: sanitizeNewsContent(article.title),
+        content: sanitizeNewsContent(article.content)
+      }));
+
+      const formattedNews = tavily.formatResults(sanitizedNews);
+      const wrappedNews = wrapNewsForPrompt(formattedNews);
+      console.log(`   Found ${allNews.length} articles (sanitized)\n`);
 
       // Quick sentiment check
       const headlines = marketNews.map(n => n.title).join('. ');
@@ -469,13 +482,18 @@ class WhiskieBot {
 
       if (needsDeepAnalysis) {
         console.log('🧠 Running deep analysis with Claude Opus...');
-        await this.runDeepAnalysis(portfolio, formattedNews);
+        await this.runDeepAnalysis(portfolio, wrappedNews);
       } else {
         console.log('✅ Portfolio looks healthy, no deep analysis needed');
       }
 
       // Save portfolio snapshot
       await this.saveSnapshot(portfolio);
+
+      // Run daily trend learning (learns from recent trades and patterns)
+      console.log('🧠 Running daily trend learning...');
+      const recentTrades = await db.getTradeHistory(10);
+      await trendLearning.runDailyTrendLearning(portfolio.positions, recentTrades);
 
       console.log('\n═══════════════════════════════════════');
       console.log('✅ Daily analysis complete');
@@ -485,7 +503,7 @@ class WhiskieBot {
       console.error('❌ Error in daily analysis:', error);
       await email.sendErrorAlert(error, 'Daily analysis');
     } finally {
-      this.isRunning = false;
+      this.analysisRunning = false;
     }
   }
 
@@ -829,9 +847,34 @@ ${watchlistContext}
    - **TAKE-PROFIT:** Target price and expected gain % (explain reasoning)
    - Sector and stock type (mega-cap/large-cap/mid-cap)
    - Full reasoning (fundamentals + technicals + macro)
-3. **SELL/TRIM:** Any current positions to sell or trim?
-4. **SECTOR ANALYSIS:** Which sectors look strong/weak based on macro environment?
-5. **TREND DETECTION:** Any patterns from previous analyses?
+
+   **CRITICAL: Use this EXACT format for executable trades:**
+   EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY_PRICE | STOP_LOSS | TAKE_PROFIT
+
+   Example: EXECUTE_BUY: MSFT | 100 | 400.50 | 360.00 | 450.00
+
+   Then provide your full reasoning below the EXECUTE_BUY line.
+
+3. **SHORT RECOMMENDATIONS:** Which stocks to short NOW? For EACH short provide:
+   - Symbol and company name
+   - Quantity (exact number of shares)
+   - Entry price (current market price)
+   - **STOP-LOSS:** Exact price level ABOVE entry (inverse logic - triggers on price RISE)
+   - **TAKE-PROFIT:** Target price BELOW entry (profit on decline)
+   - Technical confirmation (declining 200MA, RSI not oversold, no near-term earnings)
+   - Full reasoning (why overvalued, deteriorating fundamentals, technical breakdown)
+
+   **CRITICAL: Use this EXACT format for executable shorts:**
+   EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY_PRICE | STOP_LOSS | TAKE_PROFIT
+
+   Example: EXECUTE_SHORT: XYZ | 50 | 150.00 | 165.00 | 120.00
+   (Stop at $165 = 10% above entry, profit target at $120 = 20% below entry)
+
+   Then provide your full reasoning below the EXECUTE_SHORT line.
+
+4. **SELL/TRIM:** Any current positions to sell or trim?
+5. **SECTOR ANALYSIS:** Which sectors look strong/weak based on macro environment?
+6. **TREND DETECTION:** Any patterns from previous analyses?
 
 **Stop-Loss Guidelines (you decide final levels):**
 - Index ETFs: -10 to -12%
@@ -926,17 +969,51 @@ ${historyContext}`;
         console.log(`✅ Found ${recommendations.length} trade recommendations`);
 
         for (const rec of recommendations) {
-          console.log(`   💰 Executing trade: BUY ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
+          const action = rec.type === 'short' ? 'SHORT' : 'BUY';
+          console.log(`   💰 Executing trade: ${action} ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
 
           try {
-            // Execute trade immediately
-            await this.executeTrade(rec.symbol, 'buy', rec.quantity);
+            if (rec.type === 'short') {
+              // Execute short trade with safeguards
+              const portfolio = await analysisEngine.getPortfolioState();
 
-            console.log(`   ✅ Trade executed successfully`);
+              // Check if short is allowed
+              const shortCheck = await shortManager.canShort(
+                rec.symbol,
+                rec.quantity,
+                rec.entryPrice,
+                portfolio.totalValue
+              );
+
+              if (!shortCheck.allowed) {
+                console.log(`   ⚠️ Short blocked: ${shortCheck.errors.join(', ')}`);
+                continue;
+              }
+
+              // Place short with protection
+              await shortManager.placeShortWithProtection(
+                rec.symbol,
+                rec.quantity,
+                rec.entryPrice,
+                rec.stopLoss,
+                rec.takeProfit
+              );
+
+              console.log(`   ✅ Short executed successfully`);
+            } else {
+              // Execute long trade with Opus's recommended stops
+              await this.executeTrade(rec.symbol, 'buy', rec.quantity, {
+                stopLoss: rec.stopLoss,
+                takeProfit: rec.takeProfit,
+                reasoning: rec.reasoning
+              });
+
+              console.log(`   ✅ Trade executed successfully`);
+            }
 
             // Send email notification AFTER execution
             await email.sendTradeConfirmation({
-              action: 'buy',
+              action: rec.type === 'short' ? 'short' : 'buy',
               symbol: rec.symbol,
               quantity: rec.quantity,
               price: rec.entryPrice,
@@ -1053,95 +1130,92 @@ ${historyContext}`;
   }
 
   /**
-   * Parse trade recommendations from Opus analysis (handles multiple formats)
+   * Parse trade recommendations from Opus analysis
+   * Uses strict sentinel pattern to prevent false positives from news content
+   *
+   * Required format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY_PRICE | STOP_LOSS | TAKE_PROFIT
+   * Example: EXECUTE_BUY: MSFT | 100 | 400.50 | 360.00 | 450.00
    */
   parseRecommendations(analysisText) {
     const recommendations = [];
 
     try {
-      // Pattern 1: "BUY X shares SYMBOL at $PRICE"
-      const buyPattern1 = /BUY\s+(\d+)\s+(?:shares?\s+)?([A-Z]{1,5})\s+at\s+\$?([\d.]+)/gi;
-
-      // Pattern 2: "BUY SYMBOL: X shares @ $PRICE"
-      const buyPattern2 = /BUY\s+([A-Z]{1,5}):\s*(\d+)\s+shares?\s+@\s*\$?([\d.]+)/gi;
-
-      // Pattern 3: Markdown table format "| BUY | SYMBOL | X | $PRICE |"
-      const tablePattern = /\|\s*BUY\s*\|\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*\$?([\d.]+)/gi;
-
-      const stopLossPattern = /Stop-?loss:?\s*\$?([\d.]+)/gi;
-      const takeProfitPattern = /Take-?profit:?\s*\$?([\d.]+)/gi;
+      // Parse EXECUTE_BUY
+      const buyPattern = /EXECUTE_BUY:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/gi;
 
       let match;
-      const matches = [];
+      while ((match = buyPattern.exec(analysisText)) !== null) {
+        const symbol = match[1];
+        const quantity = parseInt(match[2]);
+        const entryPrice = parseFloat(match[3]);
+        const stopLoss = parseFloat(match[4]);
+        const takeProfit = parseFloat(match[5]);
 
-      // Try all patterns
-      while ((match = buyPattern1.exec(analysisText)) !== null) {
-        matches.push({
-          quantity: parseInt(match[1]),
-          symbol: match[2],
-          entryPrice: parseFloat(match[3]),
-          index: match.index
-        });
-      }
+        // Validate stop-loss and take-profit for longs
+        if (stopLoss >= entryPrice) {
+          console.warn(`⚠️ Invalid stop-loss for ${symbol}: $${stopLoss} must be below entry $${entryPrice}`);
+          continue;
+        }
 
-      buyPattern2.lastIndex = 0;
-      while ((match = buyPattern2.exec(analysisText)) !== null) {
-        matches.push({
-          quantity: parseInt(match[2]),
-          symbol: match[1],
-          entryPrice: parseFloat(match[3]),
-          index: match.index
-        });
-      }
+        if (takeProfit <= entryPrice) {
+          console.warn(`⚠️ Invalid take-profit for ${symbol}: $${takeProfit} must be above entry $${entryPrice}`);
+          continue;
+        }
 
-      tablePattern.lastIndex = 0;
-      while ((match = tablePattern.exec(analysisText)) !== null) {
-        matches.push({
-          quantity: parseInt(match[2]),
-          symbol: match[1],
-          entryPrice: parseFloat(match[3]),
-          index: match.index
-        });
-      }
-
-      // For each BUY, find the nearest stop-loss and take-profit
-      for (const buyMatch of matches) {
-        const textAfterBuy = analysisText.substring(buyMatch.index, buyMatch.index + 2000);
-
-        // Find stop-loss
-        stopLossPattern.lastIndex = 0;
-        const slMatch = stopLossPattern.exec(textAfterBuy);
-        const stopLoss = slMatch ? parseFloat(slMatch[1]) : null;
-
-        // Find take-profit
-        takeProfitPattern.lastIndex = 0;
-        const tpMatch = takeProfitPattern.exec(textAfterBuy);
-        const takeProfit = tpMatch ? parseFloat(tpMatch[1]) : null;
-
-        // Extract reasoning (next 800 chars after the BUY statement)
-        const reasoning = textAfterBuy.substring(0, 800).trim();
+        const textAfter = analysisText.substring(match.index + match[0].length, match.index + match[0].length + 500);
 
         recommendations.push({
-          symbol: buyMatch.symbol,
-          quantity: buyMatch.quantity,
-          entryPrice: buyMatch.entryPrice,
+          type: 'long',
+          symbol,
+          quantity,
+          entryPrice,
           stopLoss,
           takeProfit,
-          reasoning
+          reasoning: textAfter.trim()
         });
       }
 
-      // Remove duplicates (same symbol)
-      const uniqueRecs = [];
-      const seen = new Set();
-      for (const rec of recommendations) {
-        if (!seen.has(rec.symbol)) {
-          seen.add(rec.symbol);
-          uniqueRecs.push(rec);
+      // Parse EXECUTE_SHORT
+      const shortPattern = /EXECUTE_SHORT:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/gi;
+
+      while ((match = shortPattern.exec(analysisText)) !== null) {
+        const symbol = match[1];
+        const quantity = parseInt(match[2]);
+        const entryPrice = parseFloat(match[3]);
+        const stopLoss = parseFloat(match[4]);
+        const takeProfit = parseFloat(match[5]);
+
+        // Validate stop-loss and take-profit for shorts (inverse logic)
+        if (stopLoss <= entryPrice) {
+          console.warn(`⚠️ Invalid stop-loss for SHORT ${symbol}: $${stopLoss} must be ABOVE entry $${entryPrice}`);
+          continue;
         }
+
+        if (takeProfit >= entryPrice) {
+          console.warn(`⚠️ Invalid take-profit for SHORT ${symbol}: $${takeProfit} must be BELOW entry $${entryPrice}`);
+          continue;
+        }
+
+        const textAfter = analysisText.substring(match.index + match[0].length, match.index + match[0].length + 500);
+
+        recommendations.push({
+          type: 'short',
+          symbol,
+          quantity,
+          entryPrice,
+          stopLoss,
+          takeProfit,
+          reasoning: textAfter.trim()
+        });
       }
 
-      return uniqueRecs;
+      if (recommendations.length === 0) {
+        console.log('ℹ️ No EXECUTE_BUY or EXECUTE_SHORT commands found in analysis');
+        console.log('   Expected format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET');
+        console.log('   Or: EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET');
+      }
+
+      return recommendations;
     } catch (error) {
       console.error('Error parsing recommendations:', error.message);
       return [];
@@ -1411,8 +1485,7 @@ ${historyContext}`;
         reasoning: options.reasoning || 'Trade executed via executeTrade method'
       });
 
-      // Record trade
-      riskManager.recordTrade();
+      // Trade count now tracked in database via tradeSafeguard
 
       return { success: true, order };
 

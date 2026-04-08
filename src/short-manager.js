@@ -219,10 +219,11 @@ class ShortManager {
       }
 
       // Buy to cover at market
-      const result = await tradier.placeMarketOrder(
+      const result = await tradier.placeOrder(
         symbol,
         'buy_to_cover',
-        Math.abs(position.quantity)
+        Math.abs(position.quantity),
+        'market'
       );
 
       await db.logTrade({

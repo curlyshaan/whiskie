@@ -259,6 +259,90 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_stock_universe_shortable ON stock_universe(shortable);
     `);
 
+    // Trend learning tables
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS stock_analysis_history (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        analysis_date DATE NOT NULL,
+        analysis_type VARCHAR(50) NOT NULL,
+        price_at_analysis DECIMAL(10, 2),
+        thesis TEXT,
+        recommendation VARCHAR(20),
+        confidence VARCHAR(20),
+        key_factors JSONB,
+        outcome VARCHAR(20),
+        outcome_notes TEXT,
+        days_to_outcome INTEGER,
+        price_change_pct DECIMAL(8, 2),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(symbol, analysis_date, analysis_type)
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_analysis_symbol ON stock_analysis_history(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_analysis_date ON stock_analysis_history(analysis_date);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_analysis_outcome ON stock_analysis_history(outcome);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS market_trend_patterns (
+        id SERIAL PRIMARY KEY,
+        pattern_date DATE NOT NULL,
+        pattern_type VARCHAR(50) NOT NULL,
+        pattern_description TEXT,
+        affected_sectors JSONB,
+        key_indicators JSONB,
+        opus_insight TEXT,
+        action_taken TEXT,
+        outcome VARCHAR(20),
+        outcome_notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_market_trend_date ON market_trend_patterns(pattern_date);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_market_trend_type ON market_trend_patterns(pattern_type);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS learning_insights (
+        id SERIAL PRIMARY KEY,
+        insight_date DATE NOT NULL,
+        insight_type VARCHAR(50) NOT NULL,
+        insight_text TEXT NOT NULL,
+        confidence VARCHAR(20),
+        supporting_evidence JSONB,
+        applied BOOLEAN DEFAULT FALSE,
+        applied_date DATE,
+        effectiveness VARCHAR(20),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_learning_insights_date ON learning_insights(insight_date);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_learning_insights_type ON learning_insights(insight_type);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_learning_insights_applied ON learning_insights(applied);
+    `);
+
     console.log('✅ Database schema initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization error:', error);

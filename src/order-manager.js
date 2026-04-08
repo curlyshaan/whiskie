@@ -96,6 +96,7 @@ class OrderManager {
 
   /**
    * Modify stop-loss based on AI analysis
+   * Uses atomic database-backed state to prevent unprotected positions on crash
    */
   async modifyStopLoss(symbol, newStopLoss, reason) {
     try {
@@ -107,6 +108,12 @@ class OrderManager {
 
       console.log(`🔄 Modifying stop-loss for ${symbol}: ${orderInfo.stopLoss} → ${newStopLoss}`);
       console.log(`   Reason: ${reason}`);
+
+      // Mark as pending_replace in database BEFORE canceling
+      await db.query(
+        `UPDATE positions SET oco_order_id = $1 WHERE symbol = $2`,
+        [`PENDING_REPLACE_${orderInfo.ocoOrderId}`, symbol]
+      );
 
       // Cancel existing OCO order
       await tradier.cancelOrder(orderInfo.ocoOrderId);
@@ -133,7 +140,7 @@ class OrderManager {
       orderInfo.ocoOrderId = newOcoOrder.id;
       orderInfo.lastModified = new Date();
 
-      // Save to database
+      // Save to database with new OCO order ID
       await this.saveOrderToDatabase(symbol);
 
       return {
@@ -144,12 +151,17 @@ class OrderManager {
       };
     } catch (error) {
       console.error(`Error modifying stop-loss for ${symbol}:`, error);
+      // If we failed after cancel but before new order, log critical alert
+      if (error.message.includes('place') || error.message.includes('OCO')) {
+        console.error(`🚨 CRITICAL: ${symbol} may be unprotected after failed stop-loss modification`);
+      }
       throw error;
     }
   }
 
   /**
    * Modify take-profit based on AI analysis
+   * Uses atomic database-backed state to prevent unprotected positions on crash
    */
   async modifyTakeProfit(symbol, newTakeProfit, reason) {
     try {
@@ -161,6 +173,12 @@ class OrderManager {
 
       console.log(`🔄 Modifying take-profit for ${symbol}: ${orderInfo.takeProfit} → ${newTakeProfit}`);
       console.log(`   Reason: ${reason}`);
+
+      // Mark as pending_replace in database BEFORE canceling
+      await db.query(
+        `UPDATE positions SET oco_order_id = $1 WHERE symbol = $2`,
+        [`PENDING_REPLACE_${orderInfo.ocoOrderId}`, symbol]
+      );
 
       // Cancel existing OCO order
       await tradier.cancelOrder(orderInfo.ocoOrderId);

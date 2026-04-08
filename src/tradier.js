@@ -640,18 +640,6 @@ class TradierAPI {
     }
   }
 
-  /**
-   * Get market clock (open/close times)
-   */
-  async getMarketClock() {
-    try {
-      const response = await this.client.get('/markets/clock');
-      return response.data.clock;
-    } catch (error) {
-      console.error('Error fetching market clock:', error.message);
-      throw error;
-    }
-  }
 }
 
 export default new TradierAPI();

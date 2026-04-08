@@ -3,12 +3,53 @@ import tradier from './tradier.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
 import email from './email.js';
+import performanceAnalyzer from './performance-analyzer.js';
+import trendLearning from './trend-learning.js';
 import { getWeeklyEarningsReport } from './earnings-analysis.js';
 
 /**
  * Weekly Review Module
  * Deep review of all positions every Sunday with Claude Opus
  */
+
+/**
+ * Audit watchlist for stale/missed entries
+ */
+async function auditWatchlist() {
+  try {
+    const watchlist = await db.getWatchlist();
+    const stale = [];
+    const missed = [];
+
+    for (const item of watchlist) {
+      const quote = await tradier.getQuote(item.symbol);
+      const daysOnWatchlist = Math.floor((Date.now() - new Date(item.added_date)) / 86400000);
+
+      // Missed opportunity: price ran past target exit without buying
+      if (quote.last > item.target_exit_price) {
+        missed.push({ ...item, currentPrice: quote.last });
+      }
+      // Stale: on watchlist >30 days and price 10%+ above target entry
+      else if (daysOnWatchlist > 30 && quote.last > item.target_entry_price * 1.10) {
+        stale.push({ ...item, daysOnWatchlist, currentPrice: quote.last });
+      }
+    }
+
+    // Remove stale/missed entries
+    for (const item of [...stale, ...missed]) {
+      await db.removeFromWatchlist(item.symbol);
+    }
+
+    return {
+      stale,
+      missed,
+      remaining: watchlist.length - stale.length - missed.length
+    };
+  } catch (error) {
+    console.error('Error auditing watchlist:', error);
+    return { stale: [], missed: [], remaining: 0 };
+  }
+}
 
 /**
  * Review a single position with Claude Opus
@@ -64,9 +105,9 @@ export async function reviewPosition(symbol, lots) {
   - Trailing stop: ${lot.trailing_stop_active ? 'Active' : 'Inactive'}`;
     });
 
-    // Ask Claude Opus for deep review
+    // Ask Claude Opus for deep review with enhanced forward-looking questions
     const prompt = `
-You are conducting a weekly review of ${symbol}.
+You are conducting a WEEKLY STRATEGIC REVIEW of ${symbol}.
 
 POSITION SUMMARY:
 - Entry: $${avgCostBasis.toFixed(2)} (${daysHeld} days ago)
@@ -83,27 +124,26 @@ ${lotDetails}
 RECENT NEWS:
 ${newsText}
 
-QUESTIONS:
-1. Is the thesis still valid? Any concerns?
-2. Should we adjust stop-loss levels? If yes, what should they be?
-3. Should we adjust take-profit levels? If yes, what should they be?
-4. Should we trim any lots now? If yes, which ones and how much?
-5. Any other actions needed (e.g., add to position, close completely)?
+QUESTIONS FOR WEEKLY STRATEGIC REVIEW:
+1. Is this position still the best use of this capital vs all available alternatives in the current market?
+2. Has anything changed in the thesis since entry that requires updating stop/profit levels or position size?
+3. Are there catalysts in the next 4 weeks (earnings, product launches, regulatory decisions) that change the risk profile?
+4. Should any lots be reclassified (e.g., swing → long-term or vice versa) based on how the position has evolved?
+5. What is the probability-weighted expected return for holding vs exiting now? Consider both upside scenarios and downside risks.
+6. Is the sector this represents still a priority for the portfolio going into next week, or should capital be rotated?
 
 Provide specific recommendations with exact price levels.
 Format your response as:
 
-THESIS: [Valid/Broken/Weakening] - [explanation]
-STOP-LOSS: [Keep current/Adjust to $X] - [reasoning]
-TAKE-PROFIT: [Keep current/Adjust to $X] - [reasoning]
-TRIM: [No/Yes - Lot X, Y% at $Z] - [reasoning]
-OTHER: [Any other actions]
+THESIS: [Valid/Broken/Weakening] - [explanation with forward-looking view]
+STOP-LOSS: [Keep current/Adjust to $X] - [reasoning based on volatility and upcoming catalysts]
+TAKE-PROFIT: [Keep current/Adjust to $X/Remove for trailing stop] - [reasoning]
+POSITION ACTION: [Hold/Trim/Add/Exit] - [specific recommendation]
+FORWARD CATALYSTS: [List any upcoming events in next 4 weeks that matter]
+OTHER: [Any other strategic actions]
 `;
 
-    const analysis = await claude.analyze(prompt, {
-      model: 'opus',
-      maxTokens: 1000
-    });
+    const analysis = await claude.analyze(prompt, { model: 'opus' });
 
     console.log(`\n🧠 Opus Review for ${symbol}:`);
     console.log(analysis.analysis);
@@ -166,8 +206,8 @@ function parseOpusRecommendations(analysisText, lots, currentPrice) {
     recommendations.newTakeProfit = parseFloat(tpMatch[1]);
   }
 
-  // Parse trim recommendation
-  if (analysisText.includes('TRIM: Yes')) {
+  // Parse position action (FIXED: was looking for "TRIM: Yes", now looks for "POSITION ACTION: Trim/Exit")
+  if (analysisText.includes('POSITION ACTION: Trim') || analysisText.includes('POSITION ACTION: Exit')) {
     recommendations.trim = true;
     // Try to extract trim details
     const trimMatch = analysisText.match(/Lot (\d+).*?(\d+)%/i);
@@ -306,6 +346,51 @@ export async function executeReviewRecommendations(review) {
 }
 
 /**
+ * Run weekly synthesis with extended thinking
+ */
+async function runWeeklySynthesis(reviews, weeklyPerf, watchlistAudit) {
+  try {
+    console.log('\n🧠 Running weekly strategic synthesis with Opus...');
+
+    const prompt = `
+You are conducting a WEEKLY STRATEGIC REVIEW of a $100k portfolio.
+
+WEEK PERFORMANCE:
+${JSON.stringify(weeklyPerf, null, 2)}
+
+POSITION REVIEWS THIS WEEK:
+${reviews.map(r => `${r.symbol}: ${r.gainPercent}% gain (${r.daysHeld} days held)\n${r.analysis}`).join('\n---\n')}
+
+WATCHLIST AUDIT:
+- Stale entries removed: ${watchlistAudit.stale.length > 0 ? watchlistAudit.stale.map(s => s.symbol).join(', ') : 'None'}
+- Missed opportunities: ${watchlistAudit.missed.length > 0 ? watchlistAudit.missed.map(m => `${m.symbol} (ran to $${m.currentPrice} past exit $${m.target_exit_price})`).join(', ') : 'None'}
+- Remaining watchlist entries: ${watchlistAudit.remaining}
+
+QUESTIONS FOR STRATEGIC REVIEW:
+1. What is the portfolio's overall trajectory this week vs market? Are we beating, matching, or lagging the S&P 500?
+2. Which positions are underperforming their thesis and should be considered for exit?
+3. Are there any sector over/underweights that need correcting next week?
+4. What are the 2-3 highest-conviction opportunities for next week based on current market conditions?
+5. Should any parameters change (stop-loss %, position sizing, cash target) based on what we learned this week?
+6. What worked well this week that we should do more of?
+7. What didn't work — and what should we stop doing or adjust?
+
+Provide strategic recommendations for the coming week with specific actionable items.
+`;
+
+    const synthesis = await claude.analyze(prompt, { model: 'opus' });
+
+    console.log('\n📊 Weekly Strategic Synthesis:');
+    console.log(synthesis.analysis);
+
+    return synthesis;
+  } catch (error) {
+    console.error('Error running weekly synthesis:', error);
+    return { analysis: 'Synthesis failed: ' + error.message };
+  }
+}
+
+/**
  * Run full weekly review (Sunday 9 PM)
  */
 export async function runWeeklyReview() {
@@ -325,11 +410,22 @@ export async function runWeeklyReview() {
 
     console.log(`Found ${symbols.length} positions to review\n`);
 
+    // Run performance analysis
+    console.log('📊 Analyzing weekly performance...');
+    const weeklyPerf = await performanceAnalyzer.analyzePerformance();
+
+    // Audit watchlist
+    console.log('🔍 Auditing watchlist...');
+    const watchlistAudit = await auditWatchlist();
+    console.log(`   Removed ${watchlistAudit.stale.length} stale entries`);
+    console.log(`   Removed ${watchlistAudit.missed.length} missed opportunities`);
+    console.log(`   ${watchlistAudit.remaining} entries remaining\n`);
+
     const reviews = [];
 
-    // Review each position
+    // Review each position (FIXED: removed quantity > 0 filter to include shorts)
     for (const symbol of symbols) {
-      const symbolLots = allLots.filter(lot => lot.symbol === symbol && lot.quantity > 0);
+      const symbolLots = allLots.filter(lot => lot.symbol === symbol);
 
       if (symbolLots.length > 0) {
         const review = await reviewPosition(symbol, symbolLots);
@@ -345,6 +441,13 @@ export async function runWeeklyReview() {
       }
     }
 
+    // Run weekly synthesis with extended thinking
+    const synthesis = await runWeeklySynthesis(reviews, weeklyPerf, watchlistAudit);
+
+    // Run weekly trend learning (strategic patterns)
+    console.log('🧠 Running weekly trend learning...');
+    const weeklyLearning = await trendLearning.runWeeklyTrendLearning(reviews, weeklyPerf);
+
     // Get earnings report
     const earningsReport = await getWeeklyEarningsReport();
 
@@ -352,10 +455,10 @@ export async function runWeeklyReview() {
     const portfolio = await checkPortfolioBalance();
 
     // Send weekly summary email
-    await sendWeeklySummaryEmail(reviews, earningsReport, portfolio);
+    await sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthesis, weeklyPerf, watchlistAudit);
 
     console.log(`\n✅ Weekly review complete: ${reviews.length} positions reviewed`);
-    return { reviewed: reviews.length, reviews };
+    return { reviewed: reviews.length, reviews, synthesis };
 
   } catch (error) {
     console.error('Error running weekly review:', error);
@@ -415,11 +518,25 @@ async function checkPortfolioBalance() {
 /**
  * Send weekly summary email
  */
-async function sendWeeklySummaryEmail(reviews, earningsReport, portfolio) {
+async function sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthesis, weeklyPerf, watchlistAudit) {
   try {
     let html = `
       <h2>📅 Weekly Portfolio Review</h2>
       <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
+
+      <h3>📊 Weekly Performance</h3>
+      ${weeklyPerf ? `
+        <p><strong>Total Trades:</strong> ${weeklyPerf.totalTrades}</p>
+        <p><strong>Winners:</strong> ${weeklyPerf.winners} | <strong>Losers:</strong> ${weeklyPerf.losers}</p>
+        <p><strong>Win Rate:</strong> ${weeklyPerf.winRate}</p>
+        <p><strong>Avg Win:</strong> ${weeklyPerf.avgWin} | <strong>Avg Loss:</strong> ${weeklyPerf.avgLoss}</p>
+        <p><strong>Profit Factor:</strong> ${weeklyPerf.profitFactor}</p>
+      ` : '<p>No performance data available</p>'}
+
+      <h3>🔍 Watchlist Audit</h3>
+      <p><strong>Stale entries removed:</strong> ${watchlistAudit.stale.length}</p>
+      <p><strong>Missed opportunities:</strong> ${watchlistAudit.missed.length}</p>
+      <p><strong>Active watchlist entries:</strong> ${watchlistAudit.remaining}</p>
 
       <h3>Portfolio Summary</h3>
       <p><strong>Total Value:</strong> $${portfolio.totalValue?.toLocaleString() || 'N/A'}</p>
@@ -436,7 +553,12 @@ async function sendWeeklySummaryEmail(reviews, earningsReport, portfolio) {
       `;
     }
 
-    html += `<h3>Position Reviews</h3>`;
+    html += `
+      <h3>🧠 Weekly Strategic Synthesis</h3>
+      <pre style="background: #f5f5f5; padding: 10px; border-radius: 5px; white-space: pre-wrap;">${synthesis.analysis}</pre>
+
+      <h3>Position Reviews</h3>
+    `;
 
     for (const review of reviews) {
       if (review.error) {

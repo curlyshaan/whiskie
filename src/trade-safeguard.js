@@ -85,8 +85,7 @@ class TradeSafeguard {
       const today = new Date().toISOString().split('T')[0];
       const result = await db.query(
         `SELECT COUNT(*) as count FROM trades
-         WHERE DATE(executed_at) = $1
-         AND status = 'filled'`,
+         WHERE DATE(executed_at) = $1`,
         [today]
       );
       return parseInt(result.rows[0]?.count || 0);
@@ -105,8 +104,7 @@ class TradeSafeguard {
       const result = await db.query(
         `SELECT COALESCE(SUM(ABS(total_value)), 0) as total
          FROM trades
-         WHERE DATE(executed_at) = $1
-         AND status = 'filled'`,
+         WHERE DATE(executed_at) = $1`,
         [today]
       );
       return parseFloat(result.rows[0]?.total || 0);

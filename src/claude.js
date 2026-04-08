@@ -38,25 +38,27 @@ class ClaudeAPI {
       const payload = {
         model,
         max_tokens: 16000,
-        temperature: 0.1, // Consistent, focused decisions
         messages
       };
 
-      if (systemPrompt) {
-        payload.system = systemPrompt;
-      }
-
-      // Enable extended thinking for Opus with MAX budget
+      // Extended thinking requires temperature 1.0
       if (enableThinking && model === MODELS.OPUS) {
         console.log('🧠 Enabling extended thinking with 50,000 token budget (MAX)...');
         payload.thinking = {
           type: 'enabled',
           budget_tokens: 50000
         };
+        payload.temperature = 1; // Required for extended thinking
         console.log('⏳ This may take 3-7 minutes for DEEP analysis...');
+      } else {
+        payload.temperature = 0.1; // Consistent, focused decisions for non-thinking calls
       }
 
-      console.log(`📡 Calling Claude API (model: ${model}, temp: 0.1)...`);
+      if (systemPrompt) {
+        payload.system = systemPrompt;
+      }
+
+      console.log(`📡 Calling Claude API (model: ${model}, temp: ${payload.temperature})...`);
       const response = await this.client.post('/v1/messages', payload);
       console.log('✅ Claude API response received');
 
@@ -105,30 +107,48 @@ class ClaudeAPI {
   }
 
   /**
-   * Evaluate a specific stock for purchase
+   * Evaluate a specific stock for purchase or short
    */
   async evaluateStock(symbol, fundamentals, technicals, newsData) {
-    const prompt = `You are a professional stock analyst. Evaluate ${symbol} for potential purchase.
+    // Format the integrated technical signal for Claude clearly
+    const signalSummary = technicals?.technicalSignal
+      ? `
+**Integrated Technical Signal:** ${technicals.technicalSignal.signal} (score: ${technicals.technicalSignal.score})
+Action guidance: ${technicals.technicalSignal.action}
+Supporting reasons: ${(technicals.technicalSignal.reasons || []).join('; ')}
+Cautions: ${(technicals.technicalSignal.cautions || []).join('; ') || 'None'}
+
+**Key Technical Levels:**
+- Price: $${technicals.currentPrice} | SMA50: $${technicals.sma50?.toFixed(2)} | SMA200: $${technicals.sma200?.toFixed(2)}
+- Above 50MA: ${technicals.aboveSMA50} | Above 200MA: ${technicals.aboveSMA200}
+- 200MA Trending: ${technicals.ma200Trending} (slope: ${technicals.sma200Slope})
+- Distance from 200MA: ${technicals.distanceFrom200MA}%
+- RSI(14): ${technicals.rsi?.toFixed(1)} | MACD: ${technicals.macd?.bullish ? 'Bullish' : 'Bearish'} | Crossover: ${technicals.macd?.crossover}
+- ATR(14): $${technicals.atr14} (${technicals.atrPercent}% of price) — use for stop sizing
+- Volume ratio vs 20-day avg: ${technicals.volumeRatio}x`
+      : `**Technical Data:** ${JSON.stringify(technicals, null, 2)}`;
+
+    const prompt = `You are a professional stock analyst evaluating ${symbol} for swing/position trading.
 
 **Fundamental Data:**
 ${JSON.stringify(fundamentals, null, 2)}
 
-**Technical Data:**
-${JSON.stringify(technicals, null, 2)}
+${signalSummary}
 
 **Recent News:**
 ${newsData}
 
 **Analysis Required:**
 1. Fundamental strength (revenue growth, profitability, debt levels)
-2. Technical setup (trend, support/resistance, momentum)
-3. Risk assessment
-4. Entry price recommendation
-5. Position size recommendation (as % of portfolio)
-6. Stop-loss level
-7. Take-profit targets
+2. Technical setup interpretation — use the integrated signal score above as your starting point, then add your own assessment of support/resistance and trend context
+3. SHORT ELIGIBILITY CHECK: If signal is WEAK_SHORT or STRONG_SHORT, verify: (a) is 200MA slope declining? (b) is RSI NOT oversold (<30)? (c) is there no earnings in next 2 weeks? Only recommend short if all three pass.
+4. BUY ELIGIBILITY CHECK: If signal is WEAK_BUY or STRONG_BUY, verify: (a) is 200MA rising? (b) is RSI not overbought (>70)? (c) is volume confirming the move?
+5. Entry price recommendation — for longs: buy at/near 50MA or 200MA support. For shorts: enter on failed retest of 200MA from below, not on initial breakdown.
+6. Stop-loss level — use ATR to set stop: longs stop = entry - (1.5 × ATR14), shorts stop = entry + (1.5 × ATR14)
+7. Position size recommendation (as % of portfolio) — reduce size if ATR% > 3% (high volatility)
+8. Take-profit targets
 
-**Provide a BUY/HOLD/AVOID recommendation with detailed reasoning.**`;
+**Provide a BUY / SHORT / HOLD / AVOID recommendation with detailed reasoning. Be specific about which technical conditions you are relying on.**`;
 
     const messages = [{ role: 'user', content: prompt }];
     const response = await this.sendMessage(messages, MODELS.OPUS, null, true);
@@ -293,6 +313,18 @@ ${newsHeadlines}`;
 
     const messages = [{ role: 'user', content: prompt }];
     const response = await this.sendMessage(messages, MODELS.OPUS, null, true);
+    return this.parseAnalysisResponse(response);
+  }
+
+  /**
+   * General-purpose analysis with extended thinking
+   * Used by weekly-review and other modules
+   */
+  async analyze(prompt, options = {}) {
+    const model = options.model === 'opus' ? MODELS.OPUS : MODELS.SONNET;
+    const messages = [{ role: 'user', content: prompt }];
+    // Always use extended thinking for thorough analysis
+    const response = await this.sendMessage(messages, model, null, true);
     return this.parseAnalysisResponse(response);
   }
 }

@@ -3,6 +3,7 @@ import claude from './claude.js';
 import tavily from './tavily.js';
 import riskManager from './risk-manager.js';
 import { getPositions, upsertPosition } from './db.js';
+import yahooFinance from './yahoo-finance.js';
 
 /**
  * Portfolio Analysis Engine
@@ -170,42 +171,372 @@ class AnalysisEngine {
 
   /**
    * Calculate technical indicators for a stock
+   * Includes: SMA50, SMA200, RSI, MACD, ATR, MA slopes, volume confirmation,
+   * price distance from 200MA, and an integrated buy/short signal score.
    */
   async getTechnicalIndicators(symbol) {
     try {
-      // Get 200 days of history for moving averages
-      const endDate = new Date().toISOString().split('T')[0];
-      const startDate = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      // Use Yahoo Finance for historical data (unlimited history, free)
+      // Request 400 days to ensure we get at least 260 trading days (accounting for weekends/holidays)
+      const endDate = new Date();
+      const startDate = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
 
-      const history = await tradier.getHistory(symbol, 'daily', startDate, endDate);
+      const history = await yahooFinance.getHistoricalData(symbol, startDate, endDate);
 
-      if (!history || history.length < 50) {
+      if (!history || history.length < 60) {
+        console.warn(`Insufficient historical data for ${symbol}: ${history?.length || 0} days`);
         return null;
       }
 
       const prices = history.map(d => d.close);
+      const highs  = history.map(d => d.high);
+      const lows   = history.map(d => d.low);
       const volumes = history.map(d => d.volume);
 
-      // Calculate indicators
       const currentPrice = prices[prices.length - 1];
-      const sma50 = this.calculateSMA(prices, 50);
-      const sma200 = this.calculateSMA(prices, 200);
-      const rsi = this.calculateRSI(prices, 14);
+      const currentVolume = volumes[volumes.length - 1];
 
-      return {
+      // --- Moving Averages ---
+      const sma50  = this.calculateSMA(prices, 50);
+      const sma200 = this.calculateSMA(prices, 200);
+
+      // MA slopes: compare current MA to MA value 10 days ago
+      // Positive slope = trending up; negative = trending down
+      const sma50Slope  = sma50  ? this.calculateMASlope(prices, 50,  10) : null;
+      const sma200Slope = sma200 ? this.calculateMASlope(prices, 200, 10) : null;
+
+      // Price distance from 200MA as a percentage
+      const distanceFrom200MA = sma200 ? ((currentPrice - sma200) / sma200) * 100 : null;
+
+      // --- Momentum Indicators ---
+      const rsi  = this.calculateRSI(prices, 14);
+      const macd = this.calculateMACD(prices);
+
+      // --- Volatility ---
+      const atr14 = this.calculateATR(highs, lows, prices, 14);
+      // ATR as % of price is more useful for position sizing
+      const atrPercent = atr14 && currentPrice ? (atr14 / currentPrice) * 100 : null;
+
+      // --- Volume Analysis ---
+      const avgVolume20 = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+      const volumeRatio = avgVolume20 > 0 ? currentVolume / avgVolume20 : null;
+
+      // --- Integrated Buy / Short Signal ---
+      const signal = this.calculateTechnicalSignal({
         currentPrice,
         sma50,
         sma200,
+        sma50Slope,
+        sma200Slope,
+        distanceFrom200MA,
         rsi,
-        trend: currentPrice > sma200 ? 'uptrend' : 'downtrend',
-        aboveSMA50: currentPrice > sma50,
-        aboveSMA200: currentPrice > sma200,
-        avgVolume: volumes.slice(-20).reduce((a, b) => a + b, 0) / 20
+        macd,
+        volumeRatio
+      });
+
+      return {
+        currentPrice,
+        // Moving averages
+        sma50,
+        sma200,
+        sma50Slope: sma50Slope ? parseFloat(sma50Slope.toFixed(4)) : null,
+        sma200Slope: sma200Slope ? parseFloat(sma200Slope.toFixed(4)) : null,
+        aboveSMA50: sma50  ? currentPrice > sma50  : null,
+        aboveSMA200: sma200 ? currentPrice > sma200 : null,
+        distanceFrom200MA: distanceFrom200MA ? parseFloat(distanceFrom200MA.toFixed(2)) : null,
+        // Trend summary
+        trend: sma200 ? (currentPrice > sma200 ? 'uptrend' : 'downtrend') : 'unknown',
+        ma200Trending: sma200Slope > 0 ? 'up' : sma200Slope < 0 ? 'down' : 'flat',
+        // Momentum
+        rsi,
+        macd,
+        // Volatility
+        atr14: atr14 ? parseFloat(atr14.toFixed(2)) : null,
+        atrPercent: atrPercent ? parseFloat(atrPercent.toFixed(2)) : null,
+        // Volume
+        avgVolume: parseFloat(avgVolume20.toFixed(0)),
+        volumeRatio: volumeRatio ? parseFloat(volumeRatio.toFixed(2)) : null,
+        volumeConfirmed: volumeRatio ? volumeRatio >= 1.2 : false,
+        // Integrated signal
+        technicalSignal: signal
       };
     } catch (error) {
       console.error(`Error getting technicals for ${symbol}:`, error.message);
       return null;
     }
+  }
+
+  /**
+   * Calculate the slope of a moving average over a lookback window.
+   * Returns the average daily change of the MA (positive = rising, negative = falling).
+   * Uses the last `period`-bar SMA calculated `lookback` bars ago vs. current.
+   */
+  calculateMASlope(prices, period, lookback) {
+    if (prices.length < period + lookback) return null;
+    const currentMA = this.calculateSMA(prices, period);
+    const pastPrices = prices.slice(0, prices.length - lookback);
+    const pastMA = this.calculateSMA(pastPrices, period);
+    if (!currentMA || !pastMA || pastMA === 0) return null;
+    // Return percentage change per day (annualised sense not needed here)
+    return (currentMA - pastMA) / lookback;
+  }
+
+  /**
+   * Calculate MACD (Moving Average Convergence Divergence)
+   * Standard settings: fast EMA 12, slow EMA 26, signal EMA 9
+   * Returns: macdLine, signalLine, histogram, and crossover status
+   */
+  calculateMACD(prices, fast = 12, slow = 26, signal = 9) {
+    if (prices.length < slow + signal) return null;
+
+    const emaFast   = this.calculateEMA(prices, fast);
+    const emaSlow   = this.calculateEMA(prices, slow);
+    if (!emaFast || !emaSlow) return null;
+
+    // Build MACD line history: requires per-bar EMA, not just final value
+    // We compute a simplified version using the final EMA values and a
+    // rolling MACD line for the signal calculation
+    const macdLine = emaFast - emaSlow;
+
+    // Compute MACD line history for signal EMA
+    const macdHistory = [];
+    for (let i = slow - 1; i < prices.length; i++) {
+      const slice = prices.slice(0, i + 1);
+      const f = this.calculateEMA(slice, fast);
+      const s = this.calculateEMA(slice, slow);
+      if (f !== null && s !== null) {
+        macdHistory.push(f - s);
+      }
+    }
+
+    if (macdHistory.length < signal) return null;
+
+    const signalLine = this.calculateEMA(macdHistory, signal);
+    if (signalLine === null) return null;
+
+    const histogram = macdLine - signalLine;
+
+    // Determine crossover: check if histogram flipped sign in last 2 bars
+    const prevHistogram = macdHistory.length >= 2
+      ? macdHistory[macdHistory.length - 2] - this.calculateEMA(macdHistory.slice(0, macdHistory.length - 1), signal)
+      : null;
+
+    let crossover = 'none';
+    if (prevHistogram !== null) {
+      if (prevHistogram < 0 && histogram > 0) crossover = 'bullish';   // MACD crossed above signal
+      if (prevHistogram > 0 && histogram < 0) crossover = 'bearish';   // MACD crossed below signal
+    }
+
+    return {
+      macdLine:   parseFloat(macdLine.toFixed(4)),
+      signalLine: parseFloat(signalLine.toFixed(4)),
+      histogram:  parseFloat(histogram.toFixed(4)),
+      bullish:    macdLine > signalLine,   // MACD above signal = bullish momentum
+      crossover
+    };
+  }
+
+  /**
+   * Calculate Exponential Moving Average (EMA)
+   * Uses standard smoothing factor: 2 / (period + 1)
+   */
+  calculateEMA(prices, period) {
+    if (prices.length < period) return null;
+
+    const k = 2 / (period + 1);
+    // Seed with SMA of first `period` bars
+    let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+
+    for (let i = period; i < prices.length; i++) {
+      ema = prices[i] * k + ema * (1 - k);
+    }
+
+    return ema;
+  }
+
+  /**
+   * Calculate Average True Range (ATR) - 14-period standard
+   * ATR = average of True Range over the period
+   * True Range = max(high-low, |high-prevClose|, |low-prevClose|)
+   * Used for stop-loss sizing and volatility assessment.
+   */
+  calculateATR(highs, lows, closes, period = 14) {
+    if (highs.length < period + 1) return null;
+
+    const trueRanges = [];
+    for (let i = 1; i < highs.length; i++) {
+      const hl  = highs[i] - lows[i];
+      const hpc = Math.abs(highs[i] - closes[i - 1]);
+      const lpc = Math.abs(lows[i] - closes[i - 1]);
+      trueRanges.push(Math.max(hl, hpc, lpc));
+    }
+
+    // Use Wilder's smoothing (same as RSI): seed with simple average, then smooth
+    let atr = trueRanges.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < trueRanges.length; i++) {
+      atr = (atr * (period - 1) + trueRanges[i]) / period;
+    }
+
+    return atr;
+  }
+
+  /**
+   * Integrated technical signal scorer for buy vs short decisions.
+   *
+   * Scoring logic (for swing/position trading on mid-to-large caps):
+   *
+   * BUY SIGNALS (positive score):
+   *   +2  Price above rising 200MA (institutionally bullish)
+   *   +1  Price above 50MA
+   *   +1  MACD bullish (line above signal)
+   *   +1  MACD bullish crossover just happened
+   *   +1  RSI 40-65 (healthy momentum, not overbought)
+   *   +1  Volume confirmed move (volumeRatio >= 1.2)
+   *   +1  Price within 5% below 200MA but 200MA is rising (institutional support zone)
+   *
+   * SHORT SIGNALS (negative score):
+   *   -2  Price below declining 200MA (institutionally bearish)
+   *   -1  Price below 50MA
+   *   -1  MACD bearish (line below signal)
+   *   -1  MACD bearish crossover just happened
+   *   -1  RSI 40-60 range confirms downtrend (not oversold, so no bounce imminent)
+   *   -1  Volume confirmed breakdown (volumeRatio >= 1.2 on downside)
+   *   -1  Price stretched >20% above 200MA (mean-reversion short candidate)
+   *
+   * PENALTY / CAUTION:
+   *   RSI < 30 on a short candidate = CAUTION (oversold, bounce risk)
+   *   RSI > 70 on a buy candidate = CAUTION (overbought, pullback risk)
+   *
+   * Final score:
+   *   >= +3 = STRONG_BUY
+   *   +1 to +2 = WEAK_BUY
+   *   -1 to +0 = NEUTRAL
+   *   -2 to -1 = WEAK_SHORT
+   *   <= -3 = STRONG_SHORT
+   */
+  calculateTechnicalSignal({ currentPrice, sma50, sma200, sma50Slope, sma200Slope, distanceFrom200MA, rsi, macd, volumeRatio }) {
+    let score = 0;
+    const reasons = [];
+    const cautions = [];
+
+    // --- 200MA Analysis ---
+    if (sma200 && sma200Slope !== null) {
+      if (currentPrice > sma200 && sma200Slope > 0) {
+        score += 2;
+        reasons.push('Above rising 200MA (institutional uptrend)');
+      } else if (currentPrice < sma200 && sma200Slope < 0) {
+        score -= 2;
+        reasons.push('Below declining 200MA (institutional downtrend)');
+      } else if (currentPrice > sma200 && sma200Slope <= 0) {
+        score += 1;
+        reasons.push('Above 200MA but MA is flat/declining (cautious bullish)');
+      } else if (currentPrice < sma200 && sma200Slope >= 0) {
+        score -= 1;
+        reasons.push('Below 200MA but MA is flat/rising (could be a dip, not confirmed short)');
+      }
+    }
+
+    // Institutional support/retest zone: within 5% below a rising 200MA
+    if (distanceFrom200MA !== null && sma200Slope !== null &&
+        distanceFrom200MA >= -5 && distanceFrom200MA < 0 && sma200Slope > 0) {
+      score += 1;
+      reasons.push('Near rising 200MA from below - institutional buy zone (wait for confirmation bounce)');
+    }
+
+    // Mean-reversion short: price stretched >20% above 200MA
+    if (distanceFrom200MA !== null && distanceFrom200MA > 20) {
+      score -= 1;
+      cautions.push(`Price ${distanceFrom200MA.toFixed(1)}% above 200MA - stretched, mean-reversion short risk`);
+    }
+
+    // --- 50MA Analysis ---
+    if (sma50) {
+      if (currentPrice > sma50) {
+        score += 1;
+        reasons.push('Above 50MA');
+      } else {
+        score -= 1;
+        reasons.push('Below 50MA');
+      }
+    }
+
+    // --- MACD Analysis ---
+    if (macd) {
+      if (macd.bullish) {
+        score += 1;
+        reasons.push('MACD bullish (line above signal)');
+      } else {
+        score -= 1;
+        reasons.push('MACD bearish (line below signal)');
+      }
+
+      if (macd.crossover === 'bullish') {
+        score += 1;
+        reasons.push('MACD bullish crossover - fresh momentum shift');
+      } else if (macd.crossover === 'bearish') {
+        score -= 1;
+        reasons.push('MACD bearish crossover - fresh momentum breakdown');
+      }
+    }
+
+    // --- RSI Analysis ---
+    if (rsi !== null) {
+      if (rsi >= 40 && rsi <= 65) {
+        score += 1;
+        reasons.push(`RSI ${rsi.toFixed(1)} - healthy momentum range`);
+      } else if (rsi > 70) {
+        cautions.push(`RSI ${rsi.toFixed(1)} - overbought, avoid chasing longs`);
+      } else if (rsi < 30) {
+        cautions.push(`RSI ${rsi.toFixed(1)} - oversold, avoid fresh shorts (bounce risk)`);
+      } else if (rsi < 40) {
+        // 30-40: weak momentum, slightly bearish
+        score -= 1;
+        reasons.push(`RSI ${rsi.toFixed(1)} - weak/downtrend momentum`);
+      }
+    }
+
+    // --- Volume Confirmation ---
+    if (volumeRatio !== null) {
+      if (volumeRatio >= 1.2) {
+        // Volume confirms the current directional move
+        if (score > 0) {
+          score += 1;
+          reasons.push(`Volume ${volumeRatio.toFixed(2)}x avg - confirms bullish move`);
+        } else if (score < 0) {
+          score -= 1;
+          reasons.push(`Volume ${volumeRatio.toFixed(2)}x avg - confirms bearish breakdown`);
+        }
+      } else if (volumeRatio < 0.7) {
+        cautions.push(`Volume ${volumeRatio.toFixed(2)}x avg - thin volume, move may not hold`);
+      }
+    }
+
+    // --- Map score to signal label ---
+    let signal, action;
+    if (score >= 4) {
+      signal = 'STRONG_BUY';
+      action = 'Strong buy candidate - multiple factors aligned';
+    } else if (score >= 2) {
+      signal = 'WEAK_BUY';
+      action = 'Lean bullish - wait for additional confirmation before entering';
+    } else if (score <= -4) {
+      signal = 'STRONG_SHORT';
+      action = 'Strong short candidate - multiple factors aligned (verify ETB and no near-term earnings)';
+    } else if (score <= -2) {
+      signal = 'WEAK_SHORT';
+      action = 'Lean bearish - wait for retest of 200MA from below before entering short';
+    } else {
+      signal = 'NEUTRAL';
+      action = 'Mixed signals - no clear edge, avoid new positions';
+    }
+
+    return {
+      score,
+      signal,
+      action,
+      reasons,
+      cautions
+    };
   }
 
   /**

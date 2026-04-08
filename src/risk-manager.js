@@ -13,34 +13,14 @@ class RiskManager {
     this.MAX_PORTFOLIO_DRAWDOWN = parseFloat(process.env.MAX_PORTFOLIO_DRAWDOWN) || 0.20; // 20%
     this.MIN_CASH_RESERVE = parseFloat(process.env.MIN_CASH_RESERVE) || 0.03; // 3%
     this.MAX_SECTOR_ALLOCATION = parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.25; // 25%
-
-    this.dailyTradeCount = 0;
-    this.lastTradeDate = null;
-  }
-
-  /**
-   * Reset daily trade counter
-   */
-  resetDailyCounter() {
-    const today = new Date().toDateString();
-    if (this.lastTradeDate !== today) {
-      this.dailyTradeCount = 0;
-      this.lastTradeDate = today;
-    }
   }
 
   /**
    * Validate a proposed trade
+   * Note: Daily trade count now uses database-backed tradeSafeguard, not in-memory counter
    */
-  validateTrade(trade, portfolio) {
-    this.resetDailyCounter();
-
+  async validateTrade(trade, portfolio) {
     const errors = [];
-
-    // Check daily trade limit
-    if (this.dailyTradeCount >= this.MAX_DAILY_TRADES) {
-      errors.push(`Daily trade limit reached (${this.MAX_DAILY_TRADES} trades/day)`);
-    }
 
     // Check position size
     const tradeValue = trade.quantity * trade.price;
@@ -181,25 +161,15 @@ class RiskManager {
 
   /**
    * Check if take-profit should trigger
+   * NOTE: Automatic trim triggers removed - Opus manages all exits via analyzeAndModifyOrders()
+   * This allows home run positions to compound without being trimmed to death
    */
   shouldTriggerTakeProfit(position, currentPrice) {
-    const gain = (currentPrice - position.cost_basis) / position.cost_basis;
-
-    // First trim at +15-20%
-    if (gain >= 0.15 && !position.trimmed_1) {
-      return { action: 'trim', percentage: 0.25, reason: 'First take-profit at +15%' };
-    }
-
-    // Second trim at +25-30%
-    if (gain >= 0.25 && !position.trimmed_2) {
-      return { action: 'trim', percentage: 0.25, reason: 'Second take-profit at +25%' };
-    }
-
-    // Third trim at +40%
-    if (gain >= 0.40 && !position.trimmed_3) {
-      return { action: 'trim', percentage: 0.25, reason: 'Third take-profit at +40%' };
-    }
-
+    // No automatic trimming - Opus decides when to exit based on:
+    // - Thesis changes (earnings miss, guidance down)
+    // - News events (partnership, product launch, etc.)
+    // - Technical signals (parabolic moves, support breaks)
+    // - Dynamic trailing stops adjusted based on volatility
     return null;
   }
 
@@ -211,13 +181,6 @@ class RiskManager {
     return loss <= -0.20; // 20% or more loss
   }
 
-  /**
-   * Increment daily trade counter
-   */
-  recordTrade() {
-    this.resetDailyCounter();
-    this.dailyTradeCount++;
-  }
 
   /**
    * Check if in defensive mode (portfolio down 15%+)
