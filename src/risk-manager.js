@@ -15,9 +15,11 @@ class RiskManager {
     this.MAX_DAILY_TRADES = parseInt(process.env.MAX_DAILY_TRADES) || 3;
     this.MAX_PORTFOLIO_DRAWDOWN = parseFloat(process.env.MAX_PORTFOLIO_DRAWDOWN) || 0.20; // 20%
     this.MIN_CASH_RESERVE = parseFloat(process.env.MIN_CASH_RESERVE) || 0.03; // 3%
-    this.MAX_SECTOR_ALLOCATION = parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.30; // 30% (updated from 25%)
-    this.MAX_SHORT_SECTOR_ALLOCATION = 0.15; // 15% shorts per sector
-    this.MAX_TOTAL_SHORT_EXPOSURE = 0.30; // 30% total shorts
+    this.MAX_SECTOR_ALLOCATION = parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.30; // 30% per sector (both long and short)
+    this.MAX_SHORT_SECTOR_ALLOCATION = 0.30; // 30% shorts per sector
+    this.MAX_TOTAL_SHORT_EXPOSURE = 0.30; // 30% total shorts (typical), hard limit 0.20 (20%)
+    this.TARGET_LONG_ALLOCATION = 0.70; // 70% long (typical)
+    this.MAX_LONG_ALLOCATION = 0.80; // 80% long (hard limit)
   }
 
   /**

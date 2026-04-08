@@ -1606,8 +1606,11 @@ ${historyContext}`;
 
       await email.sendDailySummary({
         totalValue: portfolio.totalValue,
+        cash: portfolio.cash,
+        positions: portfolio.positions,
         dailyChange: 0, // TODO: Calculate
         totalReturn: portfolio.drawdown * 100,
+        trades: [], // TODO: Get today's trades
         topPerformers: performers,
         alerts,
         aiRecommendation: 'Portfolio analysis complete. Check dashboard for details.'
