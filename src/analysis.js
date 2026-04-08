@@ -40,7 +40,13 @@ class AnalysisEngine {
       // Calculate portfolio metrics
       const cash = balances.total_cash || balances.cash?.cash_available || 0;
       const positionsValue = balances.long_market_value || 0;
-      const totalValue = balances.total_equity || cash;
+      const totalValue = balances.total_equity || cash || this.INITIAL_CAPITAL;
+
+      // Safety check: ensure totalValue is never 0 or undefined
+      if (!totalValue || totalValue <= 0) {
+        console.warn('⚠️ Invalid totalValue from Tradier, using INITIAL_CAPITAL');
+        totalValue = this.INITIAL_CAPITAL;
+      }
 
       // Calculate drawdown
       const drawdown = (totalValue - this.INITIAL_CAPITAL) / this.INITIAL_CAPITAL;
