@@ -12,6 +12,7 @@ import analysisEngine from './analysis.js';
 import orderManager from './order-manager.js';
 import shortManager from './short-manager.js';
 import trendLearning from './trend-learning.js';
+import correlationAnalysis from './correlation-analysis.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
 import { SUB_INDUSTRIES, getAllSubIndustries } from './sub-industry-data.js';
