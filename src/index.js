@@ -40,6 +40,7 @@ class WhiskieBot {
   constructor() {
     this.botStarted = false;
     this.analysisRunning = false;
+    this.apiServerStarted = false;
     this.isPaperTrading = process.env.NODE_ENV === 'paper';
     console.log(`🤖 Whiskie Bot initialized in ${this.isPaperTrading ? 'PAPER TRADING' : 'LIVE'} mode`);
   }
@@ -65,20 +66,16 @@ class WhiskieBot {
       // Check if we should run now
       const shouldRun = await this.shouldRunNow();
 
-      if (!shouldRun) {
-        console.log('⏰ Outside trading hours. Bot will sleep until next scheduled time.');
-        console.log('📅 Next run: Tomorrow at 9:00 AM ET\n');
-
-        // Schedule next run and exit
-        this.scheduleNextRun();
-        return;
+      if (shouldRun) {
+        // Run initial analysis (in background so it doesn't block)
+        console.log('📊 Running initial portfolio analysis...\n');
+        this.runDailyAnalysis().catch(console.error);
+      } else {
+        console.log('⏰ Outside trading hours. Bot will wait for scheduled cron jobs.');
+        console.log('📅 Next scheduled run: 10:00 AM ET (Mon-Fri)\n');
       }
 
-      // Run initial analysis (in background so it doesn't block)
-      console.log('📊 Running initial portfolio analysis...\n');
-      this.runDailyAnalysis().catch(console.error);
-
-      // Schedule daily analysis at 10:00 AM, 12:30 PM, and 3:30 PM ET
+      // Schedule daily analysis at 10:00 AM and 2:00 PM ET
       cron.schedule('0 10 * * 1-5', async () => {
         console.log('\n⏰ 10:00 AM Analysis - Market has settled after open');
         await this.runDailyAnalysis();
@@ -87,14 +84,7 @@ class WhiskieBot {
       });
 
       cron.schedule('0 14 * * 1-5', async () => {
-        console.log('\n⏰ 2:00 PM Analysis - Afternoon check');
-        await this.runDailyAnalysis();
-      }, {
-        timezone: 'America/New_York'
-      });
-
-      cron.schedule('30 15 * * 1-5', async () => {
-        console.log('\n⏰ 3:30 PM Analysis - Before market close');
+        console.log('\n⏰ 2:00 PM Analysis - Afternoon check (2 hours before close)');
         await this.runDailyAnalysis();
       }, {
         timezone: 'America/New_York'
@@ -147,25 +137,10 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule daily days_held update - 6:00 AM ET
-      cron.schedule('0 6 * * 1-5', async () => {
-        console.log('\n⏰ 6:00 AM - Updating days held for tax tracking');
-        try {
-          await db.updateDaysHeld();
-          console.log('✅ Days held updated successfully');
-        } catch (error) {
-          console.error('❌ Error updating days held:', error);
-        }
-      }, {
-        timezone: 'America/New_York'
-      });
-
       console.log('\n✅ Whiskie Bot is running');
       console.log('📅 Analysis schedule (Mon-Fri):');
-      console.log('   • 6:00 AM ET - Update days held (tax tracking)');
       console.log('   • 10:00 AM ET - Morning analysis + trim/tax/trailing checks');
-      console.log('   • 2:00 PM ET - Afternoon check + trim/tax/trailing checks');
-      console.log('   • 3:30 PM ET - Before close + trim/tax/trailing checks');
+      console.log('   • 2:00 PM ET - Afternoon analysis + trim/tax/trailing checks');
       console.log('📊 Daily summary: 4:30 PM ET');
       console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
       console.log('📅 Weekly review: Sunday 9:00 PM ET (Opus deep review)');
@@ -183,6 +158,11 @@ class WhiskieBot {
    * Start API server for on-demand analysis
    */
   startAPIServer() {
+    if (this.apiServerStarted) {
+      console.log('⚠️ API server already running, skipping...');
+      return;
+    }
+
     app.get('/health', (req, res) => {
       res.json({
         status: 'ok',
@@ -313,6 +293,7 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       console.log(`🌐 API server listening on port ${PORT}`);
       console.log(`📡 Trigger analysis: POST https://your-app.railway.app/analyze`);
       console.log('');
+      this.apiServerStarted = true;
     });
   }
 
@@ -333,17 +314,6 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
     return isWeekday && isTradingHours;
   }
 
-  /**
-   * Schedule next run (for Railway restarts)
-   */
-  scheduleNextRun() {
-    // Railway will restart the service daily
-    // This ensures we don't waste compute outside trading hours
-    setTimeout(() => {
-      console.log('🔄 Checking if trading hours...');
-      this.start();
-    }, 60 * 60 * 1000); // Check every hour
-  }
 
   /**
    * Run daily portfolio analysis
@@ -400,6 +370,12 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
           sector: pos.sector,
           stock_type: pos.stock_type
         });
+
+        // Update current_price for all lots of this symbol
+        await db.query(
+          `UPDATE position_lots SET current_price = $1 WHERE symbol = $2`,
+          [pos.currentPrice, pos.symbol]
+        );
 
         if (!dbSymbols.has(pos.symbol)) {
           console.log(`   ✅ Added ${pos.symbol}`);
@@ -484,11 +460,13 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
         console.log(`✅ Updated ${trailingUpdateResults.updated} trailing stops\n`);
       }
 
-      // Check for earnings day analysis
-      console.log('📊 Checking for earnings today/tomorrow...');
-      const earningsResults = await runEarningsDayAnalysis();
+      // Check for earnings day analysis (5 days ahead)
+      console.log('📊 Checking for earnings in next 5 days...');
+      const earningsResults = await runEarningsDayAnalysis(5);
       if (earningsResults.analyzed > 0) {
         console.log(`✅ Analyzed ${earningsResults.analyzed} positions with upcoming earnings\n`);
+      } else {
+        console.log('✅ No positions with earnings in next 5 days\n');
       }
 
       // Analyze and modify orders based on news/events
@@ -587,38 +565,28 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
     const position = portfolio.positions.find(p => p.symbol === symbol);
     if (!position) return;
 
-    // Evaluate sell decision with AI
-    const evaluation = await analysisEngine.evaluateSellDecision(
-      position,
-      'Stop-loss triggered'
-    );
+    // Auto-execute stop-loss sell
+    console.log(`🔴 Auto-executing stop-loss sell for ${symbol}...`);
 
-    // Log AI decision
-    await db.logAIDecision({
-      type: 'stop-loss',
-      symbol,
-      recommendation: evaluation.analysis,
-      reasoning: 'Stop-loss level reached',
-      model: 'sonnet',
-      confidence: 'high'
-    });
+    try {
+      const result = await this.executeTrade(symbol, 'sell', position.quantity, {
+        reasoning: `Stop-loss triggered at $${position.currentPrice.toFixed(2)} (cost basis: $${position.cost_basis.toFixed(2)})`,
+        sector: position.sector
+      });
 
-    // Send email alert
-    const emailResult = await email.sendTradeRecommendation({
-      action: 'sell',
-      symbol,
-      quantity: position.quantity,
-      price: evaluation.currentPrice,
-      positionSize: 0,
-      reasoning: evaluation.analysis,
-      stopLoss: 0,
-      takeProfit: 0
-    });
-
-    if (emailResult) {
-      console.log(`   📧 Email sent successfully`);
-    } else {
-      console.log(`   ⚠️ Email failed to send (check SendGrid sender verification)`);
+      if (result.success) {
+        console.log(`✅ Stop-loss executed successfully`);
+      } else {
+        console.error(`❌ Stop-loss execution failed:`, result.errors);
+        // Send alert email if auto-execution fails
+        await email.sendErrorAlert(
+          new Error(`Stop-loss auto-execution failed: ${result.errors?.join(', ')}`),
+          `Stop-loss for ${symbol}`
+        );
+      }
+    } catch (error) {
+      console.error(`❌ Stop-loss execution error:`, error);
+      await email.sendErrorAlert(error, `Stop-loss execution: ${symbol}`);
     }
   }
 
@@ -761,6 +729,34 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
         console.log('ℹ️  No previous analyses found (first run)');
       }
 
+      // Get trend learning insights
+      console.log('🧠 Fetching trend learning insights...');
+      const trendInsights = await trendLearning.getUnappliedInsights();
+      const recentTrends = await trendLearning.getRecentMarketTrends(30, 10);
+
+      let trendContext = '';
+      if (trendInsights.length > 0 || recentTrends.length > 0) {
+        trendContext = '\n\n**LEARNING FROM PAST PATTERNS:**\n';
+
+        if (trendInsights.length > 0) {
+          trendContext += '\n**Key Insights to Apply:**\n';
+          trendInsights.forEach(insight => {
+            trendContext += `- ${insight.insight_text} (confidence: ${insight.confidence})\n`;
+          });
+        }
+
+        if (recentTrends.length > 0) {
+          trendContext += '\n**Recent Market Patterns:**\n';
+          recentTrends.forEach(trend => {
+            trendContext += `- ${trend.pattern_date}: ${trend.pattern_description} → ${trend.action_taken}\n`;
+          });
+        }
+
+        console.log(`✅ Found ${trendInsights.length} insights and ${recentTrends.length} trend patterns`);
+      } else {
+        console.log('ℹ️  No trend learning data yet');
+      }
+
       // Check watchlist for buy opportunities
       console.log('👀 Checking watchlist for buy opportunities...');
       const watchlist = await db.getWatchlist();
@@ -782,6 +778,62 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       } else {
         console.log('   Watchlist is empty');
       }
+
+      // Get correlation analysis for portfolio
+      console.log('🔗 Analyzing portfolio correlation...');
+      const correlationSummary = correlationAnalysis.getPortfolioCorrelationSummary(portfolio.positions);
+      const diversificationScore = correlationAnalysis.calculateDiversificationScore(portfolio.positions);
+
+      let correlationContext = '\n\n**PORTFOLIO CORRELATION ANALYSIS:**\n';
+      correlationContext += `- Diversification Score: ${diversificationScore}/100\n`;
+
+      if (correlationSummary.hasConcentration) {
+        correlationContext += '\n⚠️ **Concentrated Groups (multiple positions in same correlation group):**\n';
+        correlationSummary.concentratedGroups.forEach(group => {
+          correlationContext += `- ${group.group}: ${group.count} positions, $${group.value.toLocaleString()} total value\n`;
+        });
+        correlationContext += '\n**Important:** Avoid adding more positions to concentrated groups. Seek diversification across different correlation groups.\n';
+      } else {
+        correlationContext += '- No concentrated correlation groups detected\n';
+      }
+
+      console.log(`   Diversification score: ${diversificationScore}/100`);
+      if (correlationSummary.hasConcentration) {
+        console.log(`   ⚠️ Found ${correlationSummary.concentratedGroups.length} concentrated groups`);
+      }
+
+      // Get earnings and tax data for existing positions
+      console.log('📅 Gathering earnings and tax data...');
+      const lots = await db.getAllPositionLots();
+
+      let earningsAndTaxContext = '\n\n**EXISTING POSITIONS - EARNINGS & TAX STATUS:**\n';
+      for (const position of portfolio.positions) {
+        const positionLots = lots.filter(l => l.symbol === position.symbol && l.quantity > 0);
+        const earning = await db.getNextEarning(position.symbol);
+
+        earningsAndTaxContext += `\n**${position.symbol}:**\n`;
+
+        // Earnings info
+        if (earning) {
+          const earningsDate = new Date(earning.earnings_date);
+          const today = new Date();
+          const daysUntil = Math.floor((earningsDate - today) / (1000 * 60 * 60 * 24));
+
+          if (daysUntil >= 0 && daysUntil <= 7) {
+            earningsAndTaxContext += `- ⚠️ EARNINGS in ${daysUntil} days (${earning.earnings_date}, ${earning.earnings_time})\n`;
+          }
+        }
+
+        // Tax status for each lot
+        positionLots.forEach(lot => {
+          const daysToLongTerm = lot.days_to_long_term || 0;
+          if (daysToLongTerm > 0 && daysToLongTerm <= 30) {
+            earningsAndTaxContext += `- 🏛️ ${lot.quantity} shares → Long-term in ${daysToLongTerm} days (${lot.days_held || 0} days held)\n`;
+          }
+        });
+      }
+
+      console.log('   ✅ Earnings and tax data compiled');
       console.log('');
 
       // PHASE 1 PROMPT: Identify promising sub-industries and stocks
@@ -824,7 +876,9 @@ LLY
 ABBV
 ...
 
-${historyContext}`;
+${historyContext}
+
+${trendContext}`;
 
       console.log('📝 PHASE 1: Asking Opus to identify stocks...');
       console.log('⏳ This will take 1-2 minutes...');
@@ -898,6 +952,10 @@ ${watchlistContext}
 - Positions needed to reach target: ${Math.max(0, 10 - portfolio.positions.length)}
 - If you recommend ZERO new positions, you MUST provide specific reasoning why current market conditions justify staying in cash (e.g., "VIX > 25 + negative breadth" or "Awaiting Fed decision tomorrow").
 - Default posture: deploy into good setups. Cash requires justification, not deployment.
+
+${correlationContext}
+
+${earningsAndTaxContext}
 
 **Your Task:**
 1. **WATCHLIST UPDATE:** For each stock you want to monitor (but not buy yet):
@@ -1030,6 +1088,26 @@ ${historyContext}`;
       });
 
       console.log('✅ Analysis saved to database');
+      console.log('');
+
+      // Mark trend insights as applied
+      if (trendInsights.length > 0) {
+        console.log('📝 Marking trend insights as applied...');
+        for (const insight of trendInsights) {
+          await trendLearning.markInsightApplied(insight.id, 'pending');
+        }
+        console.log(`✅ Marked ${trendInsights.length} insights as applied`);
+      }
+
+      // Save this analysis to trend learning for future reference
+      console.log('🧠 Saving analysis to trend learning...');
+      await trendLearning.saveMarketTrendPattern({
+        date: new Date().toISOString().split('T')[0],
+        type: 'daily-analysis',
+        description: `Market analysis with ${tickersToAnalyze.length} stocks analyzed`,
+        actionTaken: analysis.analysis.substring(0, 500) // First 500 chars as summary
+      });
+      console.log('✅ Trend pattern saved');
       console.log('');
 
       // Parse recommendations and execute trades automatically
@@ -1330,13 +1408,46 @@ ${historyContext}`;
     try {
       const today = new Date().toISOString().split('T')[0];
 
+      // Get previous day's snapshot for daily change calculation
+      let dailyChange = 0;
+      let sp500Return = 0;
+
+      try {
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const prevSnapshot = await db.query(
+          `SELECT total_value FROM portfolio_snapshots WHERE snapshot_date = $1`,
+          [yesterday]
+        );
+
+        if (prevSnapshot.rows.length > 0) {
+          const prevValue = parseFloat(prevSnapshot.rows[0].total_value);
+          dailyChange = (portfolio.totalValue - prevValue) / prevValue;
+        }
+      } catch (error) {
+        console.error('Error calculating daily change:', error);
+      }
+
+      // Fetch S&P 500 return for comparison
+      try {
+        const spyQuote = await tradier.getQuote('SPY');
+        if (spyQuote && spyQuote.change_percentage) {
+          sp500Return = spyQuote.change_percentage / 100; // Convert to decimal
+        }
+      } catch (error) {
+        console.error('Error fetching S&P 500 return:', error);
+      }
+
+      // Calculate total return from initial capital
+      const initialCapital = parseFloat(process.env.INITIAL_CAPITAL) || 100000;
+      const totalReturn = (portfolio.totalValue - initialCapital) / initialCapital;
+
       await db.savePortfolioSnapshot({
         total_value: portfolio.totalValue,
         cash: portfolio.cash,
         positions_value: portfolio.positionsValue,
-        daily_change: 0, // TODO: Calculate from previous day
-        total_return: portfolio.drawdown,
-        sp500_return: 0, // TODO: Fetch S&P 500 return
+        daily_change: dailyChange,
+        total_return: totalReturn,
+        sp500_return: sp500Return,
         snapshot_date: today
       });
 
@@ -1422,7 +1533,7 @@ ${historyContext}`;
       }
 
       // CRITICAL: Check trade safeguards (code-enforced limits)
-      const safeguardCheck = await tradeSafeguard.canTrade(symbol, action, quantity, price);
+      const safeguardCheck = await tradeSafeguard.canTrade(symbol, action, quantity, price, portfolio);
       if (!safeguardCheck.allowed) {
         console.log('🚫 Trade blocked by safeguards:');
         safeguardCheck.errors.forEach(err => console.log(`   - ${err}`));
@@ -1492,6 +1603,31 @@ ${historyContext}`;
             console.log(`✅ Long-term OCO placed: ${ocoOrder.id}`);
           } catch (error) {
             console.error(`⚠️ Failed to place long-term OCO: ${error.message}`);
+            console.log(`📋 Fallback: Placing separate stop-loss and take-profit orders...`);
+
+            try {
+              // Place stop-loss order
+              const stopOrder = await tradier.placeOrder(symbol, 'sell', longTermQty, {
+                type: 'stop',
+                stop: stopLoss
+              });
+              console.log(`✅ Stop-loss placed: ${stopOrder.id}`);
+
+              // Place take-profit order
+              const limitOrder = await tradier.placeOrder(symbol, 'sell', longTermQty, {
+                type: 'limit',
+                price: takeProfit
+              });
+              console.log(`✅ Take-profit placed: ${limitOrder.id}`);
+
+              // Store both order IDs
+              await db.updatePositionLot(lot.id, {
+                stop_order_id: stopOrder.id,
+                limit_order_id: limitOrder.id
+              });
+            } catch (fallbackError) {
+              console.error(`❌ Fallback orders also failed: ${fallbackError.message}`);
+            }
           }
         }
 
@@ -1521,6 +1657,31 @@ ${historyContext}`;
             console.log(`✅ Swing OCO placed: ${ocoOrder.id}`);
           } catch (error) {
             console.error(`⚠️ Failed to place swing OCO: ${error.message}`);
+            console.log(`📋 Fallback: Placing separate stop-loss and take-profit orders...`);
+
+            try {
+              // Place stop-loss order
+              const stopOrder = await tradier.placeOrder(symbol, 'sell', swingQty, {
+                type: 'stop',
+                stop: stopLoss
+              });
+              console.log(`✅ Stop-loss placed: ${stopOrder.id}`);
+
+              // Place take-profit order
+              const limitOrder = await tradier.placeOrder(symbol, 'sell', swingQty, {
+                type: 'limit',
+                price: takeProfit
+              });
+              console.log(`✅ Take-profit placed: ${limitOrder.id}`);
+
+              // Store both order IDs
+              await db.updatePositionLot(lot.id, {
+                stop_order_id: stopOrder.id,
+                limit_order_id: limitOrder.id
+              });
+            } catch (fallbackError) {
+              console.error(`❌ Fallback orders also failed: ${fallbackError.message}`);
+            }
           }
         }
 

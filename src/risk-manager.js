@@ -1,4 +1,6 @@
 import dotenv from 'dotenv';
+import correlationAnalysis from './correlation-analysis.js';
+import * as db from './db.js';
 
 dotenv.config();
 
@@ -21,6 +23,7 @@ class RiskManager {
    */
   async validateTrade(trade, portfolio) {
     const errors = [];
+    const warnings = [];
 
     // Check position size
     const tradeValue = trade.quantity * trade.price;
@@ -50,6 +53,16 @@ class RiskManager {
       if (newSectorAllocation > this.MAX_SECTOR_ALLOCATION) {
         errors.push(`Sector allocation would be ${(newSectorAllocation * 100).toFixed(1)}%, exceeds max ${(this.MAX_SECTOR_ALLOCATION * 100)}%`);
       }
+
+      // Check correlation with existing positions
+      const correlationCheck = await correlationAnalysis.checkCorrelation(
+        trade.symbol,
+        portfolio.positions
+      );
+
+      if (correlationCheck.hasHighCorrelation) {
+        warnings.push(...correlationCheck.warnings);
+      }
     }
 
     // Check portfolio drawdown
@@ -57,10 +70,14 @@ class RiskManager {
       errors.push(`Portfolio drawdown ${(portfolio.drawdown * 100).toFixed(1)}% exceeds max ${(this.MAX_PORTFOLIO_DRAWDOWN * 100)}% - DEFENSIVE MODE`);
     }
 
+    // Add additional warnings from generateWarnings
+    const additionalWarnings = this.generateWarnings(trade, portfolio);
+    warnings.push(...additionalWarnings);
+
     return {
       valid: errors.length === 0,
       errors,
-      warnings: this.generateWarnings(trade, portfolio)
+      warnings
     };
   }
 
@@ -144,13 +161,37 @@ class RiskManager {
 
   /**
    * Check if stop-loss should trigger
+   * Checks custom lot-level stops first, then falls back to default calculation
    */
-  shouldTriggerStopLoss(position, currentPrice) {
+  async shouldTriggerStopLoss(position, currentPrice) {
+    // First check if any lots have custom stop-loss levels
+    try {
+      const lots = await db.query(
+        `SELECT stop_loss FROM position_lots WHERE symbol = $1 AND quantity > 0`,
+        [position.symbol]
+      );
+
+      if (lots.rows && lots.rows.length > 0) {
+        // Check if any lot's custom stop-loss is triggered
+        for (const lot of lots.rows) {
+          if (lot.stop_loss && currentPrice <= lot.stop_loss) {
+            console.log(`Stop-loss check for ${position.symbol}:`);
+            console.log(`  Current: $${currentPrice}, Custom stop: $${lot.stop_loss}`);
+            console.log(`  Trigger: true (custom stop-loss)`);
+            return true;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error checking custom stop-loss:', error);
+      // Fall through to default calculation
+    }
+
+    // Fall back to default percentage-based stop-loss
     const loss = (currentPrice - position.cost_basis) / position.cost_basis;
     const stockType = position.stock_type || position.stockType || 'large-cap';
     const stopLossLevel = this.calculateStopLoss(stockType, position.cost_basis);
 
-    // Debug logging
     console.log(`Stop-loss check for ${position.symbol}:`);
     console.log(`  Current: $${currentPrice}, Cost basis: $${position.cost_basis}`);
     console.log(`  Stop-loss level: $${stopLossLevel.toFixed(2)}`);

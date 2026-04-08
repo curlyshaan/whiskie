@@ -270,21 +270,21 @@ export async function executeEarningsDecision(analysis) {
 /**
  * Run earnings day analysis (called during daily analysis)
  */
-export async function runEarningsDayAnalysis() {
+export async function runEarningsDayAnalysis(daysAhead = 5) {
   try {
-    console.log('\n📊 Checking for earnings today/tomorrow...');
+    console.log(`\n📊 Checking for earnings in next ${daysAhead} days...`);
 
-    // Check for earnings in next 1 day
-    const positions = await getPositionsWithUpcomingEarnings(1);
+    // Check for earnings in specified days ahead
+    const positions = await getPositionsWithUpcomingEarnings(daysAhead);
 
     if (positions.length === 0) {
-      console.log('✅ No positions with earnings today/tomorrow');
+      console.log(`✅ No positions with earnings in next ${daysAhead} days`);
       return { analyzed: 0, decisions: [] };
     }
 
     console.log(`\n⚠️ Found ${positions.length} positions with upcoming earnings:`);
     positions.forEach(pos => {
-      console.log(`   • ${pos.symbol}: ${pos.earningsDate} (${pos.earningsTime})`);
+      console.log(`   • ${pos.symbol}: ${pos.earningsDate} (${pos.earningsTime}) - ${pos.daysUntil} days away`);
     });
 
     const decisions = [];

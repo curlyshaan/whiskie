@@ -15,7 +15,7 @@ class TradeSafeguard {
   /**
    * Check if a trade is allowed based on hard limits
    */
-  async canTrade(symbol, side, quantity, price) {
+  async canTrade(symbol, side, quantity, price, portfolio) {
     const errors = [];
 
     // Check daily trade count
@@ -36,8 +36,17 @@ class TradeSafeguard {
       errors.push(`Daily exposure change would exceed limit ($${(todayExposure + tradeValue).toFixed(2)} > $${this.MAX_DAILY_EXPOSURE_CHANGE})`);
     }
 
+    // For buys: check cash balance
+    if (side === 'buy' || side === 'buy_to_open') {
+      if (!portfolio) {
+        errors.push('Portfolio state required for buy validation');
+      } else if (portfolio.cash < tradeValue) {
+        errors.push(`Insufficient cash: $${portfolio.cash.toFixed(2)} < $${tradeValue.toFixed(2)}`);
+      }
+    }
+
     // For sells: validate we have the position
-    if (side === 'sell') {
+    if (side === 'sell' || side === 'sell_to_close') {
       const validationError = await this.validateSellOrder(symbol, quantity);
       if (validationError) {
         errors.push(validationError);

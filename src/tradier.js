@@ -233,17 +233,19 @@ class TradierAPI {
       const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
         params: {
           class: 'oco',
-          symbol,
-          side: 'sell',
-          quantity,
-          type: 'market',
           duration: 'gtc',
           // Leg 1: Stop-loss
-          'order[0][type]': 'stop',
-          'order[0][stop]': stopPrice,
+          'symbol[0]': symbol,
+          'side[0]': 'sell',
+          'quantity[0]': quantity,
+          'type[0]': 'stop',
+          'stop[0]': stopPrice.toFixed(2),
           // Leg 2: Take-profit (limit)
-          'order[1][type]': 'limit',
-          'order[1][price]': limitPrice
+          'symbol[1]': symbol,
+          'side[1]': 'sell',
+          'quantity[1]': quantity,
+          'type[1]': 'limit',
+          'price[1]': limitPrice.toFixed(2)
         }
       });
       return response.data.order;

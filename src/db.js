@@ -10,7 +10,16 @@ const { Pool } = pg;
  */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  max: 20, // Maximum number of connections in pool
+  idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
+  connectionTimeoutMillis: 2000, // Fail fast if can't connect within 2 seconds
+});
+
+// Handle unexpected pool errors
+pool.on('error', (err) => {
+  console.error('💥 Unexpected database pool error:', err);
+  // Note: email import would create circular dependency, so just log
 });
 
 /**
@@ -1080,6 +1089,13 @@ export async function updateETBStatus(symbol, shortable) {
     console.error(`Error updating ETB status for ${symbol}:`, error);
     throw error;
   }
+}
+
+/**
+ * Export query function for direct database access
+ */
+export async function query(text, params) {
+  return pool.query(text, params);
 }
 
 export default pool;

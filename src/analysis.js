@@ -125,7 +125,7 @@ class AnalysisEngine {
       const gain = (currentPrice - position.cost_basis) / position.cost_basis;
 
       // Check stop-loss triggers
-      if (riskManager.shouldTriggerStopLoss(position, currentPrice)) {
+      if (await riskManager.shouldTriggerStopLoss(position, currentPrice)) {
         issues.push({
           type: 'stop-loss',
           symbol: position.symbol,

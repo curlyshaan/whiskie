@@ -31,8 +31,8 @@
     "express": "^4.18.2",
     "node-cron": "^3.0.3",
     "node-fetch": "^3.3.2",
-    "nodemailer": "^8.0.4",
-    "pg": "^8.11.3"
+    "pg": "^8.11.3",
+    "resend": "^3.5.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
