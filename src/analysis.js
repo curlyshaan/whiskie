@@ -40,7 +40,7 @@ class AnalysisEngine {
       // Calculate portfolio metrics
       const cash = balances.total_cash || balances.cash?.cash_available || 0;
       const positionsValue = balances.long_market_value || 0;
-      const totalValue = balances.total_equity || cash || this.INITIAL_CAPITAL;
+      let totalValue = balances.total_equity || cash || this.INITIAL_CAPITAL;
 
       // Safety check: ensure totalValue is never 0 or undefined
       if (!totalValue || totalValue <= 0) {
@@ -48,8 +48,18 @@ class AnalysisEngine {
         totalValue = this.INITIAL_CAPITAL;
       }
 
-      // Calculate drawdown
-      const drawdown = (totalValue - this.INITIAL_CAPITAL) / this.INITIAL_CAPITAL;
+      // Calculate drawdown (peak-to-trough)
+      const peakResult = await db.query(
+        `SELECT MAX(total_value) as peak FROM portfolio_snapshots`
+      );
+      const peakValue = parseFloat(peakResult.rows[0]?.peak || this.INITIAL_CAPITAL);
+      const peakToUse = Math.max(peakValue, totalValue); // Current value may be new peak
+
+      // True drawdown (always 0 or negative)
+      const drawdown = peakToUse > 0 ? (totalValue - peakToUse) / peakToUse : 0;
+
+      // Total return vs initial capital (for reporting)
+      const totalReturn = (totalValue - this.INITIAL_CAPITAL) / this.INITIAL_CAPITAL;
 
       return {
         totalValue,

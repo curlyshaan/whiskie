@@ -329,9 +329,27 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       const isMarketOpen = await tradier.isMarketOpen();
       console.log(`📈 Market Status: ${isMarketOpen ? 'OPEN' : 'CLOSED'}\n`);
 
-      // Get portfolio state
+      // Get portfolio state with retry logic
       console.log('💼 Fetching portfolio state...');
-      const portfolio = await analysisEngine.getPortfolioState();
+      const MAX_RETRIES = 3;
+      const RETRY_DELAY = [30000, 60000, 120000]; // 30s, 1min, 2min
+
+      let portfolio;
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+          portfolio = await analysisEngine.getPortfolioState();
+          break; // Success
+        } catch (error) {
+          if (attempt === MAX_RETRIES - 1) {
+            console.error('❌ Failed to get portfolio state after 3 attempts. Aborting analysis.');
+            await email.sendErrorAlert(error, 'Portfolio state fetch failed — analysis skipped');
+            return;
+          }
+          console.warn(`⚠️ Portfolio fetch attempt ${attempt + 1} failed. Retrying in ${RETRY_DELAY[attempt] / 1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY[attempt]));
+        }
+      }
+
       console.log(`   Total Value: $${portfolio.totalValue.toLocaleString()}`);
       console.log(`   Cash: $${portfolio.cash.toLocaleString()}`);
       console.log(`   Positions: ${portfolio.positions.length}`);

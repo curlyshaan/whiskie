@@ -281,9 +281,13 @@ class TradierAPI {
           duration: 'gtc',
           // Leg 1: Stop-loss (triggers after entry fills)
           'order[0][type]': 'stop',
+          'order[0][side]': side === 'buy' ? 'sell' : 'buy',
+          'order[0][quantity]': quantity,
           'order[0][stop]': stopPrice,
           // Leg 2: Take-profit (triggers after entry fills)
           'order[1][type]': 'limit',
+          'order[1][side]': side === 'buy' ? 'sell' : 'buy',
+          'order[1][quantity]': quantity,
           'order[1][price]': limitPrice
         }
       });

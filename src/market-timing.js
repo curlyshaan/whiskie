@@ -53,9 +53,9 @@ class MarketTimingAnalyzer {
       return { canTrade: false, reason: 'Market close volatility - avoid last 15 minutes' };
     }
 
-    // Avoid lunch hour (12:00-1:00) - low volume
-    if (hour === 12) {
-      return { canTrade: false, reason: 'Lunch hour - low liquidity' };
+    // Avoid lunch hour (12:00-1:30 PM) - low volume
+    if (hour === 12 || (hour === 13 && minute < 30)) {
+      return { canTrade: false, reason: 'Lunch window (12:00-1:30 PM ET) - low liquidity' };
     }
 
     return { canTrade: true, reason: 'Good trading window' };

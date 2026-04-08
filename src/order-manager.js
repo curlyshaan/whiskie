@@ -46,6 +46,9 @@ class OrderManager {
           modificationHistory: []
         });
 
+        // Save to database
+        await this.saveOrderToDatabase(symbol);
+
         return {
           otocoOrder,
           success: true,
@@ -57,8 +60,12 @@ class OrderManager {
         const buyOrder = await tradier.placeOrder(symbol, 'buy', quantity, 'market');
         console.log(`✅ Buy order placed: ${buyOrder.id}`);
 
-        // Wait a moment for fill
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Poll until filled (max 30 seconds)
+        const filledOrder = await this.waitForFill(buyOrder.id, 30000);
+        if (!filledOrder) {
+          throw new Error(`Buy order ${buyOrder.id} for ${symbol} did not fill within 30 seconds`);
+        }
+        console.log(`✅ Buy order filled at $${filledOrder.avg_fill_price}`);
 
         // Place OCO order (stop-loss + take-profit)
         const ocoOrder = await tradier.placeOCOOrder(symbol, quantity, stopLoss, takeProfit);
@@ -78,6 +85,9 @@ class OrderManager {
           modificationHistory: []
         });
 
+        // Save to database
+        await this.saveOrderToDatabase(symbol);
+
         return {
           buyOrder,
           ocoOrder,
@@ -85,9 +95,6 @@ class OrderManager {
           orderType: 'market-oco'
         };
       }
-
-      // Save to database
-      await this.saveOrderToDatabase(symbol);
     } catch (error) {
       console.error(`Error placing position with protection for ${symbol}:`, error);
       throw error;
@@ -455,6 +462,26 @@ REASON: [why current orders are appropriate]`;
    */
   getAllOrders() {
     return Array.from(this.activeOrders.values());
+  }
+
+  /**
+   * Wait for order to fill (poll status until filled or timeout)
+   */
+  async waitForFill(orderId, timeoutMs = 30000) {
+    const pollInterval = 2000;
+    const maxAttempts = Math.floor(timeoutMs / pollInterval);
+
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      const orders = await tradier.getOrders();
+      const order = orders.find(o => o.id === orderId);
+
+      if (order?.status === 'filled') return order;
+      if (order?.status === 'canceled' || order?.status === 'rejected') {
+        throw new Error(`Order ${orderId} was ${order.status}`);
+      }
+    }
+    return null; // Timed out
   }
 }
 
