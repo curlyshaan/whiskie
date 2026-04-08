@@ -149,7 +149,9 @@ class TradierAPI {
   async getOrders(accountId = TRADIER_ACCOUNT_ID) {
     try {
       const response = await this.client.get(`/accounts/${accountId}/orders`);
-      return response.data.orders?.order || [];
+      const orders = response.data.orders?.order || [];
+      // Tradier returns single order as object, multiple as array
+      return Array.isArray(orders) ? orders : [orders];
     } catch (error) {
       console.error('Error fetching orders:', error.message);
       throw error;
