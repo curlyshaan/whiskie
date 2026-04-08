@@ -238,6 +238,77 @@ class WhiskieBot {
       });
     });
 
+    // Chat endpoint with Tavily integration
+    app.post('/chat', async (req, res) => {
+      try {
+        const { question } = req.body;
+
+        if (!question) {
+          return res.status(400).json({ error: 'Question is required' });
+        }
+
+        console.log(`💬 Chat query: ${question}`);
+
+        // Get current portfolio state
+        const portfolio = await analysisEngine.getPortfolioState();
+
+        // Search for relevant market news/data with Tavily
+        const searchResults = await tavily.search(question, { maxResults: 5 });
+        const newsContext = searchResults.map(r => `${r.title}: ${r.content}`).join('\n\n');
+
+        // Get real-time market data for portfolio positions
+        const symbols = portfolio.positions.map(p => p.symbol);
+        let marketData = {};
+        if (symbols.length > 0) {
+          const quotes = await tradier.getQuotes(symbols);
+          const quotesArray = Array.isArray(quotes) ? quotes : [quotes];
+          quotesArray.forEach(q => {
+            marketData[q.symbol] = {
+              price: q.last || q.close,
+              change_percentage: q.change_percentage || 0
+            };
+          });
+        }
+
+        // Build context-aware prompt
+        const prompt = `You are Whiskie, an AI portfolio manager. Answer the user's question with current market context.
+
+**User Question:**
+${question}
+
+**Current Portfolio:**
+- Total Value: $${portfolio.totalValue.toLocaleString()}
+- Cash: $${portfolio.cash.toLocaleString()}
+- Positions: ${portfolio.positions.length}
+${portfolio.positions.map(p => `  - ${p.symbol}: ${p.quantity} shares @ $${p.currentPrice}`).join('\n')}
+
+**Real-Time Market Data:**
+${Object.entries(marketData).map(([sym, data]) => `${sym}: $${data.price} (${data.change_percentage >= 0 ? '+' : ''}${data.change_percentage}%)`).join('\n')}
+
+**Recent Market News/Context:**
+${newsContext}
+
+Provide a clear, actionable answer. If recommending trades, be specific about entry/exit prices and reasoning.`;
+
+        // Get Opus response with extended thinking
+        const response = await claude.analyze(prompt, { model: 'opus' });
+
+        res.json({
+          answer: response.analysis,
+          sources: searchResults.map(r => ({ title: r.title, url: r.url })),
+          portfolioContext: {
+            totalValue: portfolio.totalValue,
+            cash: portfolio.cash,
+            positions: portfolio.positions.length
+          }
+        });
+
+      } catch (error) {
+        console.error('Chat error:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
     app.listen(PORT, () => {
       console.log(`🌐 API server listening on port ${PORT}`);
       console.log(`📡 Trigger analysis: POST https://your-app.railway.app/analyze`);
@@ -1337,7 +1408,7 @@ ${historyContext}`;
         sector: options.sector || 'Unknown'
       };
 
-      const validation = riskManager.validateTrade(trade, portfolio);
+      const validation = await riskManager.validateTrade(trade, portfolio);
 
       if (!validation.valid) {
         console.log('❌ Trade validation failed:');
@@ -1397,8 +1468,9 @@ ${historyContext}`;
 
         // Create long-term lot
         if (longTermQty > 0) {
-          const stopLoss = riskManager.calculateStopLoss('large-cap', price);
-          const takeProfit = price * 1.50; // +50% for long-term
+          // Use Opus-recommended stops if provided, otherwise calculate defaults
+          const stopLoss = options.stopLoss || riskManager.calculateStopLoss('large-cap', price);
+          const takeProfit = options.takeProfit || price * 1.50; // +50% for long-term
 
           const lot = await db.createPositionLot({
             symbol,
@@ -1425,8 +1497,9 @@ ${historyContext}`;
 
         // Create swing lot
         if (swingQty > 0) {
-          const stopLoss = price * 0.92; // -8% for swing
-          const takeProfit = price * 1.15; // +15% for swing
+          // Use Opus-recommended stops if provided, otherwise calculate defaults
+          const stopLoss = options.stopLoss || price * 0.92; // -8% for swing
+          const takeProfit = options.takeProfit || price * 1.15; // +15% for swing
 
           const lot = await db.createPositionLot({
             symbol,

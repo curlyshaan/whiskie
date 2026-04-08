@@ -655,8 +655,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
       }
     }
 
-    // Auto-refresh every 2 minutes
-    setTimeout(() => location.reload(), 120000);
+    // Auto-refresh every 5 minutes
+    setTimeout(() => location.reload(), 300000);
   </script>
 </body>
 </html>
@@ -814,13 +814,13 @@ function generateLogsHTML(analyses, trades, alerts) {
     </div>
 
     <p style="color: #666; text-align: center; margin-top: 30px;">
-      Showing last 100 entries per category • Auto-refresh every 2 minutes
+      Showing last 100 entries per category • Auto-refresh every 5 minutes
     </p>
   </div>
 
   <script>
-    // Auto-refresh every 2 minutes
-    setTimeout(() => location.reload(), 120000);
+    // Auto-refresh every 5 minutes
+    setTimeout(() => location.reload(), 300000);
   </script>
 </body>
 </html>

@@ -278,20 +278,34 @@ ${JSON.stringify(economic, null, 2)}
 
     let analysisText = textBlock?.text || '';
 
-    // Strip out thinking protocol tags if they appear in the text
-    // Some APIs return thinking inline wrapped in <thinking_protocol> tags
-    // This is more aggressive - removes ALL thinking blocks regardless of format
+    // AGGRESSIVE thinking block removal - strip everything before the actual recommendations
+    // Extended thinking often starts with "<thinking>" and contains internal reasoning
 
-    // Remove <thinking_protocol>...</thinking_protocol> blocks
+    // Remove everything from start until we find actual content markers
+    // Look for common start patterns: "##", "EXECUTE_", "WATCHLIST_", or numbered lists
+    const contentStartPatterns = [
+      /^[\s\S]*?(?=##\s+\w)/m,  // Starts with markdown header
+      /^[\s\S]*?(?=EXECUTE_BUY:|EXECUTE_SHORT:|WATCHLIST_ADD:)/m,  // Starts with trade commands
+      /^[\s\S]*?(?=\*\*SELL)/m,  // Starts with SELL section
+      /^[\s\S]*?(?=\d+\.\s+\*\*)/m,  // Starts with numbered list
+    ];
+
+    // Try each pattern to find where actual content begins
+    for (const pattern of contentStartPatterns) {
+      const match = analysisText.match(pattern);
+      if (match && match[0].includes('<thinking>')) {
+        // Found thinking block before content - remove it
+        analysisText = analysisText.replace(pattern, '');
+        break;
+      }
+    }
+
+    // Fallback: Remove any remaining thinking tags
     analysisText = analysisText.replace(/<thinking_protocol>[\s\S]*?<\/thinking_protocol>/gi, '');
-
-    // Remove any remaining thinking tags
     analysisText = analysisText.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
-
-    // Remove markdown thinking blocks
     analysisText = analysisText.replace(/```thinking[\s\S]*?```/gi, '');
 
-    // Clean up excessive whitespace left behind
+    // Clean up excessive whitespace
     analysisText = analysisText.replace(/\n{3,}/g, '\n\n').trim();
 
     return {
