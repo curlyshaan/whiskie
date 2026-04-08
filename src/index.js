@@ -1489,11 +1489,9 @@ ${historyContext}`;
   }
 
   /**
-   * Execute a trade (manual approval required)
-   */
-  /**
    * Execute a trade (buy or sell)
-   * Supports hybrid positions with multiple lots
+   * Supports long and short positions with multiple lots
+   * Actions: buy, sell, buy_to_open, sell_to_close, sell_to_open, buy_to_close
    */
   async executeTrade(symbol, action, quantity, options = {}) {
     try {
@@ -1550,8 +1548,10 @@ ${historyContext}`;
         reasoning: options.reasoning || 'Manual execution'
       });
 
-      // Handle BUY - Create lots
-      if (action === 'buy') {
+      // Handle BUY (long) or SELL_TO_OPEN (short) - Create lots
+      if (action === 'buy' || action === 'buy_to_open' || action === 'sell_to_open') {
+        const isShort = action === 'sell_to_open';
+        const positionType = isShort ? 'short' : 'long';
         const investmentType = options.investmentType || 'long-term'; // 'long-term', 'swing', or 'hybrid'
         const thesis = options.thesis || 'No thesis provided';
 
@@ -1569,24 +1569,35 @@ ${historyContext}`;
           swingQty = quantity;
         }
 
-        console.log(`📦 Creating lots: ${longTermQty} long-term, ${swingQty} swing`);
+        console.log(`📦 Creating ${positionType.toUpperCase()} lots: ${longTermQty} long-term, ${swingQty} swing`);
 
         // Create long-term lot
         if (longTermQty > 0) {
-          // Use Opus-recommended stops if provided, otherwise calculate defaults
-          const stopLoss = options.stopLoss || riskManager.calculateStopLoss('large-cap', price);
-          const takeProfit = options.takeProfit || price * 1.50; // +50% for long-term
+          // Calculate stops based on position type
+          let stopLoss, takeProfit;
+          if (isShort) {
+            // Short: stop above entry, target below entry
+            stopLoss = options.stopLoss || price * 1.15; // +15% stop for shorts
+            takeProfit = options.takeProfit || price * 0.70; // -30% target for shorts
+          } else {
+            // Long: stop below entry, target above entry
+            stopLoss = options.stopLoss || riskManager.calculateStopLoss('large-cap', price);
+            takeProfit = options.takeProfit || price * 1.50; // +50% for long-term
+          }
 
           const lot = await db.createPositionLot({
             symbol,
             lot_type: 'long-term',
+            position_type: positionType,
             quantity: longTermQty,
             cost_basis: price,
             current_price: price,
             entry_date: new Date().toISOString().split('T')[0],
             stop_loss: stopLoss,
             take_profit: takeProfit,
-            thesis
+            thesis,
+            original_intent: 'long-term',
+            current_intent: 'long-term'
           });
 
           // Place OCO order for long-term lot
@@ -1627,20 +1638,31 @@ ${historyContext}`;
 
         // Create swing lot
         if (swingQty > 0) {
-          // Use Opus-recommended stops if provided, otherwise calculate defaults
-          const stopLoss = options.stopLoss || price * 0.92; // -8% for swing
-          const takeProfit = options.takeProfit || price * 1.15; // +15% for swing
+          // Calculate stops based on position type
+          let stopLoss, takeProfit;
+          if (isShort) {
+            // Short: stop above entry, target below entry
+            stopLoss = options.stopLoss || price * 1.10; // +10% stop for swing shorts
+            takeProfit = options.takeProfit || price * 0.85; // -15% target for swing shorts
+          } else {
+            // Long: stop below entry, target above entry
+            stopLoss = options.stopLoss || price * 0.92; // -8% for swing
+            takeProfit = options.takeProfit || price * 1.15; // +15% for swing
+          }
 
           const lot = await db.createPositionLot({
             symbol,
             lot_type: 'swing',
+            position_type: positionType,
             quantity: swingQty,
             cost_basis: price,
             current_price: price,
             entry_date: new Date().toISOString().split('T')[0],
             stop_loss: stopLoss,
             take_profit: takeProfit,
-            thesis
+            thesis,
+            original_intent: 'swing',
+            current_intent: 'swing'
           });
 
           // Place OCO order for swing lot

@@ -162,23 +162,33 @@ class RiskManager {
   /**
    * Check if stop-loss should trigger
    * Checks custom lot-level stops first, then falls back to default calculation
+   * Handles both long and short positions
    */
   async shouldTriggerStopLoss(position, currentPrice) {
+    const isShort = position.position_type === 'short';
+
     // First check if any lots have custom stop-loss levels
     try {
       const lots = await db.query(
-        `SELECT stop_loss FROM position_lots WHERE symbol = $1 AND quantity > 0`,
+        `SELECT stop_loss, position_type FROM position_lots WHERE symbol = $1 AND quantity > 0`,
         [position.symbol]
       );
 
       if (lots.rows && lots.rows.length > 0) {
         // Check if any lot's custom stop-loss is triggered
         for (const lot of lots.rows) {
-          if (lot.stop_loss && currentPrice <= lot.stop_loss) {
-            console.log(`Stop-loss check for ${position.symbol}:`);
-            console.log(`  Current: $${currentPrice}, Custom stop: $${lot.stop_loss}`);
-            console.log(`  Trigger: true (custom stop-loss)`);
-            return true;
+          if (lot.stop_loss) {
+            const lotIsShort = lot.position_type === 'short';
+            const triggered = lotIsShort
+              ? currentPrice >= lot.stop_loss  // Short: stop triggers when price rises
+              : currentPrice <= lot.stop_loss; // Long: stop triggers when price falls
+
+            if (triggered) {
+              console.log(`Stop-loss check for ${position.symbol} (${lotIsShort ? 'SHORT' : 'LONG'}):`);
+              console.log(`  Current: $${currentPrice}, Custom stop: $${lot.stop_loss}`);
+              console.log(`  Trigger: true (custom stop-loss)`);
+              return true;
+            }
           }
         }
       }
@@ -188,16 +198,43 @@ class RiskManager {
     }
 
     // Fall back to default percentage-based stop-loss
-    const loss = (currentPrice - position.cost_basis) / position.cost_basis;
     const stockType = position.stock_type || position.stockType || 'large-cap';
-    const stopLossLevel = this.calculateStopLoss(stockType, position.cost_basis);
+    const stopLossPercent = this.getStopLossPercent(stockType);
 
-    console.log(`Stop-loss check for ${position.symbol}:`);
-    console.log(`  Current: $${currentPrice}, Cost basis: $${position.cost_basis}`);
-    console.log(`  Stop-loss level: $${stopLossLevel.toFixed(2)}`);
-    console.log(`  Trigger: ${currentPrice <= stopLossLevel}`);
+    let triggered;
+    if (isShort) {
+      // Short position: stop triggers when price rises above entry
+      const stopLossLevel = position.cost_basis * (1 + stopLossPercent);
+      triggered = currentPrice >= stopLossLevel;
+      console.log(`Stop-loss check for ${position.symbol} (SHORT):`);
+      console.log(`  Current: $${currentPrice}, Entry: $${position.cost_basis}`);
+      console.log(`  Stop-loss level: $${stopLossLevel.toFixed(2)} (+${(stopLossPercent * 100).toFixed(1)}%)`);
+      console.log(`  Trigger: ${triggered}`);
+    } else {
+      // Long position: stop triggers when price falls below entry
+      const stopLossLevel = this.calculateStopLoss(stockType, position.cost_basis);
+      triggered = currentPrice <= stopLossLevel;
+      console.log(`Stop-loss check for ${position.symbol} (LONG):`);
+      console.log(`  Current: $${currentPrice}, Cost basis: $${position.cost_basis}`);
+      console.log(`  Stop-loss level: $${stopLossLevel.toFixed(2)}`);
+      console.log(`  Trigger: ${triggered}`);
+    }
 
-    return currentPrice <= stopLossLevel;
+    return triggered;
+  }
+
+  /**
+   * Get stop-loss percentage for stock type
+   */
+  getStopLossPercent(stockType) {
+    const stopLossMap = {
+      'index-etf': 0.12,      // -12%
+      'blue-chip': 0.12,      // -12%
+      'large-cap': 0.15,      // -15%
+      'mid-cap': 0.18,        // -18%
+      'opportunistic': 0.20   // -20%
+    };
+    return stopLossMap[stockType] || 0.15;
   }
 
   /**

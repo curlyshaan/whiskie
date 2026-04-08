@@ -160,6 +160,12 @@ class TradierAPI {
 
   /**
    * Place a market order
+   * Supports long and short positions:
+   * - buy/sell: long positions (default)
+   * - buy_to_open: open long position
+   * - sell_to_close: close long position
+   * - sell_to_open: open short position (short selling)
+   * - buy_to_close: close short position (cover)
    */
   async placeOrder(symbol, side, quantity, orderType = 'market', accountId = TRADIER_ACCOUNT_ID) {
     try {
@@ -167,7 +173,7 @@ class TradierAPI {
         params: {
           class: 'equity',
           symbol,
-          side, // 'buy' or 'sell'
+          side, // 'buy', 'sell', 'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close'
           quantity,
           type: orderType,
           duration: 'day'

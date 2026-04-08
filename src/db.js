@@ -47,7 +47,7 @@ export async function initDatabase() {
       );
     `);
 
-    // Positions table - current holdings
+    // Positions table - current holdings (supports long and short)
     await client.query(`
       CREATE TABLE IF NOT EXISTS positions (
         id SERIAL PRIMARY KEY,
@@ -57,6 +57,7 @@ export async function initDatabase() {
         current_price DECIMAL(10, 2),
         sector VARCHAR(50),
         stock_type VARCHAR(30),
+        position_type VARCHAR(10) DEFAULT 'long',
         entry_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         trimmed_1 BOOLEAN DEFAULT FALSE,
         trimmed_2 BOOLEAN DEFAULT FALSE,
@@ -186,12 +187,13 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_earnings_date ON earnings_calendar(earnings_date);
     `);
 
-    // Position lots - track individual lots (long-term vs swing)
+    // Position lots - track individual lots (long-term vs swing, long vs short)
     await client.query(`
       CREATE TABLE IF NOT EXISTS position_lots (
         id SERIAL PRIMARY KEY,
         symbol VARCHAR(10) NOT NULL,
         lot_type VARCHAR(20) NOT NULL,
+        position_type VARCHAR(10) DEFAULT 'long',
         quantity INTEGER NOT NULL,
         cost_basis DECIMAL(10, 2) NOT NULL,
         current_price DECIMAL(10, 2),
@@ -205,6 +207,8 @@ export async function initDatabase() {
         days_to_long_term INTEGER,
         trailing_stop_active BOOLEAN DEFAULT FALSE,
         last_reviewed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        original_intent VARCHAR(50),
+        current_intent VARCHAR(50),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -215,6 +219,32 @@ export async function initDatabase() {
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_position_lots_type ON position_lots(lot_type);
+    `);
+
+    // Add intent columns to position_lots (if they don't exist)
+    await client.query(`
+      ALTER TABLE position_lots
+      ADD COLUMN IF NOT EXISTS original_intent VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS current_intent VARCHAR(50);
+    `);
+
+    // Migrate existing lots: copy lot_type to intent columns if null
+    await client.query(`
+      UPDATE position_lots
+      SET original_intent = lot_type,
+          current_intent = lot_type
+      WHERE original_intent IS NULL;
+    `);
+
+    // Add position_type column to positions and position_lots (for short support)
+    await client.query(`
+      ALTER TABLE positions
+      ADD COLUMN IF NOT EXISTS position_type VARCHAR(10) DEFAULT 'long';
+    `);
+
+    await client.query(`
+      ALTER TABLE position_lots
+      ADD COLUMN IF NOT EXISTS position_type VARCHAR(10) DEFAULT 'long';
     `);
 
     // Update positions table with new columns (if they don't exist)
