@@ -2,7 +2,7 @@ import tradier from './tradier.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
 import riskManager from './risk-manager.js';
-import { getPositions, upsertPosition } from './db.js';
+import * as db from './db.js';
 import yahooFinance from './yahoo-finance.js';
 
 /**
