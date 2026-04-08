@@ -119,6 +119,48 @@ class AnalysisEngine {
   }
 
   /**
+   * Get sector allocation with separate long/short tracking
+   * Returns net exposure per sector
+   */
+  getSectorAllocationWithShorts(portfolio) {
+    const longAllocation = {};
+    const shortAllocation = {};
+
+    for (const position of portfolio.positions) {
+      const value = Math.abs(position.quantity * position.currentPrice);
+      const sector = position.sector || 'Unknown';
+
+      if (position.position_type === 'short') {
+        shortAllocation[sector] = (shortAllocation[sector] || 0) + value;
+      } else {
+        longAllocation[sector] = (longAllocation[sector] || 0) + value;
+      }
+    }
+
+    // Calculate net exposure per sector
+    const netAllocation = {};
+    const allSectors = new Set([
+      ...Object.keys(longAllocation),
+      ...Object.keys(shortAllocation)
+    ]);
+
+    for (const sector of allSectors) {
+      const longVal = longAllocation[sector] || 0;
+      const shortVal = shortAllocation[sector] || 0;
+      netAllocation[sector] = {
+        long: longVal,
+        short: shortVal,
+        net: longVal - shortVal,
+        longPct: (longVal / portfolio.totalValue) * 100,
+        shortPct: (shortVal / portfolio.totalValue) * 100,
+        netPct: ((longVal - shortVal) / portfolio.totalValue) * 100
+      };
+    }
+
+    return netAllocation;
+  }
+
+  /**
    * Analyze portfolio health
    */
   async analyzePortfolioHealth(portfolio) {

@@ -921,6 +921,19 @@ ${trendContext}`;
       console.log(`✅ Fetched ${Object.keys(fullMarketData).length} total quotes`);
       console.log('');
 
+      // Get market regime for allocation guidance
+      console.log('📈 Detecting market regime...');
+      const marketRegime = await riskManager.getMarketRegime();
+      const targetAllocation = riskManager.getTargetAllocation(marketRegime);
+      console.log(`   Market regime: ${marketRegime.toUpperCase()}`);
+      console.log(`   Target allocation: ${(targetAllocation.long * 100).toFixed(0)}% long, ${(targetAllocation.short * 100).toFixed(0)}% short, ${(targetAllocation.cash * 100).toFixed(0)}% cash`);
+
+      const marketRegimeContext = `\n\n**MARKET REGIME: ${marketRegime.toUpperCase()}**
+- SPY vs 200MA: ${marketRegime === 'bull' ? 'Above rising 200MA (bullish)' : marketRegime === 'bear' ? 'Below declining 200MA (bearish)' : 'Mixed signals (transitional)'}
+- Target allocation: ${(targetAllocation.long * 100).toFixed(0)}% long, ${(targetAllocation.short * 100).toFixed(0)}% short, ${(targetAllocation.cash * 100).toFixed(0)}% cash
+- Current allocation: ${((portfolio.positionsValue / portfolio.totalValue) * 100).toFixed(0)}% invested, ${((portfolio.cash / portfolio.totalValue) * 100).toFixed(0)}% cash
+${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as hedges' : marketRegime === 'bear' ? '- Focus: Defensive longs, increase short exposure' : '- Focus: Balanced approach, prepare for either direction'}`;
+
       // PHASE 2 PROMPT: Make final trade decisions with current prices
       const phase2Question = `You are managing a $100k portfolio. Analyze and provide SPECIFIC trade recommendations.
 
@@ -928,6 +941,8 @@ ${trendContext}`;
 - Positions: ${portfolio.positions.length}
 - Total Value: $${portfolio.totalValue.toLocaleString()}
 - Cash Available: $${portfolio.cash.toLocaleString()}
+
+${marketRegimeContext}
 
 **Capital Deployment Mandate:**
 - You are managing $100,000 and holding $${portfolio.cash.toLocaleString()} in cash (${((portfolio.cash/portfolio.totalValue)*100).toFixed(1)}% idle)
@@ -1119,6 +1134,13 @@ ${historyContext}`;
             if (rec.type === 'short') {
               // Execute short trade with safeguards
               const portfolio = await analysisEngine.getPortfolioState();
+
+              // Check ETB status first
+              const etbCheck = await shortManager.isShortable(rec.symbol, 5000000000); // Assume $5B+ market cap for now
+              if (!etbCheck.shortable) {
+                console.log(`   ⚠️ Short blocked: ${etbCheck.errors.join(', ')}`);
+                continue;
+              }
 
               // Check if short is allowed
               const shortCheck = await shortManager.canShort(

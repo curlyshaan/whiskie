@@ -31,12 +31,15 @@ export async function getPositionsWithUpcomingEarnings(daysAhead = 1) {
 
         if (daysUntil >= 0 && daysUntil <= daysAhead) {
           const symbolLots = lots.filter(lot => lot.symbol === symbol && lot.quantity > 0);
+          const isShort = symbolLots.some(lot => lot.position_type === 'short');
+
           positionsWithEarnings.push({
             symbol,
             earningsDate: earning.earnings_date,
             earningsTime: earning.earnings_time,
             daysUntil,
-            lots: symbolLots
+            lots: symbolLots,
+            isShort
           });
         }
       }
@@ -80,24 +83,34 @@ export async function analyzeBeforeEarnings(position) {
 You are analyzing ${position.symbol} which has earnings ${position.earningsTime === 'bmo' ? 'BEFORE market open' : 'AFTER market close'} on ${position.earningsDate}.
 
 POSITION DETAILS:
+- Type: ${position.isShort ? 'SHORT' : 'LONG'}
 - Entry: $${avgCostBasis.toFixed(2)}
 - Current: $${currentPrice.toFixed(2)}
-- Gain: ${gainPercent}%
+- ${position.isShort ? 'Profit' : 'Gain'}: ${gainPercent}%
 - Quantity: ${totalQuantity} shares
 - Investment thesis: ${thesis}
 
 RECENT NEWS:
 ${newsText}
 
-QUESTION: Should we hold through earnings, trim 50%, or sell completely?
+QUESTION: Should we ${position.isShort ? 'cover (close short)' : 'hold through earnings'}, trim 50%, or ${position.isShort ? 'cover completely' : 'sell completely'}?
 
-Consider:
+${position.isShort ? `
+SHORT-SPECIFIC CONSIDERATIONS:
+1. Earnings can gap stock UP 10-20% overnight (unlimited loss risk)
+2. Is the bearish thesis strong enough to hold through gap risk?
+3. Swing shorts should generally be covered before earnings
+4. Long-term structural shorts can hold if thesis is rock-solid
+5. Consider: Is this a momentum short or fundamental deterioration short?
+` : `
+LONG CONSIDERATIONS:
 1. Is the thesis still valid?
 2. What's the earnings risk vs reward?
 3. How much of the gain should we protect?
 4. Is the stock overextended or has room to run?
+`}
 
-Provide a clear recommendation: HOLD, TRIM_50, or SELL
+Provide a clear recommendation: ${position.isShort ? 'COVER, COVER_50, or HOLD' : 'HOLD, TRIM_50, or SELL'}
 Include your reasoning in 2-3 sentences.
 `;
 
@@ -111,10 +124,20 @@ Include your reasoning in 2-3 sentences.
 
     // Parse recommendation
     let recommendation = 'HOLD';
-    if (analysis.analysis.includes('TRIM_50') || analysis.analysis.includes('trim 50%')) {
-      recommendation = 'TRIM_50';
-    } else if (analysis.analysis.includes('SELL')) {
-      recommendation = 'SELL';
+    if (position.isShort) {
+      // Short position recommendations
+      if (analysis.analysis.includes('COVER_50') || analysis.analysis.includes('cover 50%')) {
+        recommendation = 'COVER_50';
+      } else if (analysis.analysis.includes('COVER')) {
+        recommendation = 'COVER';
+      }
+    } else {
+      // Long position recommendations
+      if (analysis.analysis.includes('TRIM_50') || analysis.analysis.includes('trim 50%')) {
+        recommendation = 'TRIM_50';
+      } else if (analysis.analysis.includes('SELL')) {
+        recommendation = 'SELL';
+      }
     }
 
     return {

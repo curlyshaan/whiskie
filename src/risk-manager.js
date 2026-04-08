@@ -10,11 +10,14 @@ dotenv.config();
  */
 class RiskManager {
   constructor() {
-    this.MAX_POSITION_SIZE = parseFloat(process.env.MAX_POSITION_SIZE) || 0.15; // 15%
+    this.MAX_POSITION_SIZE = parseFloat(process.env.MAX_POSITION_SIZE) || 0.15; // 15% for longs
+    this.MAX_SHORT_POSITION_SIZE = 0.10; // 10% for shorts (tighter due to unlimited loss risk)
     this.MAX_DAILY_TRADES = parseInt(process.env.MAX_DAILY_TRADES) || 3;
     this.MAX_PORTFOLIO_DRAWDOWN = parseFloat(process.env.MAX_PORTFOLIO_DRAWDOWN) || 0.20; // 20%
     this.MIN_CASH_RESERVE = parseFloat(process.env.MIN_CASH_RESERVE) || 0.03; // 3%
-    this.MAX_SECTOR_ALLOCATION = parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.25; // 25%
+    this.MAX_SECTOR_ALLOCATION = parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.30; // 30% (updated from 25%)
+    this.MAX_SHORT_SECTOR_ALLOCATION = 0.15; // 15% shorts per sector
+    this.MAX_TOTAL_SHORT_EXPOSURE = 0.30; // 30% total shorts
   }
 
   /**
@@ -128,7 +131,7 @@ class RiskManager {
   }
 
   /**
-   * Calculate position size based on risk level
+   * Calculate position size based on risk level (for longs)
    */
   calculatePositionSize(stockType, portfolioValue) {
     const sizeMap = {
@@ -144,7 +147,23 @@ class RiskManager {
   }
 
   /**
-   * Calculate stop-loss level based on stock type
+   * Calculate position size for shorts (tighter due to unlimited loss risk)
+   */
+  calculateShortPositionSize(stockType, portfolioValue) {
+    const sizeMap = {
+      'index-etf': 0.12,      // 12% max (SPY, QQQ shorts)
+      'mega-cap': 0.10,       // 10% max (AAPL, MSFT shorts)
+      'large-cap': 0.08,      // 8% max
+      'mid-cap': 0.06,        // 6% max (higher squeeze risk)
+      'opportunistic': 0.03   // 3% max (avoid - too risky)
+    };
+
+    const maxSize = sizeMap[stockType] || 0.08;
+    return Math.min(maxSize, this.MAX_SHORT_POSITION_SIZE);
+  }
+
+  /**
+   * Calculate stop-loss level based on stock type (for longs)
    */
   calculateStopLoss(stockType, entryPrice) {
     const stopLossMap = {
@@ -157,6 +176,22 @@ class RiskManager {
 
     const stopLossPercent = stopLossMap[stockType] || 0.15;
     return entryPrice * (1 - stopLossPercent);
+  }
+
+  /**
+   * Calculate stop-loss level for shorts (tighter stops, triggers on price RISE)
+   */
+  calculateShortStopLoss(stockType, entryPrice) {
+    const stopLossMap = {
+      'index-etf': 0.08,      // +8% (SPY shorts)
+      'mega-cap': 0.10,       // +10% (AAPL, MSFT shorts)
+      'large-cap': 0.12,      // +12%
+      'mid-cap': 0.15,        // +15%
+      'opportunistic': 0.18   // +18% (if allowed at all)
+    };
+
+    const stopLossPercent = stopLossMap[stockType] || 0.12;
+    return entryPrice * (1 + stopLossPercent); // INVERTED: stop ABOVE entry
   }
 
   /**
@@ -282,6 +317,48 @@ class RiskManager {
         'Consider trimming losing positions'
       ]
     };
+  }
+
+  /**
+   * Detect market regime based on SPY technicals
+   * Returns: 'bull', 'bear', or 'transitional'
+   */
+  async getMarketRegime() {
+    try {
+      const analysisEngine = await import('./analysis.js');
+      const spyTechnicals = await analysisEngine.default.getTechnicalIndicators('SPY');
+
+      if (!spyTechnicals || !spyTechnicals.sma200) {
+        return 'unknown';
+      }
+
+      const { currentPrice, sma200, sma200Slope } = spyTechnicals;
+
+      if (currentPrice > sma200 && sma200Slope > 0) {
+        return 'bull'; // Price above rising 200MA
+      } else if (currentPrice < sma200 && sma200Slope < 0) {
+        return 'bear'; // Price below declining 200MA
+      } else {
+        return 'transitional'; // Mixed signals
+      }
+    } catch (error) {
+      console.error('Error detecting market regime:', error);
+      return 'unknown';
+    }
+  }
+
+  /**
+   * Get target allocation based on market regime
+   * Returns recommended long/short/cash percentages
+   */
+  getTargetAllocation(regime) {
+    const allocations = {
+      'bull': { long: 0.70, short: 0.10, cash: 0.20 },
+      'transitional': { long: 0.60, short: 0.20, cash: 0.20 },
+      'bear': { long: 0.40, short: 0.30, cash: 0.30 },
+      'unknown': { long: 0.60, short: 0.15, cash: 0.25 }
+    };
+    return allocations[regime] || allocations['bull'];
   }
 }
 
