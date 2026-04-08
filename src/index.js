@@ -1147,7 +1147,11 @@ ${historyContext}`;
       if (recommendations.length > 0) {
         console.log(`✅ Found ${recommendations.length} trade recommendations`);
 
-        for (const rec of recommendations) {
+        // Validate sector allocation BEFORE executing any trades
+        const portfolio = await analysisEngine.getPortfolioState();
+        const adjustedRecs = await this.validateAndAdjustSectorAllocation(recommendations, portfolio);
+
+        for (const rec of adjustedRecs) {
           const action = rec.type === 'short' ? 'SHORT' : 'BUY';
           console.log(`   💰 Executing trade: ${action} ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
 
@@ -1316,6 +1320,80 @@ ${historyContext}`;
   }
 
   /**
+   * Validate and adjust recommendations to fit within sector allocation limits
+   * Groups trades by sector and adjusts quantities to stay under 30% per sector
+   */
+  async validateAndAdjustSectorAllocation(recommendations, portfolio) {
+    const MAX_SECTOR_ALLOCATION = 0.30; // 30%
+
+    // Calculate current sector allocation
+    const currentSectorAllocation = {};
+    for (const position of portfolio.positions) {
+      const sector = position.sector || 'Unknown';
+      const value = position.quantity * position.currentPrice;
+      currentSectorAllocation[sector] = (currentSectorAllocation[sector] || 0) + value;
+    }
+
+    // Group recommendations by sector
+    const recsBySector = {};
+    for (const rec of recommendations) {
+      const sector = rec.sector || 'Unknown';
+      if (!recsBySector[sector]) {
+        recsBySector[sector] = [];
+      }
+      recsBySector[sector].push(rec);
+    }
+
+    const adjustedRecs = [];
+
+    console.log('\n📊 Validating sector allocation for all trades...');
+
+    for (const [sector, recs] of Object.entries(recsBySector)) {
+      const currentSectorValue = currentSectorAllocation[sector] || 0;
+      const currentSectorPct = (currentSectorValue / portfolio.totalValue) * 100;
+
+      // Calculate total value of new trades in this sector
+      const newTradesValue = recs.reduce((sum, rec) => sum + (rec.quantity * rec.entryPrice), 0);
+      const totalSectorValue = currentSectorValue + newTradesValue;
+      const totalSectorPct = (totalSectorValue / portfolio.totalValue) * 100;
+
+      console.log(`\n   ${sector}:`);
+      console.log(`     Current: ${currentSectorPct.toFixed(1)}%`);
+      console.log(`     After trades: ${totalSectorPct.toFixed(1)}%`);
+
+      if (totalSectorPct <= MAX_SECTOR_ALLOCATION * 100) {
+        // All trades fit within limit
+        console.log(`     ✅ All ${recs.length} trades fit within 30% limit`);
+        adjustedRecs.push(...recs);
+      } else {
+        // Need to adjust - reduce quantities proportionally
+        const availableRoom = (MAX_SECTOR_ALLOCATION * portfolio.totalValue) - currentSectorValue;
+        const reductionFactor = availableRoom / newTradesValue;
+
+        console.log(`     ⚠️ Would exceed 30% limit - adjusting quantities (${(reductionFactor * 100).toFixed(0)}% of original)`);
+
+        for (const rec of recs) {
+          const adjustedQuantity = Math.floor(rec.quantity * reductionFactor);
+          if (adjustedQuantity > 0) {
+            adjustedRecs.push({
+              ...rec,
+              quantity: adjustedQuantity,
+              originalQuantity: rec.quantity
+            });
+            console.log(`       ${rec.symbol}: ${rec.quantity} → ${adjustedQuantity} shares`);
+          } else {
+            console.log(`       ${rec.symbol}: SKIPPED (would be 0 shares after adjustment)`);
+          }
+        }
+      }
+    }
+
+    console.log(`\n   Final: ${adjustedRecs.length} trades approved (${recommendations.length - adjustedRecs.length} skipped/adjusted)\n`);
+
+    return adjustedRecs;
+  }
+
+  /**
    * Parse trade recommendations from Opus analysis
    * Uses strict sentinel pattern to prevent false positives from news content
    *
@@ -1350,6 +1428,10 @@ ${historyContext}`;
 
         const textAfter = analysisText.substring(match.index + match[0].length, match.index + match[0].length + 500);
 
+        // Extract sector from reasoning text
+        const sectorMatch = textAfter.match(/Sector:\s*([^\n]+)/i);
+        const sector = sectorMatch ? sectorMatch[1].trim() : 'Unknown';
+
         recommendations.push({
           type: 'long',
           symbol,
@@ -1357,6 +1439,7 @@ ${historyContext}`;
           entryPrice,
           stopLoss,
           takeProfit,
+          sector,
           reasoning: textAfter.trim()
         });
       }
@@ -1384,6 +1467,10 @@ ${historyContext}`;
 
         const textAfter = analysisText.substring(match.index + match[0].length, match.index + match[0].length + 500);
 
+        // Extract sector from reasoning text
+        const sectorMatch = textAfter.match(/Sector:\s*([^\n]+)/i);
+        const sector = sectorMatch ? sectorMatch[1].trim() : 'Unknown';
+
         recommendations.push({
           type: 'short',
           symbol,
@@ -1391,6 +1478,7 @@ ${historyContext}`;
           entryPrice,
           stopLoss,
           takeProfit,
+          sector,
           reasoning: textAfter.trim()
         });
       }
