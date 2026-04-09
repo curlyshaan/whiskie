@@ -1,7 +1,6 @@
 import cron from 'node-cron';
 import dotenv from 'dotenv';
 import express from 'express';
-import dashboard from './dashboard.js';
 import tradier from './tradier.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
@@ -223,25 +222,6 @@ class WhiskieBot {
       }
     });
 
-    app.post('/update-stock-filters', async (req, res) => {
-      try {
-        console.log('📡 Manual stock filter update triggered via API');
-
-        // Import and run stock filter script
-        const updateStockFilters = (await import('../scripts/update-stock-filters.js')).default;
-        updateStockFilters().catch(console.error);
-
-        res.json({
-          success: true,
-          message: 'Stock filter update started. This will take 5-10 minutes. Check logs for progress.'
-        });
-      } catch (error) {
-        res.status(500).json({
-          success: false,
-          error: error.message
-        });
-      }
-    });
 
     app.get('/status', (req, res) => {
       res.json({
@@ -932,6 +912,27 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       }
       console.log('');
 
+      // Build intent mapping for Opus (so it knows which stocks came from which source)
+      const intentMap = {};
+
+      // Momentum candidates from pre-ranking
+      preRankedStocks.longs.forEach(symbol => {
+        intentMap[symbol] = 'momentum';
+      });
+      preRankedStocks.shorts.forEach(symbol => {
+        intentMap[symbol] = 'momentum_short';
+      });
+
+      // Value watchlist momentum triggers
+      valueMomentumTriggers.forEach(trigger => {
+        intentMap[trigger.symbol] = 'value_momentum';
+      });
+
+      // Quality watchlist dip opportunities
+      qualityDipOpportunities.forEach(opp => {
+        intentMap[opp.symbol] = 'quality_dip';
+      });
+
       // Refresh portfolio prices with phase 1 data
       console.log('💰 Refreshing portfolio prices...');
       let pricesUpdated = 0;
@@ -1096,6 +1097,12 @@ ${preRankedStocks.longs.join(', ')}
 
 **Short Candidates (${preRankedStocks.shorts.length} stocks):**
 ${preRankedStocks.shorts.join(', ')}
+
+**Value Watchlist Momentum Triggers (${valueMomentumTriggers.length} stocks):**
+${valueMomentumTriggers.length > 0 ? valueMomentumTriggers.map(t => `${t.symbol} (${t.changePercent}, ${t.volumeSurge})`).join(', ') : 'None'}
+
+**Quality Watchlist Dip Opportunities (${qualityDipOpportunities.length} stocks):**
+${qualityDipOpportunities.length > 0 ? qualityDipOpportunities.map(o => `${o.symbol} ($${o.price}, ${o.dipFromHigh}% from high)`).join(', ') : 'None'}
 
 **Your Task for Phase 1:**
 1. Review the pre-ranked candidates above
@@ -1326,11 +1333,20 @@ ${earningsAndTaxContext}
       "stop_loss": 385.00,
       "take_profit": 460.00,
       "sector": "Technology",
+      "intent": "quality_dip",
       "reasoning": "Strong Azure growth..."
     }
   ]
 }
 \`\`\`
+
+**IMPORTANT: Include "intent" field in each trade:**
+- "momentum" - from pre-ranked momentum candidates
+- "momentum_short" - short from pre-ranked candidates
+- "value_momentum" - from value watchlist showing momentum
+- "quality_dip" - from quality watchlist dip opportunity
+
+This helps track why each position was entered for future analysis.
 
 ${historyContext}`;
 
@@ -1526,7 +1542,8 @@ ${historyContext}`;
                 sector: rec.sector,
                 stopLoss: rec.stopLoss,
                 takeProfit: rec.takeProfit,
-                reasoning: rec.reasoning
+                reasoning: rec.reasoning,
+                intent: rec.intent || 'momentum' // Pass intent through
               });
 
               console.log(`   ✅ Trade executed successfully`);
@@ -1756,6 +1773,7 @@ ${historyContext}`;
               stopLoss: t.stop_loss,
               takeProfit: t.take_profit,
               assetClass: t.asset_class || assetClassData.getAssetClass(t.symbol),
+              intent: t.intent || 'momentum', // Default to momentum if not specified
               reasoning: t.reasoning || ''
             }));
           }
@@ -2094,8 +2112,8 @@ ${historyContext}`;
             stop_loss: stopLoss,
             take_profit: takeProfit,
             thesis,
-            original_intent: 'long-term',
-            current_intent: 'long-term'
+            original_intent: options.intent || 'momentum',
+            current_intent: options.intent || 'momentum'
           });
 
           // Place OCO order for long-term lot
@@ -2168,6 +2186,12 @@ ${historyContext}`;
             cost_basis: price,
             current_price: price,
             entry_date: new Date().toISOString().split('T')[0],
+            stop_loss: stopLoss,
+            take_profit: takeProfit,
+            thesis,
+            original_intent: options.intent || 'momentum',
+            current_intent: options.intent || 'momentum'
+          });
             stop_loss: stopLoss,
             take_profit: takeProfit,
             thesis,

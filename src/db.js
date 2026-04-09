@@ -939,8 +939,8 @@ export async function createPositionLot(lot) {
       `INSERT INTO position_lots (
         symbol, lot_type, quantity, cost_basis, current_price,
         entry_date, stop_loss, take_profit, oco_order_id, thesis,
-        days_to_long_term
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        days_to_long_term, original_intent, current_intent
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
       [
         lot.symbol,
@@ -953,7 +953,9 @@ export async function createPositionLot(lot) {
         lot.take_profit,
         lot.oco_order_id || null,
         lot.thesis || null,
-        lot.lot_type === 'long-term' ? 365 : null
+        lot.lot_type === 'long-term' ? 365 : null,
+        lot.original_intent || null,
+        lot.current_intent || lot.original_intent || null
       ]
     );
     return result.rows[0];
@@ -1125,21 +1127,6 @@ export async function getStockUniverse() {
     return result.rows;
   } catch (error) {
     console.error('Error fetching stock universe:', error);
-    throw error;
-  }
-}
-
-/**
- * Get shortable stocks from universe
- */
-export async function getShortableStocks() {
-  try {
-    const result = await pool.query(
-      `SELECT * FROM stock_universe WHERE status = 'active' AND shortable = true ORDER BY symbol`
-    );
-    return result.rows;
-  } catch (error) {
-    console.error('Error fetching shortable stocks:', error);
     throw error;
   }
 }
