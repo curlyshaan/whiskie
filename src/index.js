@@ -549,6 +549,20 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       // Gather additional context for Claude's analysis
       console.log('📊 Gathering market context...');
 
+      // Cash state context
+      const cashState = riskManager.checkCashState(portfolio);
+      let cashContext = `\n${cashState.context}\n`;
+
+      if (cashState.rotationCandidates.length > 0) {
+        cashContext += '\nROTATION CANDIDATES (review before any new buy):\n';
+        cashState.rotationCandidates.forEach(p => {
+          cashContext += `  ${p.symbol} (${p.stock_type}): ${p.gainPct >= 0 ? '+' : ''}${p.gainPct}%, value $${p.positionValue}\n`;
+        });
+        cashContext += '\n→ If recommending a new buy while cash is DEPLOYED or ZERO, you MUST also ' +
+          'either (a) recommend selling/trimming one of the above to fund it, or (b) explicitly explain ' +
+          'why no rotation makes sense and why waiting for natural capital release is better.\n';
+      }
+
       // VIX regime context
       const vixContext = await vixRegime.buildPromptContext();
 
@@ -1101,6 +1115,8 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 - Total Value: $${portfolio.totalValue.toLocaleString()}
 - Cash Available: $${portfolio.cash.toLocaleString()}
 
+${cashContext}
+
 ${vixContext}
 
 ${gapContext}
@@ -1194,10 +1210,22 @@ ${earningsAndTaxContext}
 
 **Investment Rules:**
 - Regular stocks only (no crypto, no penny stocks)
-- Max 15% per position
+- Max 12% per position (down from 15%)
 - 10-12 positions max
 - Diversify across sectors
 - YOU decide which sectors to focus/avoid based on current macro environment
+
+**CASH MANAGEMENT PHILOSOPHY:**
+- 10% cash is the TARGET BUFFER — dry powder for opportunities, not a sacred minimum
+- If you find a high-conviction setup and cash is low: DEPLOY IT. Going to 0% cash is acceptable
+  when the opportunity justifies it.
+- When cash is DEPLOYED or ZERO: Always evaluate rotation before recommending a new buy.
+  Rotation = sell or trim a weaker position to fund a better one. This is active portfolio management.
+- When recommending a rotation: explain which position you'd exit and why the new opportunity
+  is a better use of that capital right now.
+- After capital is freed (stop-loss hit, take-profit, or manual exit): rebuild toward 10% cash
+  by being selective about the next entry — don't immediately redeploy into the first thing you see.
+- Never sell a strong position with an intact thesis purely to hit a cash target. Let winners run.
 
 **Be SPECIFIC:**
 ✅ "BUY 10 shares AAPL at $255. Stop-loss: $230 (-9.8%). Take-profit: $295 (+15.7%). Reasoning: Strong iPhone sales..."
@@ -1315,8 +1343,31 @@ ${historyContext}`;
       if (recommendations.length > 0) {
         console.log(`✅ Found ${recommendations.length} trade recommendations`);
 
-        // Validate sector allocation BEFORE executing any trades
+        // Get portfolio state and VIX regime
         const portfolio = await analysisEngine.getPortfolioState();
+        const regime = await vixRegime.getRegime();
+
+        // STEP 1: Apply VIX adjustment to all trade quantities BEFORE sector validation
+        console.log(`\n📊 Applying VIX regime adjustments (${regime.name}: ${(regime.positionSizeMultiplier * 100).toFixed(0)}% multiplier)...`);
+        for (const rec of recommendations) {
+          const originalQuantity = rec.quantity;
+          const tradeValue = originalQuantity * rec.entryPrice;
+          const originalPositionSize = tradeValue / portfolio.totalValue;
+
+          // Apply VIX multiplier
+          const adjustedPositionSize = originalPositionSize * regime.positionSizeMultiplier;
+          const adjustedQuantity = Math.floor((adjustedPositionSize * portfolio.totalValue) / rec.entryPrice);
+
+          rec.quantity = adjustedQuantity;
+          rec.vixAdjusted = true;
+          rec.originalQuantity = originalQuantity;
+
+          if (adjustedQuantity !== originalQuantity) {
+            console.log(`   ${rec.symbol}: ${originalQuantity} → ${adjustedQuantity} shares (${(originalPositionSize * 100).toFixed(1)}% → ${(adjustedPositionSize * 100).toFixed(1)}%)`);
+          }
+        }
+
+        // STEP 2: Validate sector allocation with VIX-adjusted quantities
         const adjustedRecs = await this.validateAndAdjustSectorAllocation(recommendations, portfolio);
 
         for (const rec of adjustedRecs) {
@@ -1492,9 +1543,16 @@ ${historyContext}`;
    * Groups trades by sector and adjusts quantities to stay under 30% per sector
    */
   async validateAndAdjustSectorAllocation(recommendations, portfolio) {
-    const MAX_SECTOR_ALLOCATION = 0.30; // 30%
+    // Get VIX regime to determine sector allocation limit
+    const regime = await vixRegime.getRegime();
 
-    // Calculate current sector allocation
+    // Use regime-specific sector allocation limit
+    // ELEVATED/FEAR/PANIC regimes tighten sector limits to reduce concentration risk
+    const MAX_SECTOR_ALLOCATION = regime.name === 'CALM' || regime.name === 'NORMAL'
+      ? 0.30  // 30% in normal conditions
+      : 0.25; // 25% in elevated volatility
+
+    console.log(`\n📊 Validating sector allocation (${(MAX_SECTOR_ALLOCATION * 100).toFixed(0)}% limit for ${regime.name} regime)...`);
     const currentSectorAllocation = {};
     for (const position of portfolio.positions) {
       const sector = position.sector || 'Unknown';
@@ -1531,14 +1589,14 @@ ${historyContext}`;
 
       if (totalSectorPct <= MAX_SECTOR_ALLOCATION * 100) {
         // All trades fit within limit
-        console.log(`     ✅ All ${recs.length} trades fit within 30% limit`);
+        console.log(`     ✅ All ${recs.length} trades fit within ${(MAX_SECTOR_ALLOCATION * 100).toFixed(0)}% limit`);
         adjustedRecs.push(...recs);
       } else {
         // Need to adjust - reduce quantities proportionally
         const availableRoom = (MAX_SECTOR_ALLOCATION * portfolio.totalValue) - currentSectorValue;
         const reductionFactor = availableRoom / newTradesValue;
 
-        console.log(`     ⚠️ Would exceed 30% limit - adjusting quantities (${(reductionFactor * 100).toFixed(0)}% of original)`);
+        console.log(`     ⚠️ Would exceed ${(MAX_SECTOR_ALLOCATION * 100).toFixed(0)}% limit - adjusting quantities (${(reductionFactor * 100).toFixed(0)}% of original)`);
 
         for (const rec of recs) {
           const adjustedQuantity = Math.floor(rec.quantity * reductionFactor);

@@ -40,13 +40,8 @@ class RiskManager {
       errors.push(`Position size ${(positionSize * 100).toFixed(1)}% exceeds max ${(this.MAX_POSITION_SIZE * 100)}%`);
     }
 
-    // Check cash reserve after trade
-    const cashAfterTrade = portfolio.cash - tradeValue;
-    const cashReserveRatio = cashAfterTrade / portfolio.totalValue;
-
-    if (cashReserveRatio < this.MIN_CASH_RESERVE) {
-      errors.push(`Trade would leave ${(cashReserveRatio * 100).toFixed(1)}% cash, below minimum ${(this.MIN_CASH_RESERVE * 100)}%`);
-    }
+    // Cash reserve check removed - cash level now informs Claude's judgment via checkCashState()
+    // instead of mechanically blocking trades
 
     // Check sector allocation (for buys)
     if (trade.action === 'buy') {
@@ -319,6 +314,61 @@ class RiskManager {
   needsAttention(position, currentPrice) {
     const loss = (currentPrice - position.cost_basis) / position.cost_basis;
     return loss <= -0.20; // 20% or more loss
+  }
+
+  /**
+   * Assess current cash state and generate context for Claude
+   * Cash is a tool, not a constraint — this informs Claude's judgment, doesn't override it
+   */
+  checkCashState(portfolio) {
+    const cashPct = portfolio.cash / portfolio.totalValue;
+    const cashAmount = portfolio.cash;
+
+    let state, context;
+
+    if (cashPct > 0.12) {
+      state = 'FLUSH';
+      context = `Cash: ${(cashPct * 100).toFixed(1)}% ($${cashAmount.toFixed(0)}) — FLUSH. ` +
+        `Full flexibility. Deploy normally on high and medium conviction setups.`;
+
+    } else if (cashPct >= 0.05) {
+      state = 'NORMAL';
+      context = `Cash: ${(cashPct * 100).toFixed(1)}% ($${cashAmount.toFixed(0)}) — NORMAL. ` +
+        `10% is the resting target. Prefer not to go below 5% without strong conviction. ` +
+        `Prioritize the best setups only if cash would drop under 5%.`;
+
+    } else if (cashPct > 0) {
+      state = 'DEPLOYED';
+      context = `Cash: ${(cashPct * 100).toFixed(1)}% ($${cashAmount.toFixed(0)}) — NEARLY FULLY DEPLOYED. ` +
+        `Before buying anything new, evaluate existing positions: is there one with a weakened thesis, ` +
+        `underperforming its sector, or a better opportunity available? If yes — rotate capital. ` +
+        `If no clear rotation target exists, wait for a stop-loss or take-profit to free up capital naturally. ` +
+        `Only bypass this for extremely high conviction setups (strong catalyst + technical confirmation).`;
+
+    } else {
+      state = 'ZERO';
+      context = `Cash: 0% — FULLY DEPLOYED. ` +
+        `Do not buy anything new unless you are simultaneously rotating out of a weaker position. ` +
+        `Review all current positions for rotation candidates: weak thesis, underperforming vs sector, ` +
+        `or a clearly better opportunity available. If no rotation makes sense, hold and wait.`;
+    }
+
+    // Identify rotation candidates when deployed/zero
+    let rotationCandidates = [];
+    if (cashPct < 0.05) {
+      rotationCandidates = portfolio.positions
+        .filter(p => p.quantity > 0) // Longs only
+        .map(p => {
+          const gainPct = ((p.currentPrice - p.cost_basis) / p.cost_basis) * 100;
+          const positionValue = p.quantity * p.currentPrice;
+          return { symbol: p.symbol, gainPct: gainPct.toFixed(1), positionValue: positionValue.toFixed(0), stock_type: p.stock_type };
+        })
+        // Surface underperformers first (small gain or negative)
+        .sort((a, b) => parseFloat(a.gainPct) - parseFloat(b.gainPct))
+        .slice(0, 5);
+    }
+
+    return { state, cashPct, cashAmount, context, rotationCandidates };
   }
 
 

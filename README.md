@@ -50,10 +50,11 @@ See [BETA_PLAY_STRATEGY.md](docs/BETA_PLAY_STRATEGY.md) for complete strategy do
 
 ## 🏗️ How It Works
 
-### Automated Trading Schedule (3x Daily):
-1. **10:00 AM ET** - Morning analysis after market open volatility settles
-2. **2:00 PM ET** - Afternoon analysis during peak liquidity
-3. **3:30 PM ET** - Pre-close analysis for overnight positioning
+### Automated Trading Schedule:
+1. **9:00 AM ET** - Pre-market gap scan (identifies overnight movers)
+2. **10:00 AM ET** - Morning analysis (full trading analysis after market settles)
+3. **2:00 PM ET** - Afternoon analysis (full trading analysis, 2 hours before close)
+4. **4:30 PM ET** - End-of-day summary (daily performance report)
 
 ### Analysis Workflow:
 1. **Portfolio Sync:** Fetch positions and account data from Tradier
