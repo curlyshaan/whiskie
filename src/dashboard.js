@@ -501,6 +501,9 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
 
     <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
     <button class="analyze-btn" onclick="triggerAnalysis()" id="analyzeBtn">🤖 Analyze Now</button>
+    <a href="/approvals" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;" id="approvalsBtn">
+      ⚖️ Trade Approvals
+    </a>
 
     <div class="stats">
       <div class="stat-card">
@@ -841,5 +844,296 @@ function generateLogsHTML(analyses, trades, alerts) {
 </html>
   `;
 }
+
+// Trade Approval Routes
+router.get('/approvals', async (req, res) => {
+  try {
+    const tradeApproval = (await import('./trade-approval.js')).default;
+    const pending = await tradeApproval.getPendingApprovals();
+    const stats = await tradeApproval.getApprovalStats();
+
+    res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trade Approvals - Whiskie</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0f1425 0%, #1a1f3a 100%);
+      color: #fff;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { font-size: 2.5rem; margin-bottom: 10px; }
+    .subtitle { color: #a0a0a0; margin-bottom: 30px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 15px;
+      margin-bottom: 30px;
+    }
+    .stat-card {
+      background: #1a1f3a;
+      padding: 20px;
+      border-radius: 10px;
+      border: 1px solid #2a2f4a;
+    }
+    .stat-value { font-size: 2rem; font-weight: bold; color: #667eea; }
+    .stat-label { color: #a0a0a0; font-size: 0.9rem; margin-top: 5px; }
+    .trade-card {
+      background: #1a1f3a;
+      border: 2px solid #2a2f4a;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .trade-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+    .trade-symbol {
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #667eea;
+    }
+    .trade-action {
+      padding: 5px 15px;
+      border-radius: 5px;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .action-buy { background: #10b98120; color: #10b981; }
+    .action-sell { background: #ef444420; color: #ef4444; }
+    .trade-details {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+    .detail-item {
+      background: #0f1425;
+      padding: 10px;
+      border-radius: 5px;
+    }
+    .detail-label { color: #a0a0a0; font-size: 0.85rem; }
+    .detail-value { color: #fff; font-size: 1.1rem; font-weight: 600; margin-top: 5px; }
+    .reasoning {
+      background: #0f1425;
+      padding: 15px;
+      border-radius: 5px;
+      margin-bottom: 15px;
+      color: #d0d0d0;
+      line-height: 1.6;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+    }
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .btn:hover { opacity: 0.8; }
+    .btn-approve {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: white;
+      flex: 1;
+    }
+    .btn-reject {
+      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      color: white;
+      flex: 1;
+    }
+    .btn-back {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      text-decoration: none;
+      display: inline-block;
+      margin-bottom: 20px;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: #a0a0a0;
+    }
+    .expires { color: #f59e0b; font-size: 0.85rem; margin-top: 10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚖️ Trade Approvals</h1>
+    <p class="subtitle">Review and approve pending trades</p>
+
+    <a href="/" class="btn btn-back">← Back to Dashboard</a>
+
+    <div class="stats">
+      <div class="stat-card">
+        <div class="stat-value">${pending.length}</div>
+        <div class="stat-label">Pending</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${stats.approved}</div>
+        <div class="stat-label">Approved (30d)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${stats.rejected}</div>
+        <div class="stat-label">Rejected (30d)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">${stats.executed}</div>
+        <div class="stat-label">Executed (30d)</div>
+      </div>
+    </div>
+
+    ${pending.length === 0 ? `
+      <div class="empty-state">
+        <h2>✅ No pending approvals</h2>
+        <p>All trades have been reviewed</p>
+      </div>
+    ` : pending.map(trade => `
+      <div class="trade-card">
+        <div class="trade-header">
+          <div class="trade-symbol">${trade.symbol}</div>
+          <div class="trade-action ${trade.action.includes('buy') ? 'action-buy' : 'action-sell'}">
+            ${trade.action.toUpperCase()}
+          </div>
+        </div>
+
+        <div class="trade-details">
+          <div class="detail-item">
+            <div class="detail-label">Quantity</div>
+            <div class="detail-value">${trade.quantity} shares</div>
+          </div>
+          <div class="detail-item">
+            <div class="detail-label">Entry Price</div>
+            <div class="detail-value">$${trade.entry_price?.toFixed(2) || 'Market'}</div>
+          </div>
+          ${trade.stop_loss ? `
+          <div class="detail-item">
+            <div class="detail-label">Stop Loss</div>
+            <div class="detail-value">$${trade.stop_loss.toFixed(2)}</div>
+          </div>
+          ` : ''}
+          ${trade.take_profit ? `
+          <div class="detail-item">
+            <div class="detail-label">Take Profit</div>
+            <div class="detail-value">$${trade.take_profit.toFixed(2)}</div>
+          </div>
+          ` : ''}
+          ${trade.intent ? `
+          <div class="detail-item">
+            <div class="detail-label">Intent</div>
+            <div class="detail-value">${trade.intent}</div>
+          </div>
+          ` : ''}
+        </div>
+
+        <div class="reasoning">
+          <strong>Reasoning:</strong><br>
+          ${trade.reasoning}
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-approve" onclick="approveTrade(${trade.id})">
+            ✓ Approve Trade
+          </button>
+          <button class="btn btn-reject" onclick="rejectTrade(${trade.id})">
+            ✗ Reject Trade
+          </button>
+        </div>
+
+        <div class="expires">
+          Expires: ${new Date(trade.expires_at).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET
+        </div>
+      </div>
+    `).join('')}
+  </div>
+
+  <script>
+    async function approveTrade(id) {
+      if (!confirm('Approve this trade?')) return;
+
+      try {
+        const res = await fetch(\`/api/approvals/\${id}/approve\`, { method: 'POST' });
+        const data = await res.json();
+
+        if (data.success) {
+          alert('Trade approved!');
+          location.reload();
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (error) {
+        alert('Error approving trade: ' + error.message);
+      }
+    }
+
+    async function rejectTrade(id) {
+      const reason = prompt('Reason for rejection (optional):');
+      if (reason === null) return;
+
+      try {
+        const res = await fetch(\`/api/approvals/\${id}/reject\`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: reason || 'User rejected' })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          alert('Trade rejected');
+          location.reload();
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (error) {
+        alert('Error rejecting trade: ' + error.message);
+      }
+    }
+
+    // Auto-refresh every 30 seconds
+    setTimeout(() => location.reload(), 30000);
+  </script>
+</body>
+</html>
+    `);
+  } catch (error) {
+    res.status(500).send('Error loading approvals: ' + error.message);
+  }
+});
+
+// API endpoints for approval actions
+router.post('/api/approvals/:id/approve', async (req, res) => {
+  try {
+    const tradeApproval = (await import('./trade-approval.js')).default;
+    const result = await tradeApproval.approveTrade(parseInt(req.params.id));
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/approvals/:id/reject', async (req, res) => {
+  try {
+    const tradeApproval = (await import('./trade-approval.js')).default;
+    const { reason } = req.body;
+    const result = await tradeApproval.rejectTrade(parseInt(req.params.id), reason);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
 
 export default router;

@@ -1,4 +1,5 @@
-import yahooFinance from 'yahoo-finance2';
+import fmp from './fmp.js';
+import tradier from './tradier.js';
 import * as db from './db.js';
 import assetClassData from './asset-class-data.js';
 
@@ -22,17 +23,29 @@ class FundamentalScreener {
   }
 
   /**
-   * Run weekly fundamental screening
+   * Run weekly fundamental screening (split across Saturday/Sunday)
+   * Saturday: First half of stocks
+   * Sunday: Second half of stocks
    * Returns top 15 value candidates
    */
-  async runWeeklyScreen() {
-    console.log('\n💎 Running weekly fundamental screening...');
+  async runWeeklyScreen(part = 'full') {
+    console.log(`\n💎 Running weekly fundamental screening (${part})...`);
     const startTime = Date.now();
 
     try {
       // Get all stocks from asset classes
-      const allStocks = this.getAllStocks();
-      console.log(`   Screening ${allStocks.length} stocks...`);
+      let allStocks = this.getAllStocks();
+
+      // Split stocks for Saturday/Sunday to stay under 750 API calls/day
+      if (part === 'saturday') {
+        allStocks = allStocks.slice(0, Math.ceil(allStocks.length / 2));
+        console.log(`   Screening first half: ${allStocks.length} stocks...`);
+      } else if (part === 'sunday') {
+        allStocks = allStocks.slice(Math.ceil(allStocks.length / 2));
+        console.log(`   Screening second half: ${allStocks.length} stocks...`);
+      } else {
+        console.log(`   Screening ${allStocks.length} stocks...`);
+      }
 
       const scoredStocks = [];
       let processed = 0;
@@ -75,13 +88,28 @@ class FundamentalScreener {
       console.log(`   Candidates found: ${scoredStocks.length}`);
       console.log(`   Top ${this.VALUE_WATCHLIST_SIZE} selected for Value Watchlist`);
 
-      // Update Value Watchlist in database
-      await this.updateValueWatchlist(topCandidates);
+      // Show FMP API usage stats
+      const fmpStats = (await import('./fmp.js')).default.getUsageStats();
+      console.log(`\n   📊 FMP API Usage:`);
+      fmpStats.usage.forEach(key => {
+        console.log(`      Key ${key.key}: ${key.calls}/250 calls (${key.percentage})`);
+      });
+      console.log(`      Total: ${fmpStats.totalCalls} calls, ${fmpStats.totalRemaining} remaining today`);
+
+      // Update Value Watchlist in database (only on Sunday or full run)
+      if (part === 'sunday' || part === 'full') {
+        await this.updateValueWatchlist(topCandidates);
+      }
 
       return topCandidates;
 
     } catch (error) {
       console.error('❌ Error in fundamental screening:', error);
+
+      // Send email alert for API errors
+      const emailModule = await import('./email.js');
+      await emailModule.default.sendErrorAlert(error, 'Fundamental screening failed');
+
       throw error;
     }
   }
@@ -105,39 +133,33 @@ class FundamentalScreener {
    */
   async scoreStock(stock) {
     try {
-      // Fetch quote for volume check
-      const quote = await yahooFinance.quote(stock.symbol);
+      // Fetch quote for volume check from Tradier
+      const quote = await tradier.getQuote(stock.symbol);
 
       if (!quote) return null;
 
       // Volume filter: $5M absolute minimum (not surge-based)
-      const price = quote.regularMarketPrice || 0;
-      const volume = quote.averageDailyVolume10Day || 0;
+      const price = quote.last || quote.close || 0;
+      const volume = quote.average_volume || 0;
       const dollarVolume = volume * price;
 
       if (dollarVolume < this.MIN_DAILY_VOLUME) {
         return null; // Filter out low-volume stocks
       }
 
-      // Fetch fundamental data
-      const quoteSummary = await yahooFinance.quoteSummary(stock.symbol, {
-        modules: ['financialData', 'defaultKeyStatistics', 'summaryDetail']
-      });
+      // Fetch fundamental data from FMP
+      const fundamentals = await fmp.getFundamentals(stock.symbol);
 
-      if (!quoteSummary) return null;
-
-      const financials = quoteSummary.financialData || {};
-      const keyStats = quoteSummary.defaultKeyStatistics || {};
-      const summary = quoteSummary.summaryDetail || {};
+      if (!fundamentals) return null;
 
       // Extract metrics
-      const revenueGrowth = financials.revenueGrowth || 0;
-      const earningsGrowth = financials.earningsGrowth || 0;
-      const peRatio = summary.trailingPE || keyStats.trailingPE || 0;
-      const pegRatio = keyStats.pegRatio || 0;
-      const debtToEquity = financials.debtToEquity ? financials.debtToEquity / 100 : 0;
-      const freeCashflow = financials.freeCashflow || 0;
-      const operatingMargins = financials.operatingMargins || 0;
+      const revenueGrowth = fundamentals.revenueGrowth || 0;
+      const earningsGrowth = fundamentals.earningsGrowth || 0;
+      const peRatio = fundamentals.peRatio || 0;
+      const pegRatio = fundamentals.pegRatio || 0;
+      const debtToEquity = fundamentals.debtToEquity || 0;
+      const freeCashflow = fundamentals.freeCashflowPerShare || 0;
+      const operatingMargins = fundamentals.operatingMargin || 0;
 
       // Calculate score (0-100)
       let score = 0;
@@ -202,7 +224,7 @@ class FundamentalScreener {
           earningsGrowth: (earningsGrowth * 100).toFixed(1) + '%',
           peRatio: peRatio.toFixed(2),
           pegRatio: pegRatio.toFixed(2),
-          debtToEquity: (debtToEquity * 100).toFixed(0) + '%',
+          debtToEquity: debtToEquity.toFixed(2),
           freeCashflow: freeCashflow > 0 ? 'Positive' : 'Negative',
           operatingMargins: (operatingMargins * 100).toFixed(1) + '%',
           dollarVolume: '$' + (dollarVolume / 1e6).toFixed(1) + 'M'

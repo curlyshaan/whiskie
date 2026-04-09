@@ -24,6 +24,7 @@ import preRanking from './pre-ranking.js';
 import fundamentalScreener from './fundamental-screener.js';
 import qualityScreener from './quality-screener.js';
 import overvaluedScreener from './overvalued-screener.js';
+import tradeApproval from './trade-approval.js';
 import { runPreMarketScan } from './pre-market-scanner.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
@@ -67,6 +68,10 @@ class WhiskieBot {
     try {
       // Initialize database
       await db.initDatabase();
+
+      // Initialize trade approval system
+      await tradeApproval.initDatabase();
+      console.log('✅ Trade approval system initialized\n');
 
       // Load active orders from database
       await orderManager.loadActiveOrders();
@@ -136,16 +141,45 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule weekly portfolio review - Sunday 9:00 PM ET
-      cron.schedule('0 21 * * 0', async () => {
-        console.log('\n⏰ Sunday 9:00 PM - Weekly portfolio review');
+      // Schedule fundamental screening - Saturday 9:00 PM ET (first half)
+      cron.schedule('0 21 * * 6', async () => {
+        console.log('\n⏰ Saturday 9:00 PM - Fundamental screening (first half)');
         try {
+          await fundamentalScreener.runWeeklyScreen('saturday');
+          console.log('✅ Saturday screening complete');
+        } catch (error) {
+          console.error('❌ Error in Saturday screening:', error);
+          await email.sendErrorAlert(error, 'Saturday fundamental screening failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule weekly portfolio review + screening - Sunday 9:00 PM ET
+      cron.schedule('0 21 * * 0', async () => {
+        console.log('\n⏰ Sunday 9:00 PM - Fundamental screening (second half) + Weekly review');
+        try {
+          // Run second half of fundamental screening
+          await fundamentalScreener.runWeeklyScreen('sunday');
+          console.log('✅ Sunday screening complete');
+
           // Run weekly portfolio review with Opus
           await runWeeklyReview();
           console.log('✅ Weekly review complete');
         } catch (error) {
-          console.error('❌ Error in weekly review:', error);
-          await email.sendErrorAlert(error, 'Weekly review failed');
+          console.error('❌ Error in Sunday tasks:', error);
+          await email.sendErrorAlert(error, 'Sunday screening/review failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule hourly check to expire old trade approvals
+      cron.schedule('0 * * * *', async () => {
+        try {
+          await tradeApproval.expirePendingApprovals();
+        } catch (error) {
+          console.error('❌ Error expiring approvals:', error);
         }
       }, {
         timezone: 'America/New_York'
@@ -157,7 +191,8 @@ class WhiskieBot {
       console.log('   • 2:00 PM ET - Afternoon analysis + trim/tax/trailing checks');
       console.log('📊 Daily summary: 4:30 PM ET');
       console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
-      console.log('📅 Weekly review: Sunday 9:00 PM ET (Opus deep review)');
+      console.log('📅 Fundamental screening: Saturday 9:00 PM ET (first half)');
+      console.log('📅 Fundamental screening + Weekly review: Sunday 9:00 PM ET (second half + Opus)');
       console.log('💡 Press Ctrl+C to stop\n');
 
       this.botStarted = true;
@@ -1462,6 +1497,9 @@ ${historyContext}`;
       console.log('✅ Trend pattern saved');
       console.log('');
 
+      // Get VIX regime for stock analysis metadata
+      const currentRegime = await vixRegime.getRegime();
+
       // Save stock analyses to learning database for each analyzed ticker
       console.log('💾 Saving stock analyses to learning database...');
       const { saveStockAnalysis } = await import('./trend-learning.js');
@@ -1480,7 +1518,7 @@ ${historyContext}`;
               recommendation: analysis.analysis.includes(`BUY: ${ticker}`) ? 'buy' :
                             analysis.analysis.includes(`SHORT: ${ticker}`) ? 'short' : 'hold',
               confidence: 'medium',
-              keyFactors: [`Included in ${tickersToAnalyze.length}-stock analysis`, `VIX: ${regime.vix}`]
+              keyFactors: [`Included in ${tickersToAnalyze.length}-stock analysis`, `VIX: ${currentRegime.vix}`]
             });
           }
         } catch (error) {
