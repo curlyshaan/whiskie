@@ -12,6 +12,23 @@ function markdownToHtml(text) {
 
   let html = text;
 
+  // Remove JSON code blocks (they're redundant with the formatted content above)
+  html = html.replace(/```json[\s\S]*?```/g, '');
+
+  // Convert horizontal rules
+  html = html.replace(/^---+$/gm, '<hr style="border: none; border-top: 2px solid #2a2f4a; margin: 20px 0;">');
+
+  // Convert EXECUTE_BUY/EXECUTE_SHORT to styled boxes
+  html = html.replace(/EXECUTE_(BUY|SHORT):\s*([A-Z]+)\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/g,
+    (match, action, symbol, qty, entry, stop, target) => {
+      const color = action === 'BUY' ? '#10b981' : '#ef4444';
+      return `<div style="background: #1a1f3a; border-left: 4px solid ${color}; padding: 15px; margin: 15px 0; border-radius: 5px;">
+        <strong style="color: ${color}; font-size: 1.1rem;">${action} ${symbol}</strong><br>
+        <span style="color: #d0d0d0;">Quantity: ${qty} | Entry: $${entry} | Stop: $${stop} | Target: $${target}</span>
+      </div>`;
+    }
+  );
+
   // Convert markdown tables to HTML
   const tableRegex = /\|(.+)\|\n\|[-:\s|]+\|\n((?:\|.+\|\n?)+)/g;
   html = html.replace(tableRegex, (match, header, rows) => {
@@ -20,12 +37,12 @@ function markdownToHtml(text) {
       row.split('|').map(cell => cell.trim()).filter(cell => cell)
     );
 
-    let table = '<table style="width: 100%; border-collapse: collapse; margin: 15px 0;">';
+    let table = '<table style="width: 100%; border-collapse: collapse; margin: 15px 0; background: #1a1f3a;">';
 
     // Header
     table += '<thead><tr>';
     headers.forEach(h => {
-      table += `<th style="border: 1px solid #2a2f4a; padding: 8px; background: #0f1425; text-align: left;">${h}</th>`;
+      table += `<th style="border: 1px solid #2a2f4a; padding: 10px; background: #0f1425; text-align: left; color: #fff;">${h}</th>`;
     });
     table += '</tr></thead>';
 
@@ -34,7 +51,7 @@ function markdownToHtml(text) {
     rowData.forEach(row => {
       table += '<tr>';
       row.forEach(cell => {
-        table += `<td style="border: 1px solid #2a2f4a; padding: 8px;">${cell}</td>`;
+        table += `<td style="border: 1px solid #2a2f4a; padding: 10px; color: #d0d0d0;">${cell}</td>`;
       });
       table += '</tr>';
     });
@@ -44,24 +61,22 @@ function markdownToHtml(text) {
   });
 
   // Convert headers
-  html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-  html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-  html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+  html = html.replace(/^### (.*$)/gim, '<h3 style="color: #667eea; margin-top: 25px; margin-bottom: 10px; font-size: 1.1rem;">$1</h3>');
+  html = html.replace(/^## (.*$)/gim, '<h2 style="color: #667eea; margin-top: 30px; margin-bottom: 15px; font-size: 1.3rem;">$1</h2>');
+  html = html.replace(/^# (.*$)/gim, '<h1 style="color: #667eea; margin-top: 30px; margin-bottom: 15px; font-size: 1.5rem;">$1</h1>');
 
   // Convert bold
-  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="color: #fff;">$1</strong>');
 
   // Convert bullet points
-  html = html.replace(/^- (.*$)/gim, '<li>$1</li>');
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-
-  // Convert numbered lists
-  html = html.replace(/^\d+\. (.*$)/gim, '<li>$1</li>');
+  html = html.replace(/^- (.*$)/gim, '<li style="margin-bottom: 8px; color: #d0d0d0;">$1</li>');
+  html = html.replace(/(<li.*<\/li>\n?)+/g, '<ul style="margin: 10px 0 10px 20px;">$&</ul>');
 
   // Convert line breaks to paragraphs
   html = html.split('\n\n').map(para => {
-    if (para.trim() && !para.startsWith('<')) {
-      return `<p>${para}</p>`;
+    para = para.trim();
+    if (para && !para.startsWith('<')) {
+      return `<p style="margin-bottom: 12px; color: #d0d0d0; line-height: 1.6;">${para.replace(/\n/g, '<br>')}</p>`;
     }
     return para;
   }).join('\n');
