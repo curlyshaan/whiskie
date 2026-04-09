@@ -15,7 +15,7 @@ class RiskManager {
     // 3-Pillar Strategy: Long-term anchors (35-40%) + Swing/momentum (30-35%) + Shorts (15-20%)
     this.MAX_POSITION_SIZE = parseFloat(process.env.MAX_POSITION_SIZE) || 0.12; // 12% max per position (down from 15%)
     this.MAX_SHORT_POSITION_SIZE = 0.10; // 10% for shorts (tighter due to unlimited loss risk)
-    this.MAX_DAILY_TRADES = parseInt(process.env.MAX_DAILY_TRADES) || 3;
+    this.MAX_DAILY_TRADES = parseInt(process.env.MAX_DAILY_TRADES) || 7;
     this.MAX_PORTFOLIO_DRAWDOWN = parseFloat(process.env.MAX_PORTFOLIO_DRAWDOWN) || 0.20; // 20%
     this.MIN_CASH_RESERVE = parseFloat(process.env.MIN_CASH_RESERVE) || 0.10; // 10% minimum cash (up from 3%)
     this.MAX_SECTOR_ALLOCATION = parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.30; // 30% per sector (both long and short)

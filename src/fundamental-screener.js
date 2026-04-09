@@ -1,4 +1,4 @@
-import fmp from './fmp.js';
+import fmpCache from './fmp-cache.js';
 import tradier from './tradier.js';
 import * as db from './db.js';
 import assetClassData from './asset-class-data.js';
@@ -96,6 +96,13 @@ class FundamentalScreener {
       });
       console.log(`      Total: ${fmpStats.totalCalls} calls, ${fmpStats.totalRemaining} remaining today`);
 
+      // Show cache statistics
+      const cacheStats = await fmpCache.getCacheStats();
+      console.log(`\n   💾 FMP Cache Stats:`);
+      console.log(`      Cached: ${cacheStats.valid} stocks`);
+      console.log(`      Expired: ${cacheStats.expired} stocks`);
+      console.log(`      Cache hit rate: ${((cacheStats.valid / allStocks.length) * 100).toFixed(1)}%`);
+
       // Update Value Watchlist in database (only on Sunday or full run)
       if (part === 'sunday' || part === 'full') {
         await this.updateValueWatchlist(topCandidates);
@@ -147,8 +154,8 @@ class FundamentalScreener {
         return null; // Filter out low-volume stocks
       }
 
-      // Fetch fundamental data from FMP
-      const fundamentals = await fmp.getFundamentals(stock.symbol);
+      // Fetch fundamental data from FMP (with caching)
+      const fundamentals = await fmpCache.getFundamentals(stock.symbol);
 
       if (!fundamentals) return null;
 

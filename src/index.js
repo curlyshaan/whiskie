@@ -25,6 +25,9 @@ import fundamentalScreener from './fundamental-screener.js';
 import qualityScreener from './quality-screener.js';
 import overvaluedScreener from './overvalued-screener.js';
 import tradeApproval from './trade-approval.js';
+import fmpCache from './fmp-cache.js';
+import opusScreener from './opus-screener.js';
+import tradeExecutor from './trade-executor.js';
 import { runPreMarketScan } from './pre-market-scanner.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
@@ -72,6 +75,10 @@ class WhiskieBot {
       // Initialize trade approval system
       await tradeApproval.initDatabase();
       console.log('✅ Trade approval system initialized\n');
+
+      // Initialize FMP cache
+      await fmpCache.initDatabase();
+      console.log('✅ FMP cache initialized\n');
 
       // Load active orders from database
       await orderManager.loadActiveOrders();
@@ -156,16 +163,29 @@ class WhiskieBot {
       });
 
       // Schedule weekly portfolio review + screening - Sunday 9:00 PM ET
+      // ORDER MATTERS: FMP screening → Opus screening → Weekly review (fully sequential)
       cron.schedule('0 21 * * 0', async () => {
-        console.log('\n⏰ Sunday 9:00 PM - Fundamental screening (second half) + Weekly review');
+        console.log('\n⏰ Sunday 9:00 PM - Full weekly screening + review');
         try {
-          // Run second half of fundamental screening
+          // STEP 1: Run second half of fundamental value screening (FMP data)
+          console.log('\n📊 STEP 1: Fundamental screening (second half)...');
           await fundamentalScreener.runWeeklyScreen('sunday');
-          console.log('✅ Sunday screening complete');
+          console.log('✅ Fundamental screening complete');
 
-          // Run weekly portfolio review with Opus
+          // STEP 2: Clear expired FMP cache entries
+          console.log('\n🗑️ STEP 2: Clearing expired FMP cache...');
+          await fmpCache.clearExpired();
+
+          // STEP 3: Opus screens for quality and overvalued stocks using FMP data
+          console.log('\n🧠 STEP 3: Opus quality + overvalued screening...');
+          await opusScreener.runWeeklyOpusScreening();
+          console.log('✅ Opus screening complete');
+
+          // STEP 4: Run weekly portfolio review with Opus (now has fresh watchlists)
+          console.log('\n📋 STEP 4: Weekly portfolio review...');
           await runWeeklyReview();
           console.log('✅ Weekly review complete');
+
         } catch (error) {
           console.error('❌ Error in Sunday tasks:', error);
           await email.sendErrorAlert(error, 'Sunday screening/review failed');
@@ -185,6 +205,17 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
+      // Schedule trade executor to process approved trades every 5 minutes during market hours
+      cron.schedule('*/5 9-16 * * 1-5', async () => {
+        try {
+          await tradeExecutor.processApprovedTrades();
+        } catch (error) {
+          console.error('❌ Error processing approved trades:', error);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
       console.log('\n✅ Whiskie Bot is running');
       console.log('📅 Analysis schedule (Mon-Fri):');
       console.log('   • 10:00 AM ET - Morning analysis + trim/tax/trailing checks');
@@ -192,7 +223,10 @@ class WhiskieBot {
       console.log('📊 Daily summary: 4:30 PM ET');
       console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
       console.log('📅 Fundamental screening: Saturday 9:00 PM ET (first half)');
-      console.log('📅 Fundamental screening + Weekly review: Sunday 9:00 PM ET (second half + Opus)');
+      console.log('📅 Full weekly screening: Sunday 9:00 PM ET');
+      console.log('   → Fundamental screening (second half)');
+      console.log('   → Opus quality + overvalued screening');
+      console.log('   → Weekly portfolio review');
       console.log('💡 Press Ctrl+C to stop\n');
 
       this.botStarted = true;
@@ -1567,68 +1601,25 @@ ${historyContext}`;
           console.log(`   💰 Executing trade: ${action} ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
 
           try {
-            if (rec.type === 'short') {
-              // Execute short trade with safeguards
-              const portfolio = await analysisEngine.getPortfolioState();
+            // Submit trade for approval instead of auto-executing
+            console.log(`   📧 Submitting ${rec.symbol} for approval...`);
 
-              // Check ETB status first
-              const etbCheck = await shortManager.isShortable(rec.symbol, 5000000000); // Assume $5B+ market cap for now
-              if (!etbCheck.shortable) {
-                console.log(`   ⚠️ Short blocked: ${etbCheck.errors.join(', ')}`);
-                continue;
-              }
-
-              // Check if short is allowed
-              const shortCheck = await shortManager.canShort(
-                rec.symbol,
-                rec.quantity,
-                rec.entryPrice,
-                portfolio.totalValue
-              );
-
-              if (!shortCheck.allowed) {
-                console.log(`   ⚠️ Short blocked: ${shortCheck.errors.join(', ')}`);
-                continue;
-              }
-
-              // Place short with protection
-              await shortManager.placeShortWithProtection(
-                rec.symbol,
-                rec.quantity,
-                rec.entryPrice,
-                rec.stopLoss,
-                rec.takeProfit
-              );
-
-              console.log(`   ✅ Short executed successfully`);
-            } else {
-              // Execute long trade with Opus's recommended stops
-              await this.executeTrade(rec.symbol, 'buy', rec.quantity, {
-                sector: rec.sector,
-                stopLoss: rec.stopLoss,
-                takeProfit: rec.takeProfit,
-                reasoning: rec.reasoning,
-                intent: rec.intent || 'momentum' // Pass intent through
-              });
-
-              console.log(`   ✅ Trade executed successfully`);
-            }
-
-            // Send email notification AFTER execution
-            await email.sendTradeConfirmation({
-              action: rec.type === 'short' ? 'short' : 'buy',
+            await tradeApproval.submitForApproval({
               symbol: rec.symbol,
+              action: rec.type === 'short' ? 'sell_short' : 'buy',
               quantity: rec.quantity,
-              price: rec.entryPrice,
+              entryPrice: rec.entryPrice,
               stopLoss: rec.stopLoss,
               takeProfit: rec.takeProfit,
+              orderType: 'limit',
+              intent: rec.intent || 'momentum',
               reasoning: rec.reasoning
             });
 
-            console.log(`   📧 Confirmation email sent`);
+            console.log(`   ✅ Trade submitted for approval`);
           } catch (error) {
-            console.error(`   ❌ Failed to execute trade for ${rec.symbol}:`, error.message);
-            await email.sendErrorAlert(error, `Trade execution: ${rec.symbol}`);
+            console.error(`   ❌ Failed to submit trade for ${rec.symbol}:`, error.message);
+            await email.sendErrorAlert(error, `Trade submission: ${rec.symbol}`);
           }
         }
 
