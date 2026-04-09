@@ -39,9 +39,6 @@ const PORT = process.env.PORT || 8080;
 
 app.use(express.json());
 
-// Mount dashboard routes
-app.use('/', dashboard);
-
 /**
  * Whiskie - AI Trading Bot
  * Main orchestration logic
