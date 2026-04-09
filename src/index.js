@@ -2192,12 +2192,6 @@ ${historyContext}`;
             original_intent: options.intent || 'momentum',
             current_intent: options.intent || 'momentum'
           });
-            stop_loss: stopLoss,
-            take_profit: takeProfit,
-            thesis,
-            original_intent: 'swing',
-            current_intent: 'swing'
-          });
 
           // Place OCO order for swing lot
           // Check market hours to determine order type
