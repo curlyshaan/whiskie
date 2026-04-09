@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import dotenv from 'dotenv';
 import express from 'express';
+import dashboard from './dashboard.js';
 import tradier from './tradier.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
@@ -38,6 +39,9 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 app.use(express.json());
+
+// Mount dashboard routes
+app.use('/', dashboard);
 
 /**
  * Whiskie - AI Trading Bot
