@@ -222,6 +222,26 @@ class WhiskieBot {
       }
     });
 
+    app.post('/update-stock-filters', async (req, res) => {
+      try {
+        console.log('📡 Manual stock filter update triggered via API');
+
+        // Import and run stock filter script
+        const updateStockFilters = (await import('../scripts/update-stock-filters.js')).default;
+        updateStockFilters().catch(console.error);
+
+        res.json({
+          success: true,
+          message: 'Stock filter update started. This will take 5-10 minutes. Check logs for progress.'
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
     app.get('/status', (req, res) => {
       res.json({
         running: this.botStarted,
