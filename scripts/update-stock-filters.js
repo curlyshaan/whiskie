@@ -38,7 +38,7 @@ async function updateStockFilters() {
       }
 
       const price = quote.last || quote.close;
-      const volume = quote.averageDailyVolume10Day || 0; // Use 10-day average, not intraday
+      const avgVolume = quote.average_volume || 0;
       const bid = quote.bid || 0;
       const ask = quote.ask || 0;
 
@@ -46,7 +46,7 @@ async function updateStockFilters() {
       const spread = (ask && bid && price) ? (ask - bid) / price : 0;
 
       // Calculate dollar volume (round to integer for BIGINT column)
-      const dollarVolume = Math.round(volume * price);
+      const dollarVolume = Math.round(avgVolume * price);
 
       // Check filters
       const passesFilters =
