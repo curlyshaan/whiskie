@@ -38,7 +38,7 @@ async function updateStockFilters() {
       }
 
       const price = quote.last || quote.close;
-      const volume = quote.volume || 0;
+      const volume = quote.averageDailyVolume10Day || 0; // Use 10-day average, not intraday
       const bid = quote.bid || 0;
       const ask = quote.ask || 0;
 

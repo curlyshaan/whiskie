@@ -134,6 +134,21 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
+      // Schedule daily stock filter update - 7:00 PM ET (after market close)
+      cron.schedule('0 19 * * 1-5', async () => {
+        console.log('\n⏰ 7:00 PM - Daily stock filter update');
+        try {
+          const updateStockFilters = (await import('../scripts/update-stock-filters.js')).default;
+          await updateStockFilters();
+          console.log('✅ Stock filter update complete');
+        } catch (error) {
+          console.error('❌ Error updating stock filters:', error);
+          await email.sendErrorAlert(error, 'Stock filter update failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
       // Schedule weekly portfolio review - Sunday 9:00 PM ET
       cron.schedule('0 21 * * 0', async () => {
         console.log('\n⏰ Sunday 9:00 PM - Weekly portfolio review');
@@ -154,6 +169,7 @@ class WhiskieBot {
       console.log('   • 10:00 AM ET - Morning analysis + trim/tax/trailing checks');
       console.log('   • 2:00 PM ET - Afternoon analysis + trim/tax/trailing checks');
       console.log('📊 Daily summary: 4:30 PM ET');
+      console.log('📊 Stock filter update: 7:00 PM ET (after market close)');
       console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
       console.log('📅 Weekly review: Sunday 9:00 PM ET (Opus deep review)');
       console.log('💡 Press Ctrl+C to stop\n');
