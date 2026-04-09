@@ -1422,6 +1422,7 @@ ${historyContext}`;
             } else {
               // Execute long trade with Opus's recommended stops
               await this.executeTrade(rec.symbol, 'buy', rec.quantity, {
+                sector: rec.sector,
                 stopLoss: rec.stopLoss,
                 takeProfit: rec.takeProfit,
                 reasoning: rec.reasoning
@@ -1897,6 +1898,13 @@ ${historyContext}`;
 
       // Validate trade
       const portfolio = await analysisEngine.getPortfolioState();
+
+      // Get VIX regime to determine sector allocation limit
+      const regime = await vixRegime.getRegime();
+      const maxSectorAllocation = regime.name === 'CALM' || regime.name === 'NORMAL'
+        ? 0.30  // 30% in normal conditions
+        : 0.25; // 25% in elevated volatility
+
       const trade = {
         action,
         symbol,
@@ -1905,7 +1913,7 @@ ${historyContext}`;
         sector: options.sector || 'Unknown'
       };
 
-      const validation = await riskManager.validateTrade(trade, portfolio);
+      const validation = await riskManager.validateTrade(trade, portfolio, maxSectorAllocation);
 
       if (!validation.valid) {
         console.log('❌ Trade validation failed:');

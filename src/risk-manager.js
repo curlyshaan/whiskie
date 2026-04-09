@@ -27,8 +27,11 @@ class RiskManager {
   /**
    * Validate a proposed trade
    * Note: Daily trade count now uses database-backed tradeSafeguard, not in-memory counter
+   * @param {Object} trade - Trade to validate
+   * @param {Object} portfolio - Current portfolio state
+   * @param {number} maxSectorAllocation - Optional VIX-adjusted sector limit (defaults to hardcoded MAX_SECTOR_ALLOCATION)
    */
-  async validateTrade(trade, portfolio) {
+  async validateTrade(trade, portfolio, maxSectorAllocation = null) {
     const errors = [];
     const warnings = [];
 
@@ -52,8 +55,11 @@ class RiskManager {
         tradeValue
       );
 
-      if (newSectorAllocation > this.MAX_SECTOR_ALLOCATION) {
-        errors.push(`Sector allocation would be ${(newSectorAllocation * 100).toFixed(1)}%, exceeds max ${(this.MAX_SECTOR_ALLOCATION * 100)}%`);
+      // Use VIX-adjusted limit if provided, otherwise use hardcoded default
+      const sectorLimit = maxSectorAllocation !== null ? maxSectorAllocation : this.MAX_SECTOR_ALLOCATION;
+
+      if (newSectorAllocation > sectorLimit) {
+        errors.push(`Sector allocation would be ${(newSectorAllocation * 100).toFixed(1)}%, exceeds max ${(sectorLimit * 100).toFixed(0)}%`);
       }
 
       // Check correlation with existing positions
