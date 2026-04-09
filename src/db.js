@@ -347,6 +347,29 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_quality_watchlist_symbol ON quality_watchlist(symbol);
     `);
 
+    // Overvalued watchlist table - for shorting overextended stocks
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS overvalued_watchlist (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) UNIQUE NOT NULL,
+        asset_class VARCHAR(50),
+        overvalued_score INTEGER,
+        metrics JSONB,
+        reasons TEXT,
+        target_entry_price DECIMAL(10, 2),
+        current_price DECIMAL(10, 2),
+        status VARCHAR(20) DEFAULT 'active',
+        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_price_check TIMESTAMP,
+        position_entered BOOLEAN DEFAULT FALSE,
+        position_entry_date TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_overvalued_watchlist_symbol ON overvalued_watchlist(symbol);
+    `);
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_quality_watchlist_status ON quality_watchlist(status);
     `);

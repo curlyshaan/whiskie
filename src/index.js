@@ -23,6 +23,7 @@ import assetClassData from './asset-class-data.js';
 import preRanking from './pre-ranking.js';
 import fundamentalScreener from './fundamental-screener.js';
 import qualityScreener from './quality-screener.js';
+import overvaluedScreener from './overvalued-screener.js';
 import { runPreMarketScan } from './pre-market-scanner.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
@@ -934,6 +935,24 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         intentMap[opp.symbol] = 'quality_dip';
       });
 
+      // Overvalued watchlist breakdown opportunities
+      console.log('📉 Checking overvalued watchlist for breakdowns...');
+      const overvaluedBreakdowns = await overvaluedScreener.checkOvervaluedBreakdowns();
+      if (overvaluedBreakdowns.length > 0) {
+        console.log(`   🎯 ${overvaluedBreakdowns.length} overvalued stocks ready for Opus analysis!`);
+        overvaluedBreakdowns.forEach(opp => {
+          console.log(`      ${opp.symbol}: $${opp.price} (${opp.change}% today, spread: ${opp.spread}%)`);
+        });
+      } else {
+        console.log(`   No overvalued breakdown opportunities at this time`);
+      }
+      console.log('');
+
+      // Overvalued watchlist breakdown triggers
+      overvaluedBreakdowns.forEach(opp => {
+        intentMap[opp.symbol] = 'overvalued_short';
+      });
+
       // Refresh portfolio prices with phase 1 data
       console.log('💰 Refreshing portfolio prices...');
       let pricesUpdated = 0;
@@ -1104,6 +1123,9 @@ ${valueMomentumTriggers.length > 0 ? valueMomentumTriggers.map(t => `${t.symbol}
 
 **Quality Watchlist Dip Opportunities (${qualityDipOpportunities.length} stocks):**
 ${qualityDipOpportunities.length > 0 ? qualityDipOpportunities.map(o => `${o.symbol} ($${o.price}, ${o.dipFromHigh}% from high)`).join(', ') : 'None'}
+
+**Overvalued Watchlist Breakdown Opportunities (${overvaluedBreakdowns.length} stocks):**
+${overvaluedBreakdowns.length > 0 ? overvaluedBreakdowns.map(o => `${o.symbol} ($${o.price}, ${o.change}% today, short data: ${o.shortData ? `${(o.shortData.shortFloat * 100).toFixed(1)}% float, ${o.shortData.daysToCover.toFixed(1)} DTC` : 'N/A'})`).join(', ') : 'None'}
 
 **Your Task for Phase 1:**
 1. Review the pre-ranked candidates above
@@ -1345,6 +1367,10 @@ ${earningsAndTaxContext}
 - "momentum" - from pre-ranked momentum candidates
 - "momentum_short" - short from pre-ranked candidates
 - "value_momentum" - from value watchlist showing momentum
+- "quality_dip" - from quality watchlist dip opportunity
+- "overvalued_short" - from overvalued watchlist breakdown
+
+This helps track why each position was entered for future analysis.
 - "quality_dip" - from quality watchlist dip opportunity
 
 This helps track why each position was entered for future analysis.
