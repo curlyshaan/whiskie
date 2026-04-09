@@ -22,6 +22,7 @@ import allocationManager from './allocation-manager.js';
 import assetClassData from './asset-class-data.js';
 import preRanking from './pre-ranking.js';
 import fundamentalScreener from './fundamental-screener.js';
+import qualityScreener from './quality-screener.js';
 import { runPreMarketScan } from './pre-market-scanner.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
@@ -915,6 +916,19 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         });
       } else {
         console.log(`   No value stocks showing momentum yet`);
+      }
+      console.log('');
+
+      // Check quality watchlist for dip opportunities
+      console.log('💎 Checking quality watchlist for dips...');
+      const qualityDipOpportunities = await qualityScreener.checkQualityDips();
+      if (qualityDipOpportunities.length > 0) {
+        console.log(`   🎯 ${qualityDipOpportunities.length} quality stocks ready for Opus analysis!`);
+        qualityDipOpportunities.forEach(opp => {
+          console.log(`      ${opp.symbol}: $${opp.price} (${opp.dipFromHigh}% from high, spread: ${opp.spread}%)`);
+        });
+      } else {
+        console.log(`   No quality dip opportunities at this time`);
       }
       console.log('');
 

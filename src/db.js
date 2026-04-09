@@ -324,6 +324,33 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_value_watchlist_status ON value_watchlist(status);
     `);
 
+    // Quality watchlist table - high-quality stocks for dip-buying
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS quality_watchlist (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        asset_class VARCHAR(50),
+        quality_score INTEGER,
+        metrics JSONB,
+        reasons TEXT,
+        target_entry_price DECIMAL(10, 2),
+        current_price DECIMAL(10, 2),
+        status VARCHAR(20) DEFAULT 'active',
+        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_price_check TIMESTAMP,
+        position_entered BOOLEAN DEFAULT FALSE,
+        position_entry_date TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_quality_watchlist_symbol ON quality_watchlist(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_quality_watchlist_status ON quality_watchlist(status);
+    `);
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_stock_universe_shortable ON stock_universe(shortable);
     `);
