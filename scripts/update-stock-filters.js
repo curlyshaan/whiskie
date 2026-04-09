@@ -38,14 +38,14 @@ async function updateStockFilters() {
       }
 
       const price = quote.last || quote.close;
-      const avgVolume = quote.average_volume || 0;
+      const avgVolume = Math.round(quote.average_volume || 0); // Round API value to integer
       const bid = quote.bid || 0;
       const ask = quote.ask || 0;
 
       // Calculate bid-ask spread
       const spread = (ask && bid && price) ? (ask - bid) / price : 0;
 
-      // Calculate dollar volume (round to integer for BIGINT column)
+      // Calculate dollar volume (already rounded avgVolume, round again for safety)
       const dollarVolume = Math.round(avgVolume * price);
 
       // Check filters
