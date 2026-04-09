@@ -17,6 +17,7 @@ import performanceAnalyzer from './performance-analyzer.js';
 import optionsAnalyzer from './options-analyzer.js';
 import vixRegime from './vix-regime.js';
 import sectorRotation from './sector-rotation.js';
+import macroCalendar from './macro-calendar.js';
 import { runPreMarketScan } from './pre-market-scanner.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
@@ -566,6 +567,9 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       // VIX regime context
       const vixContext = await vixRegime.buildPromptContext();
 
+      // Macro calendar context (FOMC, CPI, PPI, NFP)
+      const macroContext = await macroCalendar.buildMacroContext(7);
+
       // Pre-market gap report context
       const gapContext = this.latestGapReport
         ? `\nPRE-MARKET GAP REPORT (9:00 AM scan):\n${this.latestGapReport.summary}`
@@ -662,7 +666,9 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         console.log('🧠 Running deep analysis with Claude Opus...');
         // Pass all context to deep analysis
         await this.runDeepAnalysis(portfolio, wrappedNews, {
+          cashContext,
           vixContext,
+          macroContext,
           gapContext,
           performanceContext,
           sectorContext,
@@ -815,7 +821,9 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
 
       // Extract additional context
       const {
+        cashContext = '',
         vixContext = '',
+        macroContext = '',
         gapContext = '',
         performanceContext = '',
         sectorContext = '',
@@ -1118,6 +1126,8 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 ${cashContext}
 
 ${vixContext}
+
+${macroContext}
 
 ${gapContext}
 
