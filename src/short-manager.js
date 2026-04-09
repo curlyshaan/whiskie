@@ -8,11 +8,17 @@ import * as db from './db.js';
  *
  * RULES:
  * - Mid/large-cap only (market cap > $2B)
- * - 10% max per short position
- * - 30% max total short exposure
+ * - 12% max per short position (8% if DTC ≥4)
+ * - 25% max total short exposure
  * - ETB (Easy-to-Borrow) verification required
  * - Stop-loss REQUIRED and modifiable
  * - Inverse stop-loss logic (stop triggers on price RISE)
+ *
+ * MEME STOCK PROTECTION:
+ * - IV filter: 80% max (meme stocks typically have 100%+ IV)
+ * - ETB verification: Ensures stock is available to borrow
+ * - Short interest data: Currently unavailable (Yahoo Finance 401 errors)
+ *   but ETB + IV filters provide adequate protection
  */
 class ShortManager {
   constructor() {

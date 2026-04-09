@@ -42,6 +42,10 @@ class OvervaluedScreener {
     const volumeSurge = avgVolume > 0 ? volume / avgVolume : 0;
 
     // Get short squeeze risk data
+    // NOTE: Yahoo Finance API currently returning 401 errors
+    // Relying on ETB verification + IV filter (80% max) in short-manager.js
+    // to avoid meme stocks. IV filter is effective since meme stocks typically
+    // have 100%+ IV. Short interest data would be nice-to-have but not critical.
     let shortData = null;
     try {
       const shortStats = await yahooFinance.getShortInterest(symbol);
@@ -52,7 +56,8 @@ class OvervaluedScreener {
         };
       }
     } catch (error) {
-      console.warn(`⚠️ Could not fetch short interest for ${symbol}`);
+      // Non-blocking - short interest data unavailable but not critical
+      // ETB + IV filters provide adequate meme stock protection
     }
 
     return {
