@@ -45,8 +45,8 @@ async function updateStockFilters() {
       // Calculate bid-ask spread
       const spread = (ask && bid && price) ? (ask - bid) / price : 0;
 
-      // Calculate dollar volume
-      const dollarVolume = volume * price;
+      // Calculate dollar volume (round to integer for BIGINT column)
+      const dollarVolume = Math.round(volume * price);
 
       // Check filters
       const passesFilters =
