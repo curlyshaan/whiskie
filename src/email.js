@@ -74,8 +74,15 @@ class EmailAlerts {
    */
   async sendTradeConfirmation(trade) {
     const subject = `✅ Trade Executed: ${trade.action.toUpperCase()} ${trade.symbol}`;
+
+    // Add short position warning if applicable
+    const shortWarning = trade.action === 'sell_short'
+      ? `<p style="color: #ff6b6b;"><strong>⚠️ SHORT POSITION</strong> - Borrow fees apply. Check with broker for current rate.</p>`
+      : '';
+
     const html = `
       <h2>Trade Confirmation</h2>
+      ${shortWarning}
       <p><strong>Action:</strong> ${trade.action.toUpperCase()}</p>
       <p><strong>Symbol:</strong> ${trade.symbol}</p>
       <p><strong>Quantity:</strong> ${trade.quantity}</p>

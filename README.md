@@ -1,231 +1,183 @@
-# Whiskie - AI Trading Bot
+# Whiskie - AI Portfolio Manager
 
-**Autonomous AI-powered stock trading bot managing a $100,000 portfolio**
+Autonomous trading bot powered by Claude Opus 4 with extended thinking. Manages a $100k portfolio using dynamic risk management, GICS asset class allocation, and VIX regime adaptation.
 
----
+## Quick Start
 
-## 🎯 What is Whiskie?
-
-Whiskie is an intelligent trading bot that uses Claude AI (Opus with extended thinking) to make professional investment decisions. It analyzes market data, news, economic indicators, and company fundamentals to build and manage a diversified stock portfolio.
-
-**Key Features:**
-- 🤖 AI-driven investment decisions using Claude Opus 4.6
-- 📊 Multi-factor analysis (fundamentals, technicals, sentiment, timing)
-- 🛡️ Built-in risk management with dynamic stop-loss automation
-- 📧 Email alerts for trade execution
-- 📈 Performance tracking vs S&P 500 benchmark
-- 🧪 Paper trading mode (Tradier sandbox with $100k virtual funds)
-- 🎯 Long/short capability with ETB verification
-- 🔄 Dynamic order management (modify stops based on news/events)
-- 📊 Advanced order types (limit, stop, stop-limit, OCO, OTOCO, trailing stop)
-
----
-
-## 💼 Investment Strategy: Beta Play
-
-**"The way to build superior long-term returns is through preservation of capital and home runs."** — Stanley Druckenmiller
-
-### Portfolio Allocation:
-- **70-80% Long Exposure:** Quality stocks with asymmetric upside potential
-- **0-30% Short Exposure:** Opportunistic shorts in overvalued/deteriorating names
-- **10-20% Cash:** Dry powder for opportunities and risk buffer
-
-### Position Sizing:
-- **Standard long:** 10% of portfolio
-- **High conviction long:** up to 15%
-- **Standard short:** 5-10% of portfolio
-- **Max single short:** 10%
-- **Max total shorts:** 30%
-
-### Stock Universe:
-- **~365 stocks** across 41 sub-industries
-- Large-cap ($10B+) and mid-cap ($2B-10B) only
-- US-listed NYSE/NASDAQ stocks
-- Covers all 11 GICS sectors
-- ETB (Easy-to-Borrow) status tracked for shorting
-
-See [BETA_PLAY_STRATEGY.md](docs/BETA_PLAY_STRATEGY.md) for complete strategy documentation.
-
----
-
-## 🏗️ How It Works
-
-### Automated Trading Schedule:
-1. **9:00 AM ET** - Pre-market gap scan (identifies overnight movers)
-2. **10:00 AM ET** - Morning analysis (full trading analysis after market settles)
-3. **2:00 PM ET** - Afternoon analysis (full trading analysis, 2 hours before close)
-4. **4:30 PM ET** - End-of-day summary (daily performance report)
-
-### Analysis Workflow:
-1. **Portfolio Sync:** Fetch positions and account data from Tradier
-2. **Market Data:** Get quotes, intraday momentum, block trades, options sentiment
-3. **News Analysis:** Tavily search for stock-specific, sector, and macro news
-4. **AI Decision:** Claude Opus with extended thinking (50k token budget)
-5. **Trade Execution:** Place orders with protective stops via Tradier API
-6. **Order Management:** Monitor and modify stops based on news/events
-
-### Deep Analysis Triggers:
-- Positions < 10 OR cash > 25%
-- Major market events or volatility spikes
-- Earnings announcements for held positions
-- Weekly performance review (Sundays)
-
----
-
-## 🔧 Technology Stack
-
-- **AI:** Claude Opus 4.6 with extended thinking (50k token budget)
-- **Trading API:** Tradier (sandbox for paper trading, 15-min delayed data)
-- **News:** Tavily API (advanced search depth)
-- **Backend:** Node.js with ES modules
-- **Database:** PostgreSQL (Railway)
-- **Hosting:** Railway (auto-deploy from GitHub)
-- **Scheduling:** Node-cron (3x daily during market hours)
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites:
-- Node.js 20+
-- PostgreSQL database
-- Tradier account (sandbox for paper trading)
-- Anthropic API key (Claude Opus)
-- Tavily API key
-
-### Installation:
 ```bash
-# Clone or navigate to project
-cd /Users/sshanoor/ClaudeProjects/Whiskie
-
-# Install dependencies
 npm install
-
-# Set up environment variables
 cp .env.example .env
-# Edit .env with your API keys
-
-# Initialize database
-npm run db:init
-
-# Populate stock universe
-npm run populate-stocks
-
-# Update ETB status for shorting
-npm run update-etb
-
-# Start bot (runs 24/7)
+# Configure environment variables
 npm start
 ```
 
----
+## Core Features
 
-## 📊 Advanced Features
+### 1. GICS Asset Class Allocation
+- **11 GICS sectors** with 350+ stocks (replaces 41 sub-industries)
+- **Dynamic limits**: Base × Rate Environment × VIX Regime
+- **Example**: Technology 30% base → 36% (low rates) → 27% (elevated VIX)
+- **Hard caps**: 40% max per asset class, 4 stocks max per class
+- **Prevents concentration**: No more 60% tech via 30% semiconductors + 30% software
 
-### Order Types:
-- **Market orders:** Immediate execution (emergency exits only)
-- **Limit orders:** Better entry prices (default for entries)
-- **Stop-loss orders:** Automatic risk management
-- **Stop-limit orders:** Controlled exit prices
-- **OCO (One-Cancels-Other):** Bracket orders with stop + take-profit
-- **OTOCO (One-Triggers-OCO):** Entry order that triggers protective bracket
-- **Trailing stops:** Lock in profits on winning positions
-- **Extended hours:** Pre-market and after-hours trading
+### 2. VIX Regime Adaptation
+- **CALM** (VIX <15): 110% position sizes, 30% asset class limits
+- **NORMAL** (VIX 15-20): 100% position sizes, 30% limits
+- **ELEVATED** (VIX 20-28): 75% position sizes, 25% limits
+- **FEAR** (VIX 28-35): 50% position sizes, defensive mode
+- **PANIC** (VIX >35): 25% position sizes, no new positions
 
-### Dynamic Order Management:
-- AI analyzes news and modifies stop-loss/take-profit levels
-- Tighten stops before earnings if profitable
-- Widen stops if thesis strengthens
-- Emergency market sell if thesis breaks
-- Automatic order modification history tracking
+### 3. Intelligent Order Routing
+- **Market open**: Market buy → OCO (stop-loss + take-profit)
+- **Market closed**: OTOCO (limit buy triggers OCO when filled)
+- Prevents "OCO rejected" errors outside trading hours
 
-### Shorting Capability:
-- ETB (Easy-to-Borrow) verification via Tradier API
-- Mid/large-cap only (market cap > $2B)
-- 10% max per short position
-- 30% max total short exposure
-- Inverse stop-loss logic (triggers on price RISE)
-- Required stop-loss for all shorts
+### 4. Two-Phase Deep Analysis
+- **Phase 1**: Opus identifies 15-20 stocks to analyze (2-3 min)
+- **Phase 2**: Opus makes final trade decisions with real-time prices (3-5 min)
+- Extended thinking with 50,000 token budget
 
-### Market Timing:
-- Avoids first 15 minutes (high volatility)
-- Avoids last 15 minutes (closing auction)
-- Avoids lunch hour (low liquidity)
-- Intraday momentum analysis (2-hour window)
-- Block trade detection (institutional activity)
+### 5. Risk Management
+- Max 12% per position (10% for shorts)
+- 10% minimum cash reserve
+- Stop-losses: 12-20% based on stock type
+- Correlation analysis prevents overconcentration
 
-### Performance Learning:
-- Analyzes gain/loss reports from Tradier
-- Identifies winning vs losing patterns
-- Tracks hold duration optimization
-- Detects repeated mistakes
-- Compares current positions to historical performance
+## Schedule
 
----
+**Market Hours (Mon-Fri)**
+- 10:00 AM ET - Morning analysis + trade execution
+- 2:00 PM ET - Afternoon analysis + trade execution
+- 4:30 PM ET - Daily summary email
 
-## ⚠️ Safety Features
+**Weekly**
+- Friday 3:00 PM ET - Earnings calendar refresh
+- Sunday 9:00 PM ET - Deep weekly review (Opus)
 
-### Hard-Coded Limits (Cannot Be Overridden):
-- **Max 5 trades per day**
-- **Max $15,000 per single trade** (15% of $100k)
-- **Max $50,000 daily exposure change**
-- **Max 10% per short position**
-- **Max 30% total short exposure**
-- **Stop-loss REQUIRED for all shorts**
-
-### AI Guardrails:
-- All trades logged with full reasoning
-- Major decisions require Opus + extended thinking
-- Trade safeguard validates every order
-- Position validation prevents accidental shorts
-- ETB verification before shorting
-
----
-
-## 📈 Performance Metrics
-
-The bot tracks:
-- **Total Return:** Portfolio value change over time
-- **vs S&P 500:** Benchmark comparison
-- **Win Rate:** Percentage of profitable trades
-- **Profit Factor:** Winners vs losers ratio
-- **Max Drawdown:** Largest peak-to-trough decline
-- **Sharpe Ratio:** Risk-adjusted returns
-- **Long/Short Exposure:** Current positioning
-
----
-
-## 📝 Documentation
-
-- **[README.md](README.md)** - This file (overview and setup)
-- **[BETA_PLAY_STRATEGY.md](docs/BETA_PLAY_STRATEGY.md)** - Complete investment strategy
-- **[WHISKIE_MASTER_DOCUMENTATION.md](docs/WHISKIE_MASTER_DOCUMENTATION.md)** - Technical documentation
-- **[CLAUDE_NOTES.md](CLAUDE_NOTES.md)** - Developer notes for future sessions
-
----
-
-## 🔗 Scripts
+## Environment Variables
 
 ```bash
-# Populate stock universe from sub-industry-data.js
-npm run populate-stocks
+# Trading
+TRADIER_SANDBOX_API_KEY=your_key
+TRADIER_SANDBOX_ACCOUNT_ID=your_account
+NODE_ENV=paper  # paper or production
 
-# Update ETB (Easy-to-Borrow) status for shorting
-npm run update-etb
+# AI
+ANTHROPIC_API_KEY=your_key
 
-# Start bot (runs 24/7 with cron schedule)
-npm start
+# Email
+RESEND_API_KEY=your_key
+ALERT_EMAIL=your@email.com
 
-# Initialize database schema
-npm run db:init
+# Database
+DATABASE_URL=postgresql://...
+
+# Risk Limits
+MAX_POSITION_SIZE=0.12
+MAX_TOTAL_SHORT_EXPOSURE=0.25
+MIN_CASH_RESERVE=0.10
+RATE_ENVIRONMENT=NEUTRAL_RATES  # LOW_RATES, NEUTRAL_RATES, HIGH_RATES
 ```
 
+## Database Setup
+
+```bash
+# Fresh start (recommended for asset class migration)
+psql $DATABASE_URL -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+npm start  # Auto-creates tables with asset_class columns
+```
+
+## Architecture
+
+```
+src/
+├── index.js              # Main bot orchestration
+├── claude.js             # Claude API with extended thinking
+├── tradier.js            # Trading API (OCO/OTOCO routing)
+├── risk-manager.js       # Position sizing, stop-losses
+├── allocation-manager.js # Dynamic asset class limits
+├── asset-class-data.js   # GICS mappings + multipliers (350+ stocks)
+├── vix-regime.js         # Volatility-based adjustments
+├── analysis.js           # Technical indicators
+├── sector-rotation.js    # Relative strength tracking
+└── db.js                 # PostgreSQL operations
+```
+
+## GICS Asset Classes (350+ Stocks)
+
+- **Technology** (~70 stocks): NVDA, TSM, MSFT, ORCL, PANW, CRWD, etc.
+- **Communication Services** (~30): META, GOOGL, NFLX, DIS, etc.
+- **Healthcare** (~50): LLY, ABBV, UNH, TMO, VRTX, etc.
+- **Financials** (~50): JPM, BAC, V, MA, BLK, etc.
+- **Industrials** (~40): RTX, BA, CAT, UNP, etc.
+- **Consumer Discretionary** (~40): AMZN, TSLA, HD, MCD, etc.
+- **Consumer Staples** (~30): WMT, COST, PG, KO, etc.
+- **Energy** (~20): XOM, CVX, COP, SLB, etc.
+- **Utilities** (~15): NEE, DUK, SO, etc.
+- **Real Estate** (~15): PLD, AMT, EQIX, etc.
+- **Materials** (~15): LIN, APD, NUE, etc.
+
+## Rate Environment Multipliers
+
+- **LOW_RATES** (<3%): Tech +20%, Financials -15%, Real Estate +0%
+- **NEUTRAL_RATES** (3-5%): All 1.0x (no adjustment)
+- **HIGH_RATES** (>5%): Tech -20%, Financials +25%, Real Estate -30%
+
+## Cash Management
+
+- **FLUSH** (>12%): Full deployment flexibility
+- **NORMAL** (5-12%): Prefer not to drop below 5%
+- **DEPLOYED** (<5%): Evaluate rotation candidates before new buys
+- **ZERO** (0%): Rotate only, no new positions
+
+## Manual Triggers
+
+```bash
+# Trigger analysis via API
+curl -X POST https://your-app.railway.app/analyze
+
+# Check portfolio status
+curl https://your-app.railway.app/status
+```
+
+## Deployment (Railway)
+
+```bash
+# Connect to Railway
+railway link
+
+# Set environment variables
+railway variables set ANTHROPIC_API_KEY=...
+
+# Deploy
+git push railway main
+```
+
+## Safety Features
+
+- **Paper trading mode** by default (sandbox API)
+- **Trade safeguards**: Max 3 trades/day, duplicate prevention
+- **Stop-loss enforcement**: Automatic exit on breach
+- **Correlation checks**: Warns on high correlation (>0.7)
+- **Email alerts**: All trades, errors, daily summaries
+
+## Monitoring
+
+- **Dashboard**: http://localhost:8080 (when running locally)
+- **Logs**: Railway dashboard or `railway logs`
+- **Email**: Daily summaries + trade confirmations
+- **Database**: Query positions, trades, analysis history
+
+## Documentation
+
+- **README.md** - This file (overview and quick start)
+- **CLAUDE_NOTES.md** - Technical implementation details
+- **current_strategy.md** - Investment strategy and philosophy
+
+## Support
+
+Issues: Create GitHub issue or check documentation files.
+
 ---
 
-## 📞 Support
-
-For questions or issues, refer to documentation files or check the codebase.
-
----
-
-**⚠️ Disclaimer:** This bot uses paper trading (Tradier sandbox with $100k virtual funds). Market data is delayed by 15 minutes. Always understand the strategy before deploying with real money. Past performance does not guarantee future results.
+**⚠️ Disclaimer:** Paper trading mode by default. Market data delayed 15 minutes. Understand the strategy before deploying with real money.

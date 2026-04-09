@@ -18,10 +18,13 @@ import optionsAnalyzer from './options-analyzer.js';
 import vixRegime from './vix-regime.js';
 import sectorRotation from './sector-rotation.js';
 import macroCalendar from './macro-calendar.js';
+import allocationManager from './allocation-manager.js';
+import assetClassData from './asset-class-data.js';
+import preRanking from './pre-ranking.js';
+import fundamentalScreener from './fundamental-screener.js';
 import { runPreMarketScan } from './pre-market-scanner.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
-import { SUB_INDUSTRIES, getAllSubIndustries } from './sub-industry-data.js';
 import { updateAllEarnings } from './earnings.js';
 import { runTrimCheck } from './trimming.js';
 import { runTaxOptimizationCheck } from './tax-optimizer.js';
@@ -93,7 +96,7 @@ class WhiskieBot {
       });
 
       cron.schedule('0 14 * * 1-5', async () => {
-        console.log('\n⏰ 2:00 PM Analysis - Afternoon check (2 hours before close)');
+        console.log('\n⏰ 2:00 PM Analysis - Afternoon check');
         await this.runDailyAnalysis();
       }, {
         timezone: 'America/New_York'
@@ -653,16 +656,16 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
 
       console.log('✅ Market context gathered\n');
 
-      // Check if we need deep analysis (Opus)
-      const cashPercent = portfolio.cash / portfolio.totalValue;
-      const needsDeepAnalysis =
+      // Always run watchlist scan and news review, even if portfolio is healthy
+      // This ensures we don't miss opportunities on stable days
+      const shouldRunFullAnalysis =
         health.issues.some(i => i.severity === 'high') ||
-        portfolio.positions.length < 10 ||          // Target 10-12, not 8
-        cashPercent > 0.25 ||                       // Cash > 25% = too idle
+        portfolio.positions.length < 10 ||
+        cashPercent > 0.25 ||
         riskManager.isDefensiveMode(portfolio) ||
-        health.opportunities.length > 0;            // Any take-profit opportunity = re-evaluate
+        health.opportunities.length > 0;
 
-      if (needsDeepAnalysis) {
+      if (shouldRunFullAnalysis) {
         console.log('🧠 Running deep analysis with Claude Opus...');
         // Pass all context to deep analysis
         await this.runDeepAnalysis(portfolio, wrappedNews, {
@@ -675,7 +678,28 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
           optionsContext
         });
       } else {
-        console.log('✅ Portfolio looks healthy, no deep analysis needed');
+        // Portfolio is healthy, but still scan watchlist and news for opportunities
+        console.log('✅ Portfolio healthy - running watchlist scan and news review');
+
+        // Get watchlist
+        const watchlist = await db.getWatchlist();
+        if (watchlist.length > 0) {
+          console.log(`📋 Watchlist: ${watchlist.length} stocks being monitored`);
+
+          // Check if any watchlist stocks are at target entry prices
+          const opportunities = watchlist.filter(w => w.current_price <= w.target_entry_price);
+          if (opportunities.length > 0) {
+            console.log(`🎯 ${opportunities.length} watchlist stocks at or below target entry price`);
+            console.log('   Consider running full analysis to evaluate these opportunities');
+          }
+        }
+
+        // Brief news scan for major market events
+        console.log('📰 Scanning for major market events...');
+        const majorNews = await tavily.searchMarketNews(3);
+        if (majorNews.length > 0) {
+          console.log(`   Found ${majorNews.length} recent market headlines`);
+        }
       }
 
       // Save portfolio snapshot
@@ -830,11 +854,18 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         optionsContext = ''
       } = additionalContext;
 
-      // PHASE 1: Fetch market context (indices + portfolio stocks only)
-      console.log('📊 PHASE 1: Fetching market context...');
+      // PHASE 1: Pre-rank stock universe to 100-150 candidates
+      console.log('📊 PHASE 1: Pre-ranking stock universe...');
+      const preRankedStocks = await preRanking.rankStocks();
+      console.log(`   ✅ Pre-ranked to ${preRankedStocks.longs.length} long + ${preRankedStocks.shorts.length} short candidates`);
+      console.log('');
+
+      // Fetch market context (indices + portfolio stocks + pre-ranked candidates)
+      console.log('📊 Fetching market context...');
       const portfolioSymbols = portfolio.positions.map(p => p.symbol);
       const marketIndices = ['SPY', 'QQQ', 'DIA', 'IWM', 'VIX', 'TLT', 'GLD', 'USO'];
-      const phase1Symbols = [...new Set([...portfolioSymbols, ...marketIndices])];
+      const candidateSymbols = [...preRankedStocks.longs, ...preRankedStocks.shorts];
+      const phase1Symbols = [...new Set([...portfolioSymbols, ...marketIndices, ...candidateSymbols])];
 
       const phase1Quotes = await tradier.getQuotes(phase1Symbols.join(','));
       const marketContext = {};
@@ -852,6 +883,19 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       });
 
       console.log(`✅ Fetched ${Object.keys(marketContext).length} market quotes`);
+      console.log('');
+
+      // Check value watchlist for momentum triggers
+      console.log('💎 Checking value watchlist for momentum...');
+      const valueMomentumTriggers = await fundamentalScreener.checkValueMomentum(marketContext);
+      if (valueMomentumTriggers.length > 0) {
+        console.log(`   🎯 ${valueMomentumTriggers.length} value stocks showing momentum!`);
+        valueMomentumTriggers.forEach(trigger => {
+          console.log(`      ${trigger.symbol}: ${trigger.changePercent} + ${trigger.volumeSurge}`);
+        });
+      } else {
+        console.log(`   No value stocks showing momentum yet`);
+      }
       console.log('');
 
       // Refresh portfolio prices with phase 1 data
@@ -922,8 +966,9 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       if (watchlist.length > 0) {
         watchlistContext = '\n\n**WATCHLIST (stocks you are monitoring):**\n';
         watchlist.forEach(item => {
+          const assetClass = assetClassData.getAssetClass(item.symbol);
           const atTarget = item.current_price <= item.target_entry_price ? '✅ AT TARGET' : '';
-          watchlistContext += `- ${item.symbol} (${item.sub_industry}): Current $${item.current_price}, Target Entry $${item.target_entry_price} ${atTarget}\n`;
+          watchlistContext += `- ${item.symbol} (${assetClass}): Current $${item.current_price}, Target Entry $${item.target_entry_price} ${atTarget}\n`;
           watchlistContext += `  Why watching: ${item.why_watching}\n`;
           watchlistContext += `  Why not buying now: ${item.why_not_buying_now}\n\n`;
         });
@@ -992,10 +1037,10 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       console.log('   ✅ Earnings and tax data compiled');
       console.log('');
 
-      // PHASE 1 PROMPT: Identify promising sub-industries and stocks
+      // PHASE 1 PROMPT: Select 25-35 stocks from pre-ranked candidates
       const phase1Question = `You are managing a $100k portfolio.
 
-**PHASE 1: Identify promising sub-industries and stocks to analyze**
+**PHASE 1: Select 25-35 stocks from pre-ranked candidates for deep analysis**
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
@@ -1010,33 +1055,43 @@ ${news}
 
 ${watchlistContext}
 
-**Your Task for Phase 1:**
-1. Identify 3-5 promising sub-industries based on current market conditions and news
-2. From those sub-industries, select 15-20 specific stocks to analyze in Phase 2
-3. Prioritize watchlist stocks that are at or near target entry prices
+**Pre-Ranked Candidates (algorithmic filter based on volume surge, momentum, sector strength):**
 
-**Available Sub-Industries (40 total):**
-Cloud Computing, Cybersecurity, Semiconductors, Software & SaaS, IT Hardware & Networking, IT Services & Consulting, E-commerce & Online Retail, Digital Advertising & Social Media, Streaming & Digital Entertainment, Video Gaming & Esports, Telecom Services, Biotechnology, Pharmaceuticals, Medical Devices & Equipment, Health Care Services & Managed Care, Life Sciences Tools & Diagnostics, Banks & Diversified Financials, Insurance, Fintech & Payments, Asset Management & Capital Markets, Aerospace & Defense, Industrial Machinery & Equipment, Transportation & Logistics, Building Products & Construction, Electrical Equipment & Automation, Restaurants & Food Services, Automotive & EV, Retail & Apparel, Travel & Leisure, Food & Beverage, Household & Personal Products, Grocery & Consumer Retail, Oil & Gas Exploration & Production, Renewable Energy & Clean Tech, Oil & Gas Services & Midstream, Electric Utilities, Water & Gas Utilities, REITs & Real Estate, Specialty & Industrial REITs, Chemicals & Specialty Materials, Metals & Mining
+**Long Candidates (${preRankedStocks.longs.length} stocks):**
+${preRankedStocks.longs.join(', ')}
+
+**Short Candidates (${preRankedStocks.shorts.length} stocks):**
+${preRankedStocks.shorts.join(', ')}
+
+**Your Task for Phase 1:**
+1. Review the pre-ranked candidates above
+2. Select 25-35 stocks total (mix of longs and shorts) for deep analysis in Phase 2
+3. Prioritize:
+   - Watchlist stocks that are at or near target entry prices
+   - Stocks with strong fundamental catalysts (earnings, news, sector rotation)
+   - Diversification across asset classes and sub-sectors
+4. **IMPORTANT: Max 3-4 stocks from the same sub-sector** (e.g., max 3-4 semiconductors, max 3-4 software stocks)
+   - Sub-sectors include: Semiconductors, Software, Cybersecurity, Cloud Computing, Biotechnology, Pharmaceuticals, Banks, etc.
+   - This prevents over-concentration in a specific industry
 
 Format your response EXACTLY like this:
-PROMISING_SUB_INDUSTRIES:
-- Cloud Computing: [reason]
-- Cybersecurity: [reason]
-- Biotechnology: [reason]
-
-TICKERS_TO_ANALYZE:
+SELECTED_STOCKS_FOR_ANALYSIS:
 MSFT
 PANW
 CRWD
 LLY
 ABBV
 ...
+(25-35 stocks total)
+
+REASONING:
+[Brief explanation of your selection criteria and sector diversification]
 
 ${historyContext}
 
 ${trendContext}`;
 
-      console.log('📝 PHASE 1: Asking Opus to identify stocks...');
+      console.log('📝 PHASE 1: Asking Opus to select 25-35 stocks from pre-ranked candidates...');
       console.log('⏳ This will take 1-2 minutes...');
       console.log('');
 
@@ -1090,24 +1145,8 @@ ${trendContext}`;
       console.log(`   Market regime: ${marketRegime.toUpperCase()}`);
       console.log(`   Target allocation: ${(targetAllocation.long * 100).toFixed(0)}% long, ${(targetAllocation.short * 100).toFixed(0)}% short, ${(targetAllocation.cash * 100).toFixed(0)}% cash`);
 
-      // Calculate current sector allocation
-      const sectorAllocation = {};
-      for (const position of portfolio.positions) {
-        const sector = position.sector || 'Unknown';
-        const value = position.quantity * position.currentPrice;
-        sectorAllocation[sector] = (sectorAllocation[sector] || 0) + value;
-      }
-
-      let sectorAllocationText = '\n**CURRENT SECTOR ALLOCATION:**\n';
-      const sortedSectors = Object.entries(sectorAllocation).sort((a, b) => b[1] - a[1]);
-      for (const [sector, value] of sortedSectors) {
-        const pct = (value / portfolio.totalValue) * 100;
-        sectorAllocationText += `- ${sector}: $${value.toLocaleString()} (${pct.toFixed(1)}%)\n`;
-      }
-      sectorAllocationText += `\n**SECTOR LIMITS:**\n`;
-      sectorAllocationText += `- Maximum per sector: 30% (soft limit)\n`;
-      sectorAllocationText += `- If adding to existing sector, ensure total stays under 30%\n`;
-      sectorAllocationText += `- Diversify across multiple sectors to avoid concentration\n`;
+      // Get asset class allocation context from allocation manager
+      const assetClassContext = await allocationManager.buildAllocationContext(portfolio);
 
       const marketRegimeContext = `\n\n**MARKET REGIME: ${marketRegime.toUpperCase()}**
 - SPY vs 200MA: ${marketRegime === 'bull' ? 'Above rising 200MA (bullish)' : marketRegime === 'bear' ? 'Below declining 200MA (bearish)' : 'Mixed signals (transitional)'}
@@ -1139,7 +1178,7 @@ ${optionsContext}
 
 ${marketRegimeContext}
 
-${sectorAllocationText}
+${assetClassContext}
 
 **Capital Deployment Mandate:**
 - You are managing $100,000 and holding $${portfolio.cash.toLocaleString()} in cash (${((portfolio.cash/portfolio.totalValue)*100).toFixed(1)}% idle)
@@ -1171,7 +1210,7 @@ ${earningsAndTaxContext}
    - Why watching (what makes it interesting)
    - Why not buying now (what you're waiting for)
 
-   Format: WATCHLIST_ADD: AAPL | Cloud Computing | $280 | $250 | $320 | Strong fundamentals | Waiting for pullback
+   Format: WATCHLIST_ADD: AAPL | Technology | $280 | $250 | $320 | Strong fundamentals | Waiting for pullback
 
 2. **BUY RECOMMENDATIONS:** Which stocks to buy NOW? For EACH recommendation provide:
    - Symbol and company name
@@ -1346,6 +1385,34 @@ ${historyContext}`;
       console.log('✅ Trend pattern saved');
       console.log('');
 
+      // Save stock analyses to learning database for each analyzed ticker
+      console.log('💾 Saving stock analyses to learning database...');
+      const { saveStockAnalysis } = await import('./trend-learning.js');
+
+      for (const ticker of tickersToAnalyze) {
+        try {
+          // Extract analysis for this specific ticker from the full analysis text
+          const tickerMention = analysis.analysis.includes(ticker);
+          if (tickerMention) {
+            await saveStockAnalysis({
+              symbol: ticker,
+              date: new Date().toISOString().split('T')[0],
+              type: 'daily',
+              price: marketContext[ticker]?.price || 0,
+              thesis: `Analyzed in daily deep analysis with ${tickersToAnalyze.length} stocks`,
+              recommendation: analysis.analysis.includes(`BUY: ${ticker}`) ? 'buy' :
+                            analysis.analysis.includes(`SHORT: ${ticker}`) ? 'short' : 'hold',
+              confidence: 'medium',
+              keyFactors: [`Included in ${tickersToAnalyze.length}-stock analysis`, `VIX: ${regime.vix}`]
+            });
+          }
+        } catch (error) {
+          console.warn(`⚠️ Could not save analysis for ${ticker}:`, error.message);
+        }
+      }
+      console.log(`✅ Saved ${tickersToAnalyze.length} stock analyses to learning database`);
+      console.log('');
+
       // Parse recommendations and execute trades automatically
       console.log('🔍 Parsing trade recommendations...');
       const recommendations = this.parseRecommendations(analysis.analysis);
@@ -1377,8 +1444,8 @@ ${historyContext}`;
           }
         }
 
-        // STEP 2: Validate sector allocation with VIX-adjusted quantities
-        const adjustedRecs = await this.validateAndAdjustSectorAllocation(recommendations, portfolio);
+        // STEP 2: Validate asset class allocation with VIX-adjusted quantities
+        const adjustedRecs = await this.validateAndAdjustAssetClassAllocation(recommendations, portfolio);
 
         for (const rec of adjustedRecs) {
           const action = rec.type === 'short' ? 'SHORT' : 'BUY';
@@ -1499,14 +1566,20 @@ ${historyContext}`;
   extractTickers(analysisText) {
     const tickers = [];
 
-    // Look for "TICKERS_TO_ANALYZE:" section
-    const tickerSection = analysisText.match(/TICKERS_TO_ANALYZE:[\s\S]*?(?=\n\n|$)/i);
+    // Look for "SELECTED_STOCKS_FOR_ANALYSIS:" section (new format)
+    let tickerSection = analysisText.match(/SELECTED_STOCKS_FOR_ANALYSIS:[\s\S]*?(?=\n\n|REASONING:|$)/i);
+
+    // Fallback to old format "TICKERS_TO_ANALYZE:"
+    if (!tickerSection) {
+      tickerSection = analysisText.match(/TICKERS_TO_ANALYZE:[\s\S]*?(?=\n\n|$)/i);
+    }
 
     if (tickerSection) {
       const lines = tickerSection[0].split('\n');
       for (const line of lines) {
         const match = line.match(/\b([A-Z]{1,5})\b/);
-        if (match && match[1] !== 'TICKERS' && match[1] !== 'TO' && match[1] !== 'ANALYZE') {
+        if (match && match[1] !== 'TICKERS' && match[1] !== 'TO' && match[1] !== 'ANALYZE' &&
+            match[1] !== 'SELECTED' && match[1] !== 'STOCKS' && match[1] !== 'FOR' && match[1] !== 'ANALYSIS') {
           tickers.push(match[1]);
         }
       }
@@ -1525,8 +1598,8 @@ ${historyContext}`;
       }
     }
 
-    // Remove duplicates and limit to 20
-    return [...new Set(tickers)].slice(0, 20);
+    // Remove duplicates and limit to 35 (increased from 20)
+    return [...new Set(tickers)].slice(0, 35);
   }
 
   /**
@@ -1553,61 +1626,54 @@ ${historyContext}`;
    * Validate and adjust recommendations to fit within sector allocation limits
    * Groups trades by sector and adjusts quantities to stay under 30% per sector
    */
-  async validateAndAdjustSectorAllocation(recommendations, portfolio) {
-    // Get VIX regime to determine sector allocation limit
-    const regime = await vixRegime.getRegime();
+  async validateAndAdjustAssetClassAllocation(recommendations, portfolio) {
+    console.log(`\n📊 Validating asset class allocation...`);
 
-    // Use regime-specific sector allocation limit
-    // ELEVATED/FEAR/PANIC regimes tighten sector limits to reduce concentration risk
-    const MAX_SECTOR_ALLOCATION = regime.name === 'CALM' || regime.name === 'NORMAL'
-      ? 0.30  // 30% in normal conditions
-      : 0.25; // 25% in elevated volatility
+    // Get current asset class allocation
+    const currentAllocation = allocationManager.calculateAssetClassAllocation(portfolio);
 
-    console.log(`\n📊 Validating sector allocation (${(MAX_SECTOR_ALLOCATION * 100).toFixed(0)}% limit for ${regime.name} regime)...`);
-    const currentSectorAllocation = {};
-    for (const position of portfolio.positions) {
-      const sector = position.sector || 'Unknown';
-      const value = position.quantity * position.currentPrice;
-      currentSectorAllocation[sector] = (currentSectorAllocation[sector] || 0) + value;
-    }
+    // Get dynamic limits for all asset classes
+    const limits = await allocationManager.getAllAssetClassLimits();
 
-    // Group recommendations by sector
-    const recsBySector = {};
+    // Group recommendations by asset class
+    const recsByAssetClass = {};
     for (const rec of recommendations) {
-      const sector = rec.sector || 'Unknown';
-      if (!recsBySector[sector]) {
-        recsBySector[sector] = [];
+      const assetClass = assetClassData.getAssetClass(rec.symbol);
+      if (!recsByAssetClass[assetClass]) {
+        recsByAssetClass[assetClass] = [];
       }
-      recsBySector[sector].push(rec);
+      recsByAssetClass[assetClass].push(rec);
     }
 
     const adjustedRecs = [];
 
-    console.log('\n📊 Validating sector allocation for all trades...');
+    console.log('\n📊 Validating asset class allocation for all trades...');
 
-    for (const [sector, recs] of Object.entries(recsBySector)) {
-      const currentSectorValue = currentSectorAllocation[sector] || 0;
-      const currentSectorPct = (currentSectorValue / portfolio.totalValue) * 100;
+    for (const [assetClass, recs] of Object.entries(recsByAssetClass)) {
+      const currentValue = (currentAllocation[assetClass] || 0) * portfolio.totalValue;
+      const currentPct = (currentAllocation[assetClass] || 0) * 100;
+      const limit = limits[assetClass];
 
-      // Calculate total value of new trades in this sector
+      // Calculate total value of new trades in this asset class
       const newTradesValue = recs.reduce((sum, rec) => sum + (rec.quantity * rec.entryPrice), 0);
-      const totalSectorValue = currentSectorValue + newTradesValue;
-      const totalSectorPct = (totalSectorValue / portfolio.totalValue) * 100;
+      const totalValue = currentValue + newTradesValue;
+      const totalPct = (totalValue / portfolio.totalValue) * 100;
 
-      console.log(`\n   ${sector}:`);
-      console.log(`     Current: ${currentSectorPct.toFixed(1)}%`);
-      console.log(`     After trades: ${totalSectorPct.toFixed(1)}%`);
+      console.log(`\n   ${assetClass}:`);
+      console.log(`     Current: ${currentPct.toFixed(1)}%`);
+      console.log(`     After trades: ${totalPct.toFixed(1)}%`);
+      console.log(`     Limit: ${(limit * 100).toFixed(0)}%`);
 
-      if (totalSectorPct <= MAX_SECTOR_ALLOCATION * 100) {
+      if (totalPct <= limit * 100) {
         // All trades fit within limit
-        console.log(`     ✅ All ${recs.length} trades fit within ${(MAX_SECTOR_ALLOCATION * 100).toFixed(0)}% limit`);
+        console.log(`     ✅ All ${recs.length} trades fit within limit`);
         adjustedRecs.push(...recs);
       } else {
         // Need to adjust - reduce quantities proportionally
-        const availableRoom = (MAX_SECTOR_ALLOCATION * portfolio.totalValue) - currentSectorValue;
+        const availableRoom = (limit * portfolio.totalValue) - currentValue;
         const reductionFactor = availableRoom / newTradesValue;
 
-        console.log(`     ⚠️ Would exceed ${(MAX_SECTOR_ALLOCATION * 100).toFixed(0)}% limit - adjusting quantities (${(reductionFactor * 100).toFixed(0)}% of original)`);
+        console.log(`     ⚠️ Would exceed limit - adjusting quantities (${(reductionFactor * 100).toFixed(0)}% of original)`);
 
         for (const rec of recs) {
           const adjustedQuantity = Math.floor(rec.quantity * reductionFactor);
@@ -1655,7 +1721,7 @@ ${historyContext}`;
               entryPrice: t.entry_price,
               stopLoss: t.stop_loss,
               takeProfit: t.take_profit,
-              sector: t.sector || 'Unknown',
+              assetClass: t.asset_class || assetClassData.getAssetClass(t.symbol),
               reasoning: t.reasoning || ''
             }));
           }
@@ -1689,9 +1755,8 @@ ${historyContext}`;
 
         const textAfter = analysisText.substring(match.index + match[0].length, match.index + match[0].length + 500);
 
-        // Extract sector from reasoning text
-        const sectorMatch = textAfter.match(/Sector:\s*([^\n]+)/i);
-        const sector = sectorMatch ? sectorMatch[1].trim() : 'Unknown';
+        // Get asset class for symbol
+        const assetClass = assetClassData.getAssetClass(symbol);
 
         recommendations.push({
           type: 'long',
@@ -1700,7 +1765,7 @@ ${historyContext}`;
           entryPrice,
           stopLoss,
           takeProfit,
-          sector,
+          assetClass,
           reasoning: textAfter.trim()
         });
       }
@@ -1728,9 +1793,8 @@ ${historyContext}`;
 
         const textAfter = analysisText.substring(match.index + match[0].length, match.index + match[0].length + 500);
 
-        // Extract sector from reasoning text
-        const sectorMatch = textAfter.match(/Sector:\s*([^\n]+)/i);
-        const sector = sectorMatch ? sectorMatch[1].trim() : 'Unknown';
+        // Get asset class for symbol
+        const assetClass = assetClassData.getAssetClass(symbol);
 
         recommendations.push({
           type: 'short',
@@ -1739,7 +1803,7 @@ ${historyContext}`;
           entryPrice,
           stopLoss,
           takeProfit,
-          sector,
+          assetClass,
           reasoning: textAfter.trim()
         });
       }
@@ -1759,7 +1823,7 @@ ${historyContext}`;
 
   /**
    * Parse watchlist items from analysis
-   * Format: WATCHLIST_ADD: SYMBOL | Sub-industry | $CurrentPrice | $TargetEntry | $TargetExit | Why watching | Why not now
+   * Format: WATCHLIST_ADD: SYMBOL | Asset Class | $CurrentPrice | $TargetEntry | $TargetExit | Why watching | Why not now
    */
   parseWatchlist(analysisText) {
     const watchlistItems = [];
@@ -1769,9 +1833,10 @@ ${historyContext}`;
 
       let match;
       while ((match = watchlistPattern.exec(analysisText)) !== null) {
+        const symbol = match[1].trim();
         watchlistItems.push({
-          symbol: match[1].trim(),
-          sub_industry: match[2].trim(),
+          symbol: symbol,
+          asset_class: assetClassData.getAssetClass(symbol),
           current_price: parseFloat(match[3]),
           target_entry_price: parseFloat(match[4]),
           target_exit_price: parseFloat(match[5]),
@@ -1899,21 +1964,18 @@ ${historyContext}`;
       // Validate trade
       const portfolio = await analysisEngine.getPortfolioState();
 
-      // Get VIX regime to determine sector allocation limit
-      const regime = await vixRegime.getRegime();
-      const maxSectorAllocation = regime.name === 'CALM' || regime.name === 'NORMAL'
-        ? 0.30  // 30% in normal conditions
-        : 0.25; // 25% in elevated volatility
+      // Get asset class for the symbol
+      const assetClass = assetClassData.getAssetClass(symbol);
 
       const trade = {
         action,
         symbol,
         quantity,
         price,
-        sector: options.sector || 'Unknown'
+        assetClass: assetClass
       };
 
-      const validation = await riskManager.validateTrade(trade, portfolio, maxSectorAllocation);
+      const validation = await riskManager.validateTrade(trade, portfolio);
 
       if (!validation.valid) {
         console.log('❌ Trade validation failed:');
@@ -2003,11 +2065,23 @@ ${historyContext}`;
           });
 
           // Place OCO order for long-term lot
+          // Check market hours to determine order type
+          const isMarketOpen = await tradier.isMarketOpen();
+
           try {
-            console.log(`📋 Placing OCO for long-term lot (Stop: $${stopLoss.toFixed(2)}, Target: $${takeProfit.toFixed(2)})...`);
-            const ocoOrder = await tradier.placeOCOOrder(symbol, longTermQty, stopLoss, takeProfit);
-            await db.updatePositionLot(lot.id, { oco_order_id: ocoOrder.id });
-            console.log(`✅ Long-term OCO placed: ${ocoOrder.id}`);
+            if (isMarketOpen) {
+              // Market open: Use OCO (assumes shares already owned after instant fill)
+              console.log(`📋 Placing OCO for long-term lot (Stop: $${stopLoss.toFixed(2)}, Target: $${takeProfit.toFixed(2)})...`);
+              const ocoOrder = await tradier.placeOCOOrder(symbol, longTermQty, stopLoss, takeProfit);
+              await db.updatePositionLot(lot.id, { oco_order_id: ocoOrder.id });
+              console.log(`✅ Long-term OCO placed: ${ocoOrder.id}`);
+            } else {
+              // Market closed: Use OTOCO (limit buy triggers OCO when filled)
+              console.log(`📋 Market closed - placing OTOCO order (Entry: $${price.toFixed(2)}, Stop: $${stopLoss.toFixed(2)}, Target: $${takeProfit.toFixed(2)})...`);
+              const otocoOrder = await tradier.placeOTOCOOrder(symbol, 'buy', longTermQty, price, stopLoss, takeProfit);
+              await db.updatePositionLot(lot.id, { oco_order_id: otocoOrder.id });
+              console.log(`✅ OTOCO placed: ${otocoOrder.id}`);
+            }
           } catch (error) {
             console.error(`⚠️ Failed to place long-term OCO: ${error.message}`);
             console.log(`📋 Fallback: Placing separate stop-loss and take-profit orders...`);
@@ -2068,11 +2142,23 @@ ${historyContext}`;
           });
 
           // Place OCO order for swing lot
+          // Check market hours to determine order type
+          const isMarketOpen = await tradier.isMarketOpen();
+
           try {
-            console.log(`📋 Placing OCO for swing lot (Stop: $${stopLoss.toFixed(2)}, Target: $${takeProfit.toFixed(2)})...`);
-            const ocoOrder = await tradier.placeOCOOrder(symbol, swingQty, stopLoss, takeProfit);
-            await db.updatePositionLot(lot.id, { oco_order_id: ocoOrder.id });
-            console.log(`✅ Swing OCO placed: ${ocoOrder.id}`);
+            if (isMarketOpen) {
+              // Market open: Use OCO (assumes shares already owned after instant fill)
+              console.log(`📋 Placing OCO for swing lot (Stop: $${stopLoss.toFixed(2)}, Target: $${takeProfit.toFixed(2)})...`);
+              const ocoOrder = await tradier.placeOCOOrder(symbol, swingQty, stopLoss, takeProfit);
+              await db.updatePositionLot(lot.id, { oco_order_id: ocoOrder.id });
+              console.log(`✅ Swing OCO placed: ${ocoOrder.id}`);
+            } else {
+              // Market closed: Use OTOCO (limit buy triggers OCO when filled)
+              console.log(`📋 Market closed - placing OTOCO order (Entry: $${price.toFixed(2)}, Stop: $${stopLoss.toFixed(2)}, Target: $${takeProfit.toFixed(2)})...`);
+              const otocoOrder = await tradier.placeOTOCOOrder(symbol, 'buy', swingQty, price, stopLoss, takeProfit);
+              await db.updatePositionLot(lot.id, { oco_order_id: otocoOrder.id });
+              console.log(`✅ OTOCO placed: ${otocoOrder.id}`);
+            }
           } catch (error) {
             console.error(`⚠️ Failed to place swing OCO: ${error.message}`);
             console.log(`📋 Fallback: Placing separate stop-loss and take-profit orders...`);
@@ -2109,7 +2195,7 @@ ${historyContext}`;
           quantity,
           cost_basis: price,
           current_price: price,
-          sector: trade.sector,
+          asset_class: trade.assetClass,
           stock_type: 'large-cap',
           investment_type: investmentType,
           total_lots: (longTermQty > 0 ? 1 : 0) + (swingQty > 0 ? 1 : 0),
@@ -2132,6 +2218,9 @@ ${historyContext}`;
         symbol: symbol,
         quantity: quantity,
         price: price,
+        totalValue: quantity * price,
+        orderId: order.id,
+        status: order.status || 'pending',
         stopLoss: null,
         takeProfit: null,
         reasoning: options.reasoning || 'Trade executed via executeTrade method'

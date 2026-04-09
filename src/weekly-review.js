@@ -6,6 +6,7 @@ import email from './email.js';
 import performanceAnalyzer from './performance-analyzer.js';
 import trendLearning from './trend-learning.js';
 import sectorRotation from './sector-rotation.js';
+import fundamentalScreener from './fundamental-screener.js';
 import { getWeeklyEarningsReport } from './earnings-analysis.js';
 
 /**
@@ -373,6 +374,28 @@ async function runWeeklySynthesis(reviews, weeklyPerf, watchlistAudit, sectorRan
   try {
     console.log('\n🧠 Running weekly strategic synthesis with Opus...');
 
+    // Build sector rotation context
+    let sectorContext = '';
+    if (sectorRanking && sectorRanking.length > 0) {
+      sectorContext = '\n\nSECTOR ROTATION ANALYSIS:\n';
+      const leading = sectorRanking.filter(s => s.status === 'LEADING');
+      const lagging = sectorRanking.filter(s => s.status === 'LAGGING');
+
+      if (leading.length > 0) {
+        sectorContext += 'LEADING SECTORS (rotate INTO these):\n';
+        leading.forEach(s => {
+          sectorContext += `- ${s.sector}: ${s.relativeStrength4w.toFixed(1)}% (4w), ${s.relativeStrength12w.toFixed(1)}% (12w)\n`;
+        });
+      }
+
+      if (lagging.length > 0) {
+        sectorContext += '\nLAGGING SECTORS (rotate OUT of these):\n';
+        lagging.forEach(s => {
+          sectorContext += `- ${s.sector}: ${s.relativeStrength4w.toFixed(1)}% (4w), ${s.relativeStrength12w.toFixed(1)}% (12w)\n`;
+        });
+      }
+    }
+
     const prompt = `
 You are conducting a WEEKLY STRATEGIC REVIEW of a $100k portfolio.
 
@@ -386,15 +409,17 @@ WATCHLIST AUDIT:
 - Stale entries removed: ${watchlistAudit.stale.length > 0 ? watchlistAudit.stale.map(s => s.symbol).join(', ') : 'None'}
 - Missed opportunities: ${watchlistAudit.missed.length > 0 ? watchlistAudit.missed.map(m => `${m.symbol} (ran to $${m.currentPrice} past exit $${m.target_exit_price})`).join(', ') : 'None'}
 - Remaining watchlist entries: ${watchlistAudit.remaining}
+${sectorContext}
 
 QUESTIONS FOR STRATEGIC REVIEW:
 1. What is the portfolio's overall trajectory this week vs market? Are we beating, matching, or lagging the S&P 500?
-2. Which positions are underperforming their thesis and should be considered for exit?
-3. Are there any sector over/underweights that need correcting next week?
-4. What are the 2-3 highest-conviction opportunities for next week based on current market conditions?
-5. Should any parameters change (stop-loss %, position sizing, cash target) based on what we learned this week?
-6. What worked well this week that we should do more of?
-7. What didn't work — and what should we stop doing or adjust?
+2. CONVICTION RANKING: Rank all current positions 1-N by thesis strength. Which are the bottom 2-3 positions that should be considered as rotation candidates next week?
+3. Based on sector rotation data, are we overweight in lagging sectors or underweight in leading sectors? What specific rotations should we consider?
+4. What are the 2-3 highest-conviction opportunities for next week based on current market conditions and sector momentum?
+5. COMING WEEK PLAYBOOK: List 3 specific setups you're watching with exact entry conditions (e.g., "NVDA if pulls back to $175 support", "CRWD on breakout above $430").
+6. Should any parameters change (stop-loss %, position sizing, cash target) based on what we learned this week?
+7. What worked well this week that we should do more of?
+8. What didn't work — and what should we stop doing or adjust?
 
 Provide strategic recommendations for the coming week with specific actionable items.
 `;
@@ -457,6 +482,11 @@ export async function runWeeklyReview() {
     console.log(`   Archived ${watchlistAudit.stale.length} stale entries`);
     console.log(`   Archived ${watchlistAudit.missed.length} missed opportunities`);
     console.log(`   ${watchlistAudit.remaining} entries remaining\n`);
+
+    // Run fundamental screening (weekly)
+    console.log('💎 Running fundamental screening...');
+    const valueCandidates = await fundamentalScreener.runWeeklyScreen();
+    console.log(`   ✅ Value Watchlist updated with ${valueCandidates.length} stocks\n`);
 
     const reviews = [];
 

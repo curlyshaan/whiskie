@@ -1,0 +1,36 @@
+ANALYSIS REQUEST FOR OPUS
+
+USER CONCERN:
+The 3-4 stock per sub-sector cap might prevent discovery of breakout "home run" stocks.
+
+SCENARIO:
+- Semiconductors already have NVDA, AMD, TSM (3 popular mega-caps)
+- Stock X (e.g., SMCI, AVGO) starts breaking out with 5% move + 3x volume
+- Does the 3-4 cap block Stock X from Phase 1 selection?
+
+CURRENT SYSTEM:
+1. Pre-Ranking (425 → 120): Algorithmic, NO sector caps, scores by volume/momentum
+2. Phase 1 (120 → 25-35): Opus selection, 3-4 per sub-sector cap applies
+3. Phase 2 (25-35 → trades): Deep analysis
+
+PROPOSED SOLUTION:
+Multiple watchlists to ensure growth stocks aren't missed:
+- Buy Watchlist (long-term positions)
+- Swing Watchlist (2-10 day trades)
+- Growth Watchlist (emerging stocks to monitor)
+- Short Watchlist (short candidates)
+
+Stocks can be on multiple lists. Watchlist stocks get priority (bypass cap).
+
+QUESTIONS:
+1. Is 3-4 sector cap too restrictive for growth stock discovery?
+2. Does pre-ranking adequately surface breakout stocks?
+3. Should cap be relaxed for exceptional momentum (>5% + 3x volume)?
+4. Is multi-watchlist approach helpful or over-engineered?
+5. Alternative solutions to balance diversification + discovery + efficiency?
+
+CONTEXT:
+- Portfolio: $100k
+- Stock universe: 425 stocks across 11 GICS asset classes
+- Analysis runs: 10am and 2pm ET daily
+- Goal: Don't miss breakouts, but prevent over-concentration

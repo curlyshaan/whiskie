@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import correlationAnalysis from './correlation-analysis.js';
 import vixRegime from './vix-regime.js';
+import allocationManager from './allocation-manager.js';
 import * as db from './db.js';
 
 dotenv.config();
@@ -29,9 +30,9 @@ class RiskManager {
    * Note: Daily trade count now uses database-backed tradeSafeguard, not in-memory counter
    * @param {Object} trade - Trade to validate
    * @param {Object} portfolio - Current portfolio state
-   * @param {number} maxSectorAllocation - Optional VIX-adjusted sector limit (defaults to hardcoded MAX_SECTOR_ALLOCATION)
+   * @param {number} maxAssetClassAllocation - Optional VIX-adjusted asset class limit (defaults to dynamic calculation)
    */
-  async validateTrade(trade, portfolio, maxSectorAllocation = null) {
+  async validateTrade(trade, portfolio, maxAssetClassAllocation = null) {
     const errors = [];
     const warnings = [];
 
@@ -46,20 +47,19 @@ class RiskManager {
     // Cash reserve check removed - cash level now informs Claude's judgment via checkCashState()
     // instead of mechanically blocking trades
 
-    // Check sector allocation (for buys)
+    // Check asset class allocation (for buys)
     if (trade.action === 'buy') {
-      const newSectorAllocation = this.calculateSectorAllocation(
-        portfolio,
+      const assetClass = trade.assetClass || 'Unknown';
+
+      // Validate asset class allocation
+      const validation = await allocationManager.validateAssetClassAllocation(
         trade.symbol,
-        trade.sector,
-        tradeValue
+        tradeValue,
+        portfolio
       );
 
-      // Use VIX-adjusted limit if provided, otherwise use hardcoded default
-      const sectorLimit = maxSectorAllocation !== null ? maxSectorAllocation : this.MAX_SECTOR_ALLOCATION;
-
-      if (newSectorAllocation > sectorLimit) {
-        errors.push(`Sector allocation would be ${(newSectorAllocation * 100).toFixed(1)}%, exceeds max ${(sectorLimit * 100).toFixed(0)}%`);
+      if (!validation.valid) {
+        errors.push(validation.error);
       }
 
       // Check correlation with existing positions
@@ -89,17 +89,7 @@ class RiskManager {
     };
   }
 
-  /**
-   * Calculate sector allocation after trade
-   */
-  calculateSectorAllocation(portfolio, symbol, sector, additionalValue) {
-    const currentSectorValue = portfolio.positions
-      .filter(p => p.sector === sector)
-      .reduce((sum, p) => sum + (p.quantity * p.currentPrice), 0);
-
-    const newSectorValue = currentSectorValue + additionalValue;
-    return newSectorValue / portfolio.totalValue;
-  }
+  // Remove old calculateSectorAllocation - replaced by allocationManager
 
   /**
    * Generate warnings (not blocking, but important)

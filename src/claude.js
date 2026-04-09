@@ -208,7 +208,7 @@ ${JSON.stringify(economic, null, 2)}
 Analyze the portfolio and provide:
 1. Overall portfolio health assessment
 2. Any positions that need attention (stop-loss triggers, take-profit opportunities)
-3. Sector allocation review
+3. Asset class allocation review
 4. Rebalancing recommendations
 5. New opportunities to consider
 6. Risk assessment

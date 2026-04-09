@@ -16,9 +16,13 @@ import * as db from './db.js';
  */
 class ShortManager {
   constructor() {
-    this.MAX_SHORT_POSITION_PCT = 0.10;  // 10% per position
-    this.MAX_TOTAL_SHORT_PCT = 0.30;     // 30% total shorts
+    this.MAX_SHORT_POSITION_PCT = 0.12;  // 12% per position (when DTC <4)
+    this.REDUCED_SHORT_POSITION_PCT = 0.08; // 8% when DTC 4-5 (increased from 5%)
+    this.MAX_TOTAL_SHORT_PCT = 0.25;     // 25% total shorts
     this.MIN_MARKET_CAP = 2_000_000_000; // $2B minimum
+    this.MAX_IV_THRESHOLD = 0.80;        // 80% IV hard block (increased from 70%)
+    this.MAX_DAYS_TO_COVER = 5;          // Block if >5
+    this.ELEVATED_DAYS_TO_COVER = 4;     // Reduce to 8% if >=4
   }
 
   /**
@@ -60,9 +64,20 @@ class ShortManager {
           errors.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — extreme squeeze risk, cannot short`);
         } else if (shortPct > 0.20) {
           // 20-30% = elevated risk, warn but allow
-          warnings.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — elevated squeeze risk, use smaller position (5% max)`);
+          warnings.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — elevated squeeze risk, use smaller position (3% max)`);
         } else if (shortPct > 0.15) {
           warnings.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — moderate squeeze risk, monitor closely`);
+        }
+
+        // Check Days to Cover (squeeze risk indicator)
+        if (shortStats.shortRatio) {
+          const daysToCover = shortStats.shortRatio;
+
+          if (daysToCover > this.MAX_DAYS_TO_COVER) {
+            errors.push(`${symbol} days to cover is ${daysToCover.toFixed(1)} (max ${this.MAX_DAYS_TO_COVER}) — extreme squeeze risk, cannot short`);
+          } else if (daysToCover >= this.ELEVATED_DAYS_TO_COVER) {
+            warnings.push(`${symbol} days to cover is ${daysToCover.toFixed(1)} — elevated squeeze risk, max position 5%`);
+          }
         }
 
         // Log for decision tracking
@@ -75,6 +90,24 @@ class ShortManager {
       // Short interest check is non-blocking — log but don't prevent the trade
       console.warn(`⚠️ Could not fetch short interest for ${symbol}: ${error.message}`);
       warnings.push(`Short interest data unavailable for ${symbol} — verify manually before shorting`);
+    }
+
+    // Check Implied Volatility (IV) via options chain
+    try {
+      const iv = await this.getImpliedVolatility(symbol);
+
+      if (iv !== null) {
+        if (iv > this.MAX_IV_THRESHOLD) {
+          errors.push(`${symbol} IV is ${(iv * 100).toFixed(0)}% (max ${(this.MAX_IV_THRESHOLD * 100).toFixed(0)}%) — meme stock territory, cannot short`);
+        } else if (iv > 0.70) {
+          warnings.push(`${symbol} IV is ${(iv * 100).toFixed(0)}% — elevated volatility, reduce position to 5%`);
+        } else if (iv > 0.60) {
+          warnings.push(`${symbol} IV is ${(iv * 100).toFixed(0)}% — moderate volatility, monitor closely`);
+        }
+      }
+    } catch (error) {
+      console.warn(`⚠️ Could not fetch IV for ${symbol}: ${error.message}`);
+      warnings.push(`IV data unavailable for ${symbol} — verify manually before shorting`);
     }
 
     return {
@@ -94,9 +127,10 @@ class ShortManager {
     const positionValue = quantity * price;
     const positionPct = positionValue / portfolioValue;
 
-    // Check single position limit
-    if (positionPct > this.MAX_SHORT_POSITION_PCT) {
-      errors.push(`Position size ${(positionPct * 100).toFixed(1)}% exceeds 10% limit`);
+    // Check single position limit (DTC-based)
+    const maxPositionPct = await this.getMaxPositionSize(symbol);
+    if (positionPct > maxPositionPct) {
+      errors.push(`Position size ${(positionPct * 100).toFixed(1)}% exceeds ${(maxPositionPct * 100).toFixed(0)}% limit`);
     }
 
     // Check total short exposure
@@ -304,6 +338,125 @@ class ShortManager {
         takeProfit: p.take_profit
       }))
     };
+  }
+
+  /**
+   * Get Implied Volatility from options chain
+   * Returns ATM (at-the-money) IV as a decimal (e.g., 0.45 = 45%)
+   */
+  async getImpliedVolatility(symbol) {
+    try {
+      const optionsData = await tradier.getOptionsChain(symbol);
+
+      if (!optionsData || !optionsData.options || !optionsData.options.option) {
+        return null;
+      }
+
+      const options = Array.isArray(optionsData.options.option)
+        ? optionsData.options.option
+        : [optionsData.options.option];
+
+      // Get current stock price
+      const quote = await tradier.getQuote(symbol);
+      const currentPrice = quote?.last || quote?.close;
+
+      if (!currentPrice) {
+        return null;
+      }
+
+      // Find ATM (at-the-money) options - closest strike to current price
+      const atmOptions = options
+        .filter(opt => opt.greeks && opt.greeks.mid_iv)
+        .map(opt => ({
+          strike: opt.strike,
+          iv: opt.greeks.mid_iv,
+          distance: Math.abs(opt.strike - currentPrice)
+        }))
+        .sort((a, b) => a.distance - b.distance);
+
+      if (atmOptions.length === 0) {
+        return null;
+      }
+
+      // Return ATM IV (closest to current price)
+      return atmOptions[0].iv;
+    } catch (error) {
+      console.error(`Error fetching IV for ${symbol}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get maximum position size based on Days to Cover
+   * DTC <4: 12% max
+   * DTC 4-5: 5% max
+   * DTC >5: blocked (handled in isShortable)
+   */
+  async getMaxPositionSize(symbol) {
+    try {
+      const shortStats = await yahooFinance.getShortInterest(symbol);
+
+      if (shortStats && shortStats.shortRatio) {
+        const daysToCover = shortStats.shortRatio;
+
+        if (daysToCover >= this.ELEVATED_DAYS_TO_COVER) {
+          return this.REDUCED_SHORT_POSITION_PCT; // 5% for DTC 4-5
+        }
+      }
+
+      return this.MAX_SHORT_POSITION_PCT; // 12% for DTC <4
+    } catch (error) {
+      console.warn(`Could not fetch DTC for ${symbol}, using standard limit`);
+      return this.MAX_SHORT_POSITION_PCT;
+    }
+  }
+
+  /**
+   * Calculate ATR-based stop-loss for short position
+   * Stop = Entry Price + (2 × ATR)
+   * Uses 14-day ATR by default
+   */
+  async calculateATRStopLoss(symbol, entryPrice, period = 14) {
+    try {
+      // Fetch historical data for ATR calculation
+      const history = await tradier.getHistoricalPrices(symbol, period + 1);
+
+      if (!history || history.length < period + 1) {
+        console.warn(`Insufficient data for ATR calculation on ${symbol}`);
+        return null;
+      }
+
+      // Calculate True Range for each period
+      const trueRanges = [];
+      for (let i = 1; i < history.length; i++) {
+        const high = history[i].high;
+        const low = history[i].low;
+        const prevClose = history[i - 1].close;
+
+        const tr = Math.max(
+          high - low,
+          Math.abs(high - prevClose),
+          Math.abs(low - prevClose)
+        );
+        trueRanges.push(tr);
+      }
+
+      // Calculate ATR (simple moving average of True Range)
+      const atr = trueRanges.slice(-period).reduce((sum, tr) => sum + tr, 0) / period;
+
+      // Stop-loss = Entry + (2 × ATR) for shorts
+      const stopLoss = entryPrice + (2 * atr);
+
+      return {
+        atr: atr,
+        stopLoss: stopLoss,
+        stopDistance: stopLoss - entryPrice,
+        stopPercent: ((stopLoss - entryPrice) / entryPrice) * 100
+      };
+    } catch (error) {
+      console.error(`Error calculating ATR for ${symbol}:`, error.message);
+      return null;
+    }
   }
 }
 

@@ -151,7 +151,7 @@ export async function initDatabase() {
       CREATE TABLE IF NOT EXISTS watchlist (
         id SERIAL PRIMARY KEY,
         symbol VARCHAR(10) UNIQUE NOT NULL,
-        sub_industry VARCHAR(100),
+        asset_class VARCHAR(50),
         current_price DECIMAL(10, 2),
         target_entry_price DECIMAL(10, 2),
         target_exit_price DECIMAL(10, 2),
@@ -259,7 +259,8 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS next_earnings_date DATE,
       ADD COLUMN IF NOT EXISTS trim_history JSONB,
       ADD COLUMN IF NOT EXISTS oco_order_id VARCHAR(50),
-      ADD COLUMN IF NOT EXISTS order_modification_history JSONB;
+      ADD COLUMN IF NOT EXISTS order_modification_history JSONB,
+      ADD COLUMN IF NOT EXISTS asset_class VARCHAR(50);
     `);
 
     // Stock universe table - all stocks Whiskie analyzes
@@ -272,6 +273,9 @@ export async function initDatabase() {
         market_cap_tier VARCHAR(20),
         shortable BOOLEAN DEFAULT FALSE,
         last_etb_check TIMESTAMP,
+        avg_daily_volume BIGINT,
+        last_price DECIMAL(10, 2),
+        bid_ask_spread DECIMAL(5, 4),
         added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         removed_date TIMESTAMP,
         status VARCHAR(20) DEFAULT 'active'
@@ -292,6 +296,32 @@ export async function initDatabase() {
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_stock_universe_status ON stock_universe(status);
+    `);
+
+    // Value watchlist table - fundamental screening results
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS value_watchlist (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        asset_class VARCHAR(50),
+        score INTEGER,
+        metrics JSONB,
+        reasons TEXT,
+        price DECIMAL(10, 2),
+        status VARCHAR(20) DEFAULT 'active',
+        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_momentum_check TIMESTAMP,
+        position_entered BOOLEAN DEFAULT FALSE,
+        position_entry_date TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_value_watchlist_symbol ON value_watchlist(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_value_watchlist_status ON value_watchlist(status);
     `);
 
     await client.query(`
@@ -689,13 +719,13 @@ export async function addToWatchlist(watchItem) {
   try {
     const result = await pool.query(
       `INSERT INTO watchlist (
-        symbol, sub_industry, current_price, target_entry_price, target_exit_price,
+        symbol, asset_class, current_price, target_entry_price, target_exit_price,
         why_watching, why_not_buying_now, price_when_added, highest_price, lowest_price
       )
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (symbol)
        DO UPDATE SET
-         sub_industry = $2,
+         asset_class = $2,
          current_price = $3,
          target_entry_price = $4,
          target_exit_price = $5,
@@ -707,7 +737,7 @@ export async function addToWatchlist(watchItem) {
        RETURNING *`,
       [
         watchItem.symbol,
-        watchItem.sub_industry,
+        watchItem.asset_class,
         watchItem.current_price,
         watchItem.target_entry_price,
         watchItem.target_exit_price,
