@@ -1198,24 +1198,33 @@ ${overvaluedBreakdowns.length > 0 ? overvaluedBreakdowns.map(o => `${o.symbol} (
 
 **Your Task for Phase 1:**
 1. Review the pre-ranked candidates above
-2. Select 25-35 stocks total (mix of longs and shorts) for deep analysis in Phase 2
+2. Split into TWO separate lists:
+   - **15-20 LONG candidates** for Phase 2 deep analysis
+   - **15-20 SHORT candidates** for Phase 3 deep analysis
 3. Prioritize:
    - Watchlist stocks that are at or near target entry prices
    - Stocks with strong fundamental catalysts (earnings, news, sector rotation)
-   - Diversification across asset classes and sub-sectors
-4. **IMPORTANT: Max 3-4 stocks from the same sub-sector** (e.g., max 3-4 semiconductors, max 3-4 software stocks)
-   - Sub-sectors include: Semiconductors, Software, Cybersecurity, Cloud Computing, Biotechnology, Pharmaceuticals, Banks, etc.
-   - This prevents over-concentration in a specific industry
+   - Diversification across asset classes and sectors
+4. **IMPORTANT: Max 0-3 stocks per sub-sector** (e.g., 0-3 semiconductors, 0-3 software stocks, 0-3 banks)
+   - Sub-sectors include: Semiconductors, Software, Cybersecurity, Cloud, Biotech, Pharma, Banks, etc.
+   - Choose 0-3 based on quality and market conditions - not mandatory to pick 3
+   - If market conditions are bad for a sub-sector, pick 0 (skip it entirely)
+   - This prevents over-concentration in a specific sub-sector
 
 Format your response EXACTLY like this:
-SELECTED_STOCKS_FOR_ANALYSIS:
+LONG_CANDIDATES:
 MSFT
-PANW
-CRWD
+NVDA
 LLY
-ABBV
 ...
-(25-35 stocks total)
+(15-20 stocks)
+
+SHORT_CANDIDATES:
+ZS
+OKTA
+NKE
+...
+(15-20 stocks)
 
 REASONING:
 [Brief explanation of your selection criteria and sector diversification]
@@ -1224,7 +1233,7 @@ ${historyContext}
 
 ${trendContext}`;
 
-      console.log('📝 PHASE 1: Asking Opus to select 25-35 stocks from pre-ranked candidates...');
+      console.log('📝 PHASE 1: Asking Opus to select long and short candidates from pre-ranked stocks...');
       console.log('⏳ This will take 1-2 minutes...');
       console.log('');
 
@@ -1241,15 +1250,19 @@ ${trendContext}`;
       console.log(`✅ Phase 1 complete (${phase1Duration}s)`);
       console.log('');
 
-      // Extract tickers from Phase 1 response
-      const tickersToAnalyze = this.extractTickers(phase1Analysis.analysis);
-      console.log(`🎯 Opus identified ${tickersToAnalyze.length} stocks to analyze:`);
-      console.log(`   ${tickersToAnalyze.join(', ')}`);
+      // Extract long and short candidates from Phase 1 response
+      const candidates = this.extractLongShortCandidates(phase1Analysis.analysis);
+      console.log(`🎯 Phase 1 Results:`);
+      console.log(`   Long candidates: ${candidates.longs.length} stocks`);
+      console.log(`   Short candidates: ${candidates.shorts.length} stocks`);
+      console.log(`   Longs: ${candidates.longs.join(', ')}`);
+      console.log(`   Shorts: ${candidates.shorts.join(', ')}`);
       console.log('');
 
-      // PHASE 2: Fetch prices for identified stocks
-      console.log('📊 PHASE 2: Fetching prices for identified stocks...');
-      const allSymbols = [...new Set([...portfolioSymbols, ...marketIndices, ...tickersToAnalyze])];
+      // Fetch prices for all identified stocks (both long and short candidates)
+      console.log('📊 Fetching prices for all candidates...');
+      const allCandidates = [...candidates.longs, ...candidates.shorts];
+      const allSymbols = [...new Set([...portfolioSymbols, ...marketIndices, ...allCandidates])];
       const phase2Quotes = await tradier.getQuotes(allSymbols.join(','));
 
       const fullMarketData = {};
@@ -1287,8 +1300,21 @@ ${trendContext}`;
 - Current allocation: ${((portfolio.positionsValue / portfolio.totalValue) * 100).toFixed(0)}% invested, ${((portfolio.cash / portfolio.totalValue) * 100).toFixed(0)}% cash
 ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as hedges' : marketRegime === 'bear' ? '- Focus: Defensive longs, increase short exposure' : '- Focus: Balanced approach, prepare for either direction'}`;
 
-      // PHASE 2 PROMPT: Make final trade decisions with current prices
-      const phase2Question = `You are managing a $100k portfolio. Analyze and provide SPECIFIC trade recommendations.
+      // PHASE 2: Deep analysis of LONG candidates (50k thinking budget)
+      console.log('');
+      console.log('═══════════════════════════════════════');
+      console.log('📈 PHASE 2: LONG ANALYSIS');
+      console.log('═══════════════════════════════════════');
+      console.log(`Analyzing ${candidates.longs.length} long candidates with 50k token thinking budget`);
+      console.log('⏳ This will take 3-5 minutes...');
+      console.log('');
+
+      const phase2Question = `You are managing a $100k portfolio. You are in PHASE 2: LONG ANALYSIS.
+
+**Input:** ${candidates.longs.length} long candidates from Phase 1
+
+**Long Candidates:**
+${candidates.longs.map(sym => `- ${sym}: $${fullMarketData[sym]?.price || 'N/A'} (${fullMarketData[sym]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[sym]?.change_percentage || 0}%)`).join('\n')}
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
@@ -1296,179 +1322,277 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 - Cash Available: $${portfolio.cash.toLocaleString()}
 
 ${cashContext}
-
 ${vixContext}
-
 ${macroContext}
-
 ${gapContext}
-
 ${performanceContext}
-
 ${sectorContext}
-
 ${optionsContext}
-
 ${marketRegimeContext}
-
 ${assetClassContext}
 
-**Capital Deployment Mandate:**
-- You are managing $100,000 and holding $${portfolio.cash.toLocaleString()} in cash (${((portfolio.cash/portfolio.totalValue)*100).toFixed(1)}% idle)
-- Idle cash is a drag on performance. The TARGET is 10-20% cash maximum (dry powder for dips).
-- With ${portfolio.positions.length} positions and a target of 10-12, you have room for ${12 - portfolio.positions.length} more positions.
-- You do NOT need perfect conditions to deploy. Good enough is good enough.
-- If you can identify 2-3 high-quality setups, deploy into them.
-- Holding >50% cash REQUIRES a specific written justification (e.g., "VIX > 30 + inverted yield curve").
-- Quality AND quantity matter. A portfolio of 2 stocks is not diversified — it's concentrated risk.
+**Your Task:** Analyze each candidate and provide BUY or PASS decisions.
 
-${watchlistContext}
+**Analysis Framework (for each stock):**
+1. Fundamental Analysis: Business quality, revenue/earnings growth, valuation, balance sheet, management
+2. Technical Analysis: Price vs moving averages, support/resistance, volume, RSI/MACD, chart patterns
+3. Catalyst Analysis: Earnings, product launches, sector trends, insider activity, news flow
+4. Risk/Reward: Entry price, stop loss, target price, R/R ratio (minimum 2:1), position size
 
-**Portfolio Construction Mandate:**
-- Current cash: $${portfolio.cash.toLocaleString()} (${((portfolio.cash/portfolio.totalValue)*100).toFixed(1)}% of portfolio)
-- Current positions: ${portfolio.positions.length} (target: 10-12)
-- Positions needed to reach target: ${Math.max(0, 10 - portfolio.positions.length)}
-- If you recommend ZERO new positions, you MUST provide specific reasoning why current market conditions justify staying in cash (e.g., "VIX > 25 + negative breadth" or "Awaiting Fed decision tomorrow").
-- Default posture: deploy into good setups. Cash requires justification, not deployment.
+**Decision Criteria:**
+- BUY: Strong fundamentals + favorable technicals + clear catalyst + R/R > 2:1
+- PASS: Missing key criteria or better opportunities exist
 
-${correlationContext}
+**CRITICAL: 0-3 per sub-sector enforcement**
+- Track sub-sector count as you analyze
+- If sub-sector already has 3 BUY decisions, automatically PASS remaining candidates
+- Prioritize highest conviction setups within each sub-sector
 
-${earningsAndTaxContext}
+**Output Format (for each stock):**
+SYMBOL: [ticker]
+SUB-SECTOR: [specific sub-sector]
+DECISION: BUY or PASS
 
-**Your Task:**
-1. **WATCHLIST UPDATE:** For each stock you want to monitor (but not buy yet):
-   - Symbol, Sub-industry, Current Price
-   - Target Entry Price (price you'd buy at)
-   - Target Exit Price (profit target)
-   - Why watching (what makes it interesting)
-   - Why not buying now (what you're waiting for)
+[If BUY:]
+ENTRY: $[price]
+STOP: $[price] ([X]% risk)
+TARGET: $[price] ([X]% upside)
+POSITION_SIZE: [X]% of portfolio ($[amount])
+CONVICTION: High/Medium
+REASONING: [2-3 sentences]
 
-   Format: WATCHLIST_ADD: AAPL | Technology | $280 | $250 | $320 | Strong fundamentals | Waiting for pullback
+[If PASS:]
+REASONING: [1-2 sentences]
 
-2. **BUY RECOMMENDATIONS:** Which stocks to buy NOW? For EACH recommendation provide:
-   - Symbol and company name
-   - Quantity (exact number of shares)
-   - Entry price (current market price)
-   - Position size (% of portfolio)
-   - **STOP-LOSS:** Exact price level and % below entry (explain why this level)
-   - **TAKE-PROFIT:** Target price and expected gain % (explain reasoning)
-   - Sector and stock type (mega-cap/large-cap/mid-cap)
-   - Full reasoning (fundamentals + technicals + macro)
+---
 
-   **CRITICAL: Use this EXACT format for executable trades:**
-   EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY_PRICE | STOP_LOSS | TAKE_PROFIT
+**Final Phase 2 Summary:**
+EXECUTE_BUY:
+- SYMBOL | QUANTITY | ENTRY | STOP | TARGET | SUBSECTOR
+[repeat for each BUY]
 
-   Example: EXECUTE_BUY: MSFT | 100 | 400.50 | 360.00 | 450.00
-
-   Then provide your full reasoning below the EXECUTE_BUY line.
-
-3. **SHORT RECOMMENDATIONS:** Which stocks to short NOW? For EACH short provide:
-   - Symbol and company name
-   - Quantity (exact number of shares)
-   - Entry price (current market price)
-   - **STOP-LOSS:** Exact price level ABOVE entry (inverse logic - triggers on price RISE)
-   - **TAKE-PROFIT:** Target price BELOW entry (profit on decline)
-   - Technical confirmation (declining 200MA, RSI not oversold, no near-term earnings)
-   - Full reasoning (why overvalued, deteriorating fundamentals, technical breakdown)
-
-   **CRITICAL: Use this EXACT format for executable shorts:**
-   EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY_PRICE | STOP_LOSS | TAKE_PROFIT
-
-   Example: EXECUTE_SHORT: XYZ | 50 | 150.00 | 165.00 | 120.00
-   (Stop at $165 = 10% above entry, profit target at $120 = 20% below entry)
-
-   Then provide your full reasoning below the EXECUTE_SHORT line.
-
-4. **SELL/TRIM:** Any current positions to sell or trim?
-5. **SECTOR ANALYSIS:** Which sectors look strong/weak based on macro environment?
-6. **TREND DETECTION:** Any patterns from previous analyses?
-
-**Stop-Loss Guidelines (you decide final levels):**
-- Index ETFs: -10 to -12%
-- Blue-chip/Mega-cap: -10 to -12%
-- Large-cap growth: -13 to -15%
-- Mid-cap: -15 to -18%
-- Adjust based on volatility and conviction
-
-**Investment Rules:**
-- Regular stocks only (no crypto, no penny stocks)
-- Max 12% per position (down from 15%)
-- 10-12 positions max
-- Diversify across sectors
-- YOU decide which sectors to focus/avoid based on current macro environment
-
-**CASH MANAGEMENT PHILOSOPHY:**
-- 10% cash is the TARGET BUFFER — dry powder for opportunities, not a sacred minimum
-- If you find a high-conviction setup and cash is low: DEPLOY IT. Going to 0% cash is acceptable
-  when the opportunity justifies it.
-- When cash is DEPLOYED or ZERO: Always evaluate rotation before recommending a new buy.
-  Rotation = sell or trim a weaker position to fund a better one. This is active portfolio management.
-- When recommending a rotation: explain which position you'd exit and why the new opportunity
-  is a better use of that capital right now.
-- After capital is freed (stop-loss hit, take-profit, or manual exit): rebuild toward 10% cash
-  by being selective about the next entry — don't immediately redeploy into the first thing you see.
-- Never sell a strong position with an intact thesis purely to hit a cash target. Let winners run.
-
-**Be SPECIFIC:**
-✅ "BUY 10 shares AAPL at $255. Stop-loss: $230 (-9.8%). Take-profit: $295 (+15.7%). Reasoning: Strong iPhone sales..."
-❌ "Consider buying tech stocks"
-
-**OPTIONAL: For easier parsing, you can also provide a JSON block at the end:**
-\`\`\`json
-{
-  "trades": [
-    {
-      "action": "buy",
-      "symbol": "MSFT",
-      "quantity": 50,
-      "entry_price": 415.00,
-      "stop_loss": 385.00,
-      "take_profit": 460.00,
-      "sector": "Technology",
-      "intent": "quality_dip",
-      "reasoning": "Strong Azure growth..."
-    }
-  ]
-}
-\`\`\`
-
-**IMPORTANT: Include "intent" field in each trade:**
-- "momentum" - from pre-ranked momentum candidates
-- "momentum_short" - short from pre-ranked candidates
-- "value_momentum" - from value watchlist showing momentum
-- "quality_dip" - from quality watchlist dip opportunity
-- "overvalued_short" - from overvalued watchlist breakdown
-
-This helps track why each position was entered for future analysis.
-- "quality_dip" - from quality watchlist dip opportunity
-
-This helps track why each position was entered for future analysis.
+TOTAL_BUY_RECOMMENDATIONS: [count]
+SUB-SECTOR_BREAKDOWN: [list count per sub-sector]
+TOTAL_CAPITAL_ALLOCATED: $[amount] ([X]% of portfolio)
 
 ${historyContext}`;
 
-      console.log('📝 PHASE 2: Sending final question to Opus...');
-      console.log('⏳ Extended thinking enabled (50,000 tokens MAX)');
-      console.log('⏳ Temperature: 1 (creative, diverse)');
-      console.log('⏳ This will take 3-7 minutes...');
+      const phase2Start = Date.now();
+      const phase2Analysis = await claude.deepAnalysis(
+        portfolio,
+        fullMarketData,
+        news,
+        {},
+        phase2Question,
+        50000  // 50k token thinking budget for long analysis
+      );
+      const phase2Duration = ((Date.now() - phase2Start) / 1000).toFixed(1);
+
+      console.log(`✅ Phase 2 complete (${phase2Duration}s)`);
       console.log('');
 
-      const phase2Start = Date.now();
+      // PHASE 3: Deep analysis of SHORT candidates (50k thinking budget)
+      console.log('');
+      console.log('═══════════════════════════════════════');
+      console.log('📉 PHASE 3: SHORT ANALYSIS');
+      console.log('═══════════════════════════════════════');
+      console.log(`Analyzing ${candidates.shorts.length} short candidates with 50k token thinking budget`);
+      console.log('⏳ This will take 3-5 minutes...');
+      console.log('');
+
+      const phase3Question = `You are managing a $100k portfolio. You are in PHASE 3: SHORT ANALYSIS.
+
+**Input:** ${candidates.shorts.length} short candidates from Phase 1
+
+**Short Candidates:**
+${candidates.shorts.map(sym => `- ${sym}: $${fullMarketData[sym]?.price || 'N/A'} (${fullMarketData[sym]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[sym]?.change_percentage || 0}%)`).join('\n')}
+
+**Current Portfolio:**
+- Positions: ${portfolio.positions.length}
+- Total Value: $${portfolio.totalValue.toLocaleString()}
+- Cash Available: $${portfolio.cash.toLocaleString()}
+
+${cashContext}
+${vixContext}
+${macroContext}
+${performanceContext}
+${sectorContext}
+${optionsContext}
+${marketRegimeContext}
+${assetClassContext}
+
+**Your Task:** Analyze each candidate and provide SHORT or PASS decisions.
+
+**Analysis Framework (for each stock):**
+1. Fundamental Weakness: Deteriorating business, declining revenue/earnings, excessive valuation, balance sheet concerns
+2. Technical Confirmation (REQUIRED): Price below declining 200MA, RSI not oversold (>30), breakdown below support, bearish patterns
+3. Catalyst Analysis: NO earnings within 2 weeks, sector headwinds, insider selling, negative news
+4. Risk Assessment: Entry price, tight stop (5-8% above entry), target price, short squeeze risk, position size (5-10% max)
+
+**Decision Criteria:**
+- SHORT: Weak fundamentals + bearish technicals + clear catalyst + NO earnings + low squeeze risk
+- PASS: Missing technical confirmation, earnings risk, high short interest, or better opportunities exist
+
+**CRITICAL: 0-3 per sub-sector enforcement**
+- Track sub-sector count as you analyze
+- If sub-sector already has 3 SHORT decisions, automatically PASS remaining candidates
+- Prioritize highest conviction setups within each sub-sector
+
+**MANDATORY TECHNICAL CHECKLIST (must pass ALL):**
+- [ ] Price below 200MA
+- [ ] 200MA is declining
+- [ ] RSI > 30 (not oversold)
+- [ ] No earnings within 2 weeks
+- [ ] Short interest < 20% of float
+
+**Output Format (for each stock):**
+SYMBOL: [ticker]
+SUB-SECTOR: [specific sub-sector]
+DECISION: SHORT or PASS
+
+[If SHORT:]
+ENTRY: $[price]
+STOP: $[price] ([X]% risk, typically 5-8%)
+TARGET: $[price] ([X]% downside)
+POSITION_SIZE: [X]% of portfolio ($[amount], typically 5-10%)
+CONVICTION: High/Medium
+TECHNICAL_CHECKLIST: [confirm all 5 items checked]
+REASONING: [2-3 sentences]
+
+[If PASS:]
+REASONING: [1-2 sentences, specify which technical criteria failed if applicable]
+
+---
+
+**Final Phase 3 Summary:**
+EXECUTE_SHORT:
+- SYMBOL | QUANTITY | ENTRY | STOP | TARGET | SUBSECTOR
+[repeat for each SHORT]
+
+TOTAL_SHORT_RECOMMENDATIONS: [count]
+SUB-SECTOR_BREAKDOWN: [list count per sub-sector]
+TOTAL_CAPITAL_ALLOCATED: $[amount] ([X]% of portfolio)
+
+${historyContext}`;
+
+      const phase3Start = Date.now();
+      const phase3Analysis = await claude.deepAnalysis(
+        portfolio,
+        fullMarketData,
+        news,
+        {},
+        phase3Question,
+        50000  // 50k token thinking budget for short analysis
+      );
+      const phase3Duration = ((Date.now() - phase3Start) / 1000).toFixed(1);
+
+      console.log(`✅ Phase 3 complete (${phase3Duration}s)`);
+      console.log('');
+
+      // PHASE 4: Portfolio construction combining insights from Phase 2 & 3 (20k thinking budget)
+      console.log('');
+      console.log('═══════════════════════════════════════');
+      console.log('🎯 PHASE 4: PORTFOLIO CONSTRUCTION');
+      console.log('═══════════════════════════════════════');
+      console.log('Combining long and short insights with 20k token thinking budget');
+      console.log('⏳ This will take 1-2 minutes...');
+      console.log('');
+
+      const phase4Question = `You are managing a $100k portfolio. You are in PHASE 4: PORTFOLIO CONSTRUCTION.
+
+**PHASE 2 LONG ANALYSIS RESULTS:**
+${phase2Analysis.analysis}
+
+**PHASE 3 SHORT ANALYSIS RESULTS:**
+${phase3Analysis.analysis}
+
+**Current Portfolio:**
+- Positions: ${portfolio.positions.length}
+- Total Value: $${portfolio.totalValue.toLocaleString()}
+- Cash Available: $${portfolio.cash.toLocaleString()}
+
+${marketRegimeContext}
+${assetClassContext}
+
+**Your Task:** Construct final portfolio with 10-12 positions total.
+
+**Portfolio Constraints:**
+- Total positions: 10-12 (combined longs + shorts)
+- Max position size: 12% ($12,000)
+- Min position size: 5% ($5,000)
+- 0-3 stocks per sub-sector (ACROSS BOTH LONGS AND SHORTS COMBINED)
+
+**Construction Process:**
+1. Sub-Sector Limit Enforcement: Review all BUY and SHORT recommendations, count total per sub-sector (longs + shorts combined), eliminate lowest conviction if >3
+2. Market Regime Allocation: Bull (60-70% long, 30-40% short), Bear (30-40% long, 60-70% short), Neutral (50-50%)
+3. Diversification Check: Max 30% in any single sector, balance growth/value and cyclical/defensive
+4. Position Sizing: High conviction + low vol (10-12%), High conviction + high vol (8-10%), Medium conviction (6-8%), Shorts (5-10%)
+5. Final Risk Assessment: Portfolio beta, sector concentration, event risk, liquidity
+
+**Output Format:**
+
+**FINAL PORTFOLIO CONSTRUCTION:**
+
+**LONG POSITIONS:**
+1. SYMBOL | QUANTITY | ENTRY | STOP | TARGET | SUBSECTOR | ALLOCATION
+[repeat for each long, sorted by allocation %]
+
+**SHORT POSITIONS:**
+1. SYMBOL | QUANTITY | ENTRY | STOP | TARGET | SUBSECTOR | ALLOCATION
+[repeat for each short, sorted by allocation %]
+
+**PORTFOLIO SUMMARY:**
+- Total Positions: [count]
+- Long Positions: [count] ([X]% of capital)
+- Short Positions: [count] ([X]% of capital)
+- Cash Reserve: [X]%
+- Sub-Sector Breakdown: [list each sub-sector with count]
+- Sector Allocation: [list major sectors with %]
+
+**ELIMINATED POSITIONS (if any):**
+- SYMBOL | REASON
+
+**RISK METRICS:**
+- Estimated Portfolio Beta: [X.XX]
+- Largest Position: [X]%
+- Largest Sector: [X]%
+- Net Market Exposure: [X]% (long % - short %)
+
+**FINAL EXECUTION COMMANDS:**
+
+EXECUTE_BUY:
+SYMBOL | QUANTITY | ENTRY | STOP | TARGET | SUBSECTOR
+[one line per position]
+
+EXECUTE_SHORT:
+SYMBOL | QUANTITY | ENTRY | STOP | TARGET | SUBSECTOR
+[one line per position]
+
+**RATIONALE:**
+[2-3 sentences explaining portfolio construction logic, market regime consideration, and key risk/reward thesis]
+
+${historyContext}`;
+
+      const phase4Start = Date.now();
       const analysis = await claude.deepAnalysis(
         portfolio,
         fullMarketData,
         news,
         {},
-        phase2Question
+        phase4Question,
+        20000  // 20k token thinking budget for portfolio construction
       );
-      const phase2Duration = ((Date.now() - phase2Start) / 1000).toFixed(1);
+      const phase4Duration = ((Date.now() - phase4Start) / 1000).toFixed(1);
       const totalDuration = ((Date.now() - phase1Start) / 1000).toFixed(1);
 
       console.log('');
       console.log('═══════════════════════════════════════');
-      console.log('✅ OPUS ANALYSIS COMPLETE');
+      console.log('✅ 4-PHASE OPUS ANALYSIS COMPLETE');
       console.log('═══════════════════════════════════════');
-      console.log('Phase 1 Duration:', phase1Duration, 'seconds');
-      console.log('Phase 2 Duration:', phase2Duration, 'seconds');
+      console.log('Phase 1 Duration:', phase1Duration, 'seconds (pre-ranking)');
+      console.log('Phase 2 Duration:', phase2Duration, 'seconds (long analysis, 50k tokens)');
+      console.log('Phase 3 Duration:', phase3Duration, 'seconds (short analysis, 50k tokens)');
+      console.log('Phase 4 Duration:', phase4Duration, 'seconds (portfolio construction, 20k tokens)');
       console.log('Total Duration:', totalDuration, 'seconds');
       console.log('Response length:', analysis.analysis.length, 'characters');
       console.log('Model used:', analysis.model);
@@ -1495,11 +1619,12 @@ ${historyContext}`;
       console.log('💾 Saving analysis to database...');
 
       // Log the decision with token usage
+      const allAnalyzedStocks = [...candidates.longs, ...candidates.shorts];
       const analysisId = await db.logAIDecision({
         type: 'deep-analysis',
         symbol: null,
         recommendation: analysis.analysis,
-        reasoning: `Two-phase deep analysis. Phase 1: ${tickersToAnalyze.length} stocks identified. Phase 2: Final recommendations with real-time prices.`,
+        reasoning: `4-phase deep analysis. Phase 1: ${candidates.longs.length} longs + ${candidates.shorts.length} shorts identified. Phase 2: Long analysis (50k tokens). Phase 3: Short analysis (50k tokens). Phase 4: Portfolio construction (20k tokens).`,
         model: 'opus',
         confidence: 'high',
         inputTokens: analysis.usage?.input_tokens,
@@ -1525,7 +1650,7 @@ ${historyContext}`;
       await trendLearning.saveMarketTrendPattern({
         date: new Date().toISOString().split('T')[0],
         type: 'daily-analysis',
-        description: `Market analysis with ${tickersToAnalyze.length} stocks analyzed`,
+        description: `4-phase analysis: ${candidates.longs.length} longs + ${candidates.shorts.length} shorts analyzed`,
         actionTaken: analysis.analysis.substring(0, 500) // First 500 chars as summary
       });
       console.log('✅ Trend pattern saved');
@@ -1538,7 +1663,7 @@ ${historyContext}`;
       console.log('💾 Saving stock analyses to learning database...');
       const { saveStockAnalysis } = await import('./trend-learning.js');
 
-      for (const ticker of tickersToAnalyze) {
+      for (const ticker of allAnalyzedStocks) {
         try {
           // Extract analysis for this specific ticker from the full analysis text
           const tickerMention = analysis.analysis.includes(ticker);
@@ -1547,19 +1672,19 @@ ${historyContext}`;
               symbol: ticker,
               date: new Date().toISOString().split('T')[0],
               type: 'daily',
-              price: marketContext[ticker]?.price || 0,
-              thesis: `Analyzed in daily deep analysis with ${tickersToAnalyze.length} stocks`,
+              price: fullMarketData[ticker]?.price || 0,
+              thesis: `Analyzed in 4-phase deep analysis with ${allAnalyzedStocks.length} stocks`,
               recommendation: analysis.analysis.includes(`BUY: ${ticker}`) ? 'buy' :
                             analysis.analysis.includes(`SHORT: ${ticker}`) ? 'short' : 'hold',
               confidence: 'medium',
-              keyFactors: [`Included in ${tickersToAnalyze.length}-stock analysis`, `VIX: ${currentRegime.vix}`]
+              keyFactors: [`Included in ${allAnalyzedStocks.length}-stock analysis`, `VIX: ${currentRegime.vix}`]
             });
           }
         } catch (error) {
           console.warn(`⚠️ Could not save analysis for ${ticker}:`, error.message);
         }
       }
-      console.log(`✅ Saved ${tickersToAnalyze.length} stock analyses to learning database`);
+      console.log(`✅ Saved ${allAnalyzedStocks.length} stock analyses to learning database`);
       console.log('');
 
       // Parse recommendations and execute trades automatically
@@ -1668,7 +1793,44 @@ ${historyContext}`;
   }
 
   /**
-   * Extract ticker symbols from Phase 1 analysis
+   * Extract long and short candidates from Phase 1 analysis
+   */
+  extractLongShortCandidates(analysisText) {
+    const longCandidates = [];
+    const shortCandidates = [];
+
+    // Extract LONG_CANDIDATES section
+    const longSection = analysisText.match(/LONG_CANDIDATES:[\s\S]*?(?=SHORT_CANDIDATES:|REASONING:|$)/i);
+    if (longSection) {
+      const lines = longSection[0].split('\n');
+      for (const line of lines) {
+        const match = line.match(/\b([A-Z]{1,5})\b/);
+        if (match && match[1] !== 'LONG' && match[1] !== 'CANDIDATES') {
+          longCandidates.push(match[1]);
+        }
+      }
+    }
+
+    // Extract SHORT_CANDIDATES section
+    const shortSection = analysisText.match(/SHORT_CANDIDATES:[\s\S]*?(?=REASONING:|$)/i);
+    if (shortSection) {
+      const lines = shortSection[0].split('\n');
+      for (const line of lines) {
+        const match = line.match(/\b([A-Z]{1,5})\b/);
+        if (match && match[1] !== 'SHORT' && match[1] !== 'CANDIDATES') {
+          shortCandidates.push(match[1]);
+        }
+      }
+    }
+
+    return {
+      longs: [...new Set(longCandidates)].slice(0, 20),
+      shorts: [...new Set(shortCandidates)].slice(0, 20)
+    };
+  }
+
+  /**
+   * Extract ticker symbols from Phase 1 analysis (legacy - kept for backward compatibility)
    */
   extractTickers(analysisText) {
     const tickers = [];

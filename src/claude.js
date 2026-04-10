@@ -33,7 +33,7 @@ class ClaudeAPI {
   /**
    * Send message to Claude (non-streaming)
    */
-  async sendMessage(messages, model = MODELS.SONNET, systemPrompt = null, enableThinking = false) {
+  async sendMessage(messages, model = MODELS.SONNET, systemPrompt = null, enableThinking = false, thinkingBudget = 50000) {
     try {
       const payload = {
         model,
@@ -43,10 +43,10 @@ class ClaudeAPI {
 
       // Extended thinking requires temperature 1.0
       if (enableThinking && model === MODELS.OPUS) {
-        console.log('🧠 Enabling extended thinking with 50,000 token budget (MAX)...');
+        console.log(`🧠 Enabling extended thinking with ${thinkingBudget.toLocaleString()} token budget...`);
         payload.thinking = {
           type: 'enabled',
-          budget_tokens: 50000
+          budget_tokens: thinkingBudget
         };
         payload.temperature = 1; // Required for extended thinking
         console.log('⏳ This may take 3-7 minutes for DEEP analysis...');
@@ -90,7 +90,7 @@ class ClaudeAPI {
   /**
    * Deep analysis with Opus (for major decisions)
    */
-  async deepAnalysis(portfolioData, marketData, newsData, economicData, question) {
+  async deepAnalysis(portfolioData, marketData, newsData, economicData, question, thinkingBudget = 50000) {
     const prompt = this.buildDeepAnalysisPrompt(
       portfolioData,
       marketData,
@@ -102,7 +102,7 @@ class ClaudeAPI {
     const messages = [{ role: 'user', content: prompt }];
 
     // Use Opus with extended thinking for major decisions
-    const response = await this.sendMessage(messages, MODELS.OPUS, null, true);
+    const response = await this.sendMessage(messages, MODELS.OPUS, null, true, thinkingBudget);
     return this.parseAnalysisResponse(response);
   }
 
