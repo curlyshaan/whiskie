@@ -1018,18 +1018,18 @@ router.get('/approvals', async (req, res) => {
           </div>
           <div class="detail-item">
             <div class="detail-label">Entry Price</div>
-            <div class="detail-value">$${trade.entry_price?.toFixed(2) || 'Market'}</div>
+            <div class="detail-value">$${trade.entry_price ? parseFloat(trade.entry_price).toFixed(2) : 'Market'}</div>
           </div>
           ${trade.stop_loss ? `
           <div class="detail-item">
             <div class="detail-label">Stop Loss</div>
-            <div class="detail-value">$${trade.stop_loss.toFixed(2)}</div>
+            <div class="detail-value">$${parseFloat(trade.stop_loss).toFixed(2)}</div>
           </div>
           ` : ''}
           ${trade.take_profit ? `
           <div class="detail-item">
             <div class="detail-label">Take Profit</div>
-            <div class="detail-value">$${trade.take_profit.toFixed(2)}</div>
+            <div class="detail-value">$${parseFloat(trade.take_profit).toFixed(2)}</div>
           </div>
           ` : ''}
           ${trade.intent ? `
