@@ -1615,20 +1615,19 @@ ${historyContext}`;
 **CRITICAL OUTPUT FORMAT REQUIREMENT:**
 You MUST output trades in this EXACT format for the parser to work:
 
-EXECUTE_BUY:
-AVGO | 26 | 373.96 | 355.00 | 420.00
-TSM | 26 | 377.12 | 360.00 | 415.00
+EXECUTE_BUY: AVGO | 26 | 373.96 | 355.00 | 420.00
+EXECUTE_BUY: TSM | 26 | 377.12 | 360.00 | 415.00
 
-EXECUTE_SHORT:
-NET | 45 | 177.72 | 186.60 | 151.06
-NOW | 95 | 84.23 | 88.44 | 71.60
+EXECUTE_SHORT: NET | 45 | 177.72 | 186.60 | 151.06
+EXECUTE_SHORT: NOW | 95 | 84.23 | 88.44 | 71.60
 
 **CRITICAL STOP-LOSS RULES:**
 - LONGS: Stop BELOW entry (e.g., entry $100, stop $95)
 - SHORTS: Stop ABOVE entry (e.g., entry $100, stop $105) - you lose money when price RISES
 
+IMPORTANT: Each trade MUST start with "EXECUTE_BUY:" or "EXECUTE_SHORT:" on the SAME line as the trade data.
 DO NOT use table format. DO NOT add "shares" or "$" symbols. DO NOT add column headers.
-Just: SYMBOL | QUANTITY | ENTRY | STOP | TARGET (one per line)
+Format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET (each trade on its own line)
 
 **PHASE 2 LONG ANALYSIS RESULTS:**
 ${phase2Analysis.analysis}
@@ -1690,13 +1689,15 @@ ${assetClassContext}
 
 **FINAL EXECUTION COMMANDS:**
 
-EXECUTE_BUY:
-SYMBOL | QUANTITY | ENTRY | STOP | TARGET | SUBSECTOR
-[one line per position]
+EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET
+EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET
+[one EXECUTE_BUY line per long position]
 
-EXECUTE_SHORT:
-SYMBOL | QUANTITY | ENTRY | STOP | TARGET | SUBSECTOR
-[one line per position]
+EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET
+EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET
+[one EXECUTE_SHORT line per short position]
+
+Remember: Each trade MUST have "EXECUTE_BUY:" or "EXECUTE_SHORT:" prefix on the SAME line as the trade data.
 
 **RATIONALE:**
 [2-3 sentences explaining portfolio construction logic, market regime consideration, and key risk/reward thesis]
@@ -2150,80 +2151,97 @@ ${historyContext}`;
       }
 
       // Fallback to regex parsing
+      // Find all trade markers first to extract reasoning between them
+      const allTradeMatches = [];
+
       // Parse EXECUTE_BUY
       const buyPattern = /EXECUTE_BUY:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/gi;
-
       let match;
       while ((match = buyPattern.exec(analysisText)) !== null) {
-        const symbol = match[1];
-        const quantity = parseInt(match[2]);
-        const entryPrice = parseFloat(match[3]);
-        const stopLoss = parseFloat(match[4]);
-        const takeProfit = parseFloat(match[5]);
-
-        // Validate stop-loss and take-profit for longs
-        if (stopLoss >= entryPrice) {
-          console.warn(`⚠️ Invalid stop-loss for ${symbol}: $${stopLoss} must be below entry $${entryPrice}`);
-          continue;
-        }
-
-        if (takeProfit <= entryPrice) {
-          console.warn(`⚠️ Invalid take-profit for ${symbol}: $${takeProfit} must be above entry $${entryPrice}`);
-          continue;
-        }
-
-        const textAfter = analysisText.substring(match.index + match[0].length, match.index + match[0].length + 500);
-
-        // Get asset class for symbol
-        const assetClass = assetClassData.getAssetClass(symbol);
-
-        recommendations.push({
+        allTradeMatches.push({
           type: 'long',
-          symbol,
-          quantity,
-          entryPrice,
-          stopLoss,
-          takeProfit,
-          assetClass,
-          reasoning: textAfter.trim()
+          symbol: match[1],
+          quantity: parseInt(match[2]),
+          entryPrice: parseFloat(match[3]),
+          stopLoss: parseFloat(match[4]),
+          takeProfit: parseFloat(match[5]),
+          index: match.index,
+          endIndex: match.index + match[0].length
         });
       }
 
       // Parse EXECUTE_SHORT
       const shortPattern = /EXECUTE_SHORT:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/gi;
-
       while ((match = shortPattern.exec(analysisText)) !== null) {
-        const symbol = match[1];
-        const quantity = parseInt(match[2]);
-        const entryPrice = parseFloat(match[3]);
-        const stopLoss = parseFloat(match[4]);
-        const takeProfit = parseFloat(match[5]);
+        allTradeMatches.push({
+          type: 'short',
+          symbol: match[1],
+          quantity: parseInt(match[2]),
+          entryPrice: parseFloat(match[3]),
+          stopLoss: parseFloat(match[4]),
+          takeProfit: parseFloat(match[5]),
+          index: match.index,
+          endIndex: match.index + match[0].length
+        });
+      }
 
-        // Validate stop-loss and take-profit for shorts (inverse logic)
-        if (stopLoss <= entryPrice) {
-          console.warn(`⚠️ Invalid stop-loss for SHORT ${symbol}: $${stopLoss} must be ABOVE entry $${entryPrice}`);
-          continue;
+      // Sort by position in text
+      allTradeMatches.sort((a, b) => a.index - b.index);
+
+      // Extract reasoning for each trade (text between current trade and next trade)
+      for (let i = 0; i < allTradeMatches.length; i++) {
+        const trade = allTradeMatches[i];
+        const nextTrade = allTradeMatches[i + 1];
+
+        // Extract text from end of current trade line to start of next trade (or end of text)
+        const reasoningStart = trade.endIndex;
+        const reasoningEnd = nextTrade ? nextTrade.index : analysisText.length;
+        let reasoning = analysisText.substring(reasoningStart, reasoningEnd).trim();
+
+        // Clean up reasoning - remove common separators and extra whitespace
+        reasoning = reasoning
+          .replace(/^[\s\-\*]+/, '') // Remove leading separators
+          .replace(/EXECUTE_(BUY|SHORT):.*$/s, '') // Remove any trailing trade commands
+          .trim();
+
+        // Limit reasoning length to avoid bloat
+        if (reasoning.length > 1000) {
+          reasoning = reasoning.substring(0, 1000) + '...';
         }
 
-        if (takeProfit >= entryPrice) {
-          console.warn(`⚠️ Invalid take-profit for SHORT ${symbol}: $${takeProfit} must be BELOW entry $${entryPrice}`);
-          continue;
+        // Validate stop-loss and take-profit
+        if (trade.type === 'long') {
+          if (trade.stopLoss >= trade.entryPrice) {
+            console.warn(`⚠️ Invalid stop-loss for ${trade.symbol}: $${trade.stopLoss} must be below entry $${trade.entryPrice}`);
+            continue;
+          }
+          if (trade.takeProfit <= trade.entryPrice) {
+            console.warn(`⚠️ Invalid take-profit for ${trade.symbol}: $${trade.takeProfit} must be above entry $${trade.entryPrice}`);
+            continue;
+          }
+        } else {
+          if (trade.stopLoss <= trade.entryPrice) {
+            console.warn(`⚠️ Invalid stop-loss for SHORT ${trade.symbol}: $${trade.stopLoss} must be ABOVE entry $${trade.entryPrice}`);
+            continue;
+          }
+          if (trade.takeProfit >= trade.entryPrice) {
+            console.warn(`⚠️ Invalid take-profit for SHORT ${trade.symbol}: $${trade.takeProfit} must be BELOW entry $${trade.entryPrice}`);
+            continue;
+          }
         }
-
-        const textAfter = analysisText.substring(match.index + match[0].length, match.index + match[0].length + 500);
 
         // Get asset class for symbol
-        const assetClass = assetClassData.getAssetClass(symbol);
+        const assetClass = assetClassData.getAssetClass(trade.symbol);
 
         recommendations.push({
-          type: 'short',
-          symbol,
-          quantity,
-          entryPrice,
-          stopLoss,
-          takeProfit,
+          type: trade.type,
+          symbol: trade.symbol,
+          quantity: trade.quantity,
+          entryPrice: trade.entryPrice,
+          stopLoss: trade.stopLoss,
+          takeProfit: trade.takeProfit,
           assetClass,
-          reasoning: textAfter.trim()
+          reasoning: reasoning || `${trade.type === 'long' ? 'Long' : 'Short'} position in ${trade.symbol}`
         });
       }
 

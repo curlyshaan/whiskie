@@ -153,7 +153,7 @@ class TradeApprovalManager {
       </p>
     `;
 
-    await email.sendEmail(subject, html);
+    await email.sendEmail(email.alertEmail, subject, html);
   }
 
   /**
@@ -193,7 +193,7 @@ class TradeApprovalManager {
       <p><em>These approval requests expire in 24 hours.</em></p>
     `;
 
-    await email.sendEmail(subject, html);
+    await email.sendEmail(email.alertEmail, subject, html);
   }
 
   /**
