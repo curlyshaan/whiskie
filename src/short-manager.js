@@ -169,13 +169,18 @@ class ShortManager {
       throw new Error('Stop-loss is REQUIRED for short positions');
     }
 
+    // Convert to numbers for proper comparison
+    const entryNum = parseFloat(entryPrice);
+    const stopNum = parseFloat(stopLoss);
+    const takeProfitNum = takeProfit ? parseFloat(takeProfit) : null;
+
     // Validate inverse stop-loss logic
-    if (stopLoss <= entryPrice) {
+    if (stopNum <= entryNum) {
       throw new Error(`Short stop-loss $${stopLoss} must be ABOVE entry $${entryPrice} (triggers on price rise)`);
     }
 
     // Validate take-profit
-    if (takeProfit && takeProfit >= entryPrice) {
+    if (takeProfitNum && takeProfitNum >= entryNum) {
       throw new Error(`Short take-profit $${takeProfit} must be BELOW entry $${entryPrice}`);
     }
 

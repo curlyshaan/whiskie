@@ -1623,6 +1623,10 @@ EXECUTE_SHORT:
 NET | 45 | 177.72 | 186.60 | 151.06
 NOW | 95 | 84.23 | 88.44 | 71.60
 
+**CRITICAL STOP-LOSS RULES:**
+- LONGS: Stop BELOW entry (e.g., entry $100, stop $95)
+- SHORTS: Stop ABOVE entry (e.g., entry $100, stop $105) - you lose money when price RISES
+
 DO NOT use table format. DO NOT add "shares" or "$" symbols. DO NOT add column headers.
 Just: SYMBOL | QUANTITY | ENTRY | STOP | TARGET (one per line)
 
