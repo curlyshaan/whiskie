@@ -1311,6 +1311,13 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 
       const phase2Question = `You are managing a $100k portfolio. You are in PHASE 2: LONG ANALYSIS.
 
+**CRITICAL: You have 50,000 tokens for extended thinking. USE THEM ALL. Analyze each stock deeply:**
+- Spend 2-3 minutes thinking about each stock
+- Consider multiple scenarios and outcomes
+- Evaluate risks thoroughly
+- Compare alternatives
+- Think through second-order effects
+
 **Input:** ${candidates.longs.length} long candidates from Phase 1
 
 **Long Candidates:**
@@ -1401,6 +1408,13 @@ ${historyContext}`;
       console.log('');
 
       const phase3Question = `You are managing a $100k portfolio. You are in PHASE 3: SHORT ANALYSIS.
+
+**CRITICAL: You have 50,000 tokens for extended thinking. USE THEM ALL. Analyze each stock deeply:**
+- Spend 2-3 minutes thinking about each stock
+- Consider multiple scenarios and outcomes
+- Evaluate risks thoroughly
+- Compare alternatives
+- Think through second-order effects
 
 **Input:** ${candidates.shorts.length} short candidates from Phase 1
 
@@ -1499,6 +1513,20 @@ ${historyContext}`;
       console.log('');
 
       const phase4Question = `You are managing a $100k portfolio. You are in PHASE 4: PORTFOLIO CONSTRUCTION.
+
+**CRITICAL OUTPUT FORMAT REQUIREMENT:**
+You MUST output trades in this EXACT format for the parser to work:
+
+EXECUTE_BUY:
+AVGO | 26 | 373.96 | 355.00 | 420.00
+TSM | 26 | 377.12 | 360.00 | 415.00
+
+EXECUTE_SHORT:
+NET | 45 | 177.72 | 186.60 | 151.06
+NOW | 95 | 84.23 | 88.44 | 71.60
+
+DO NOT use table format. DO NOT add "shares" or "$" symbols. DO NOT add column headers.
+Just: SYMBOL | QUANTITY | ENTRY | STOP | TARGET (one per line)
 
 **PHASE 2 LONG ANALYSIS RESULTS:**
 ${phase2Analysis.analysis}
