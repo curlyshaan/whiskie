@@ -37,6 +37,7 @@ import { runTaxOptimizationCheck } from './tax-optimizer.js';
 import { runTrailingStopCheck, updateTrailingStops } from './trailing-stops.js';
 import { runEarningsDayAnalysis } from './earnings-analysis.js';
 import { runWeeklyReview } from './weekly-review.js';
+import stockProfiles from './stock-profiles.js';
 
 dotenv.config();
 
@@ -157,6 +158,24 @@ class WhiskieBot {
         } catch (error) {
           console.error('❌ Error in Saturday screening:', error);
           await email.sendErrorAlert(error, 'Saturday fundamental screening failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule biweekly deep stock research - Saturday 10:00 AM ET (every 2 weeks)
+      // Runs on even-numbered weeks (week 2, 4, 6, etc. of the year)
+      cron.schedule('0 10 * * 6', async () => {
+        const weekNumber = Math.ceil((new Date().getTime() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000));
+        if (weekNumber % 2 === 0) {
+          console.log('\n⏰ Saturday 10:00 AM - Biweekly deep stock research');
+          try {
+            await stockProfiles.runBiweeklyDeepResearch();
+            console.log('✅ Biweekly research complete');
+          } catch (error) {
+            console.error('❌ Error in biweekly research:', error);
+            await email.sendErrorAlert(error, 'Biweekly stock research failed');
+          }
         }
       }, {
         timezone: 'America/New_York'
@@ -1309,40 +1328,59 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
       console.log('⏳ This will take 3-5 minutes...');
       console.log('');
 
-      // Fetch stock analysis history for long candidates
-      console.log('📚 Fetching previous analyses for long candidates...');
+      // Fetch stock profiles for long candidates
+      console.log('📚 Fetching stock profiles for long candidates...');
+      const longProfiles = await stockProfiles.getStockProfiles(candidates.longs);
+      console.log(`✅ Found profiles for ${Object.keys(longProfiles).length} stocks`);
+
+      // Build stock profile context
+      let stockProfileContext = '';
+      if (Object.keys(longProfiles).length > 0) {
+        stockProfileContext = '\n\n**STOCK PROFILES (reference these for efficient analysis):**\n';
+        Object.entries(longProfiles).forEach(([symbol, profile]) => {
+          const daysOld = Math.floor((Date.now() - new Date(profile.last_updated).getTime()) / (1000 * 60 * 60 * 24));
+          stockProfileContext += `\n${symbol} (profile ${daysOld} days old):\n`;
+          stockProfileContext += `  Business: ${profile.business_model?.substring(0, 200) || 'N/A'}...\n`;
+          stockProfileContext += `  Moats: ${profile.moats?.substring(0, 150) || 'N/A'}...\n`;
+          stockProfileContext += `  Key Risks: ${profile.risks?.substring(0, 150) || 'N/A'}...\n`;
+          if (daysOld > 14) {
+            stockProfileContext += `  ⚠️ Profile is stale (${daysOld} days old) - do deeper refresh\n`;
+          } else {
+            stockProfileContext += `  ✅ Profile is fresh - focus on what changed since last update\n`;
+          }
+        });
+      }
+
+      // Also fetch recent analysis history for context
       const longStockHistory = {};
       for (const symbol of candidates.longs) {
-        const history = await trendLearning.getStockAnalysisHistory(symbol, 3);
+        const history = await trendLearning.getStockAnalysisHistory(symbol, 2);
         if (history.length > 0) {
           longStockHistory[symbol] = history;
         }
       }
-      console.log(`✅ Found previous analyses for ${Object.keys(longStockHistory).length} stocks`);
 
-      // Build stock history context
-      let stockHistoryContext = '';
+      let recentAnalysisContext = '';
       if (Object.keys(longStockHistory).length > 0) {
-        stockHistoryContext = '\n\n**PREVIOUS STOCK ANALYSES (reference these to save time):**\n';
+        recentAnalysisContext = '\n\n**RECENT TRADE DECISIONS:**\n';
         Object.entries(longStockHistory).forEach(([symbol, history]) => {
-          stockHistoryContext += `\n${symbol}:\n`;
-          history.forEach((analysis, i) => {
-            stockHistoryContext += `  ${i + 1}. ${analysis.analysis_date}: ${analysis.recommendation} (${analysis.confidence} confidence)\n`;
-            stockHistoryContext += `     Thesis: ${analysis.thesis?.substring(0, 200) || 'N/A'}...\n`;
-          });
+          recentAnalysisContext += `${symbol}: `;
+          recentAnalysisContext += history.map(h => `${h.analysis_date} ${h.recommendation}`).join(', ');
+          recentAnalysisContext += '\n';
         });
       }
 
       const phase2Question = `You are managing a $100k portfolio. You are in PHASE 2: LONG ANALYSIS.
 
 **Deep Analysis Approach:**
-Take your time with each stock. Don't rush through the analysis. For stocks you've analyzed before, you can reference your previous notes and focus on what's changed. For new stocks, build a comprehensive understanding from scratch. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
+Take your time with each stock. Don't rush through the analysis. For stocks with existing profiles, reference the profile and focus on what's changed (price action, news, catalysts). For stocks without profiles or with stale profiles (>14 days old), do a more comprehensive analysis. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
 
 **Input:** ${candidates.longs.length} long candidates from Phase 1
 
 **Long Candidates:**
 ${candidates.longs.map(sym => `- ${sym}: $${fullMarketData[sym]?.price || 'N/A'} (${fullMarketData[sym]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[sym]?.change_percentage || 0}%)`).join('\n')}
-${stockHistoryContext}
+${stockProfileContext}
+${recentAnalysisContext}
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
@@ -1428,40 +1466,58 @@ ${historyContext}`;
       console.log('⏳ This will take 3-5 minutes...');
       console.log('');
 
-      // Fetch stock analysis history for short candidates
-      console.log('📚 Fetching previous analyses for short candidates...');
+      // Fetch stock profiles for short candidates
+      console.log('📚 Fetching stock profiles for short candidates...');
+      const shortProfiles = await stockProfiles.getStockProfiles(candidates.shorts);
+      console.log(`✅ Found profiles for ${Object.keys(shortProfiles).length} stocks`);
+
+      // Build short stock profile context
+      let shortProfileContext = '';
+      if (Object.keys(shortProfiles).length > 0) {
+        shortProfileContext = '\n\n**STOCK PROFILES (reference these for efficient analysis):**\n';
+        Object.entries(shortProfiles).forEach(([symbol, profile]) => {
+          const daysOld = Math.floor((Date.now() - new Date(profile.last_updated).getTime()) / (1000 * 60 * 60 * 24));
+          shortProfileContext += `\n${symbol} (profile ${daysOld} days old):\n`;
+          shortProfileContext += `  Business: ${profile.business_model?.substring(0, 200) || 'N/A'}...\n`;
+          shortProfileContext += `  Key Risks: ${profile.risks?.substring(0, 150) || 'N/A'}...\n`;
+          if (daysOld > 14) {
+            shortProfileContext += `  ⚠️ Profile is stale (${daysOld} days old) - do deeper refresh\n`;
+          } else {
+            shortProfileContext += `  ✅ Profile is fresh - focus on what changed since last update\n`;
+          }
+        });
+      }
+
+      // Also fetch recent analysis history for context
       const shortStockHistory = {};
       for (const symbol of candidates.shorts) {
-        const history = await trendLearning.getStockAnalysisHistory(symbol, 3);
+        const history = await trendLearning.getStockAnalysisHistory(symbol, 2);
         if (history.length > 0) {
           shortStockHistory[symbol] = history;
         }
       }
-      console.log(`✅ Found previous analyses for ${Object.keys(shortStockHistory).length} stocks`);
 
-      // Build short stock history context
-      let shortHistoryContext = '';
+      let shortRecentAnalysisContext = '';
       if (Object.keys(shortStockHistory).length > 0) {
-        shortHistoryContext = '\n\n**PREVIOUS STOCK ANALYSES (reference these to save time):**\n';
+        shortRecentAnalysisContext = '\n\n**RECENT TRADE DECISIONS:**\n';
         Object.entries(shortStockHistory).forEach(([symbol, history]) => {
-          shortHistoryContext += `\n${symbol}:\n`;
-          history.forEach((analysis, i) => {
-            shortHistoryContext += `  ${i + 1}. ${analysis.analysis_date}: ${analysis.recommendation} (${analysis.confidence} confidence)\n`;
-            shortHistoryContext += `     Thesis: ${analysis.thesis?.substring(0, 200) || 'N/A'}...\n`;
-          });
+          shortRecentAnalysisContext += `${symbol}: `;
+          shortRecentAnalysisContext += history.map(h => `${h.analysis_date} ${h.recommendation}`).join(', ');
+          shortRecentAnalysisContext += '\n';
         });
       }
 
       const phase3Question = `You are managing a $100k portfolio. You are in PHASE 3: SHORT ANALYSIS.
 
 **Deep Analysis Approach:**
-Take your time with each stock. Don't rush through the analysis. For stocks you've analyzed before, you can reference your previous notes and focus on what's changed. For new stocks, build a comprehensive understanding from scratch. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
+Take your time with each stock. Don't rush through the analysis. For stocks with existing profiles, reference the profile and focus on what's changed (price action, news, catalysts). For stocks without profiles or with stale profiles (>14 days old), do a more comprehensive analysis. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
 
 **Input:** ${candidates.shorts.length} short candidates from Phase 1
 
 **Short Candidates:**
 ${candidates.shorts.map(sym => `- ${sym}: $${fullMarketData[sym]?.price || 'N/A'} (${fullMarketData[sym]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[sym]?.change_percentage || 0}%)`).join('\n')}
-${shortHistoryContext}
+${shortProfileContext}
+${shortRecentAnalysisContext}
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}

@@ -1136,4 +1136,21 @@ router.post('/api/approvals/:id/reject', async (req, res) => {
   }
 });
 
+// Manual trigger for biweekly deep research
+router.post('/api/trigger-deep-research', async (req, res) => {
+  try {
+    const stockProfiles = (await import('./stock-profiles.js')).default;
+    console.log('🔬 Manual trigger: Starting biweekly deep research...');
+    const results = await stockProfiles.runBiweeklyDeepResearch();
+    res.json({
+      success: true,
+      message: 'Deep research completed',
+      results: results
+    });
+  } catch (error) {
+    console.error('❌ Error in manual deep research trigger:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 export default router;

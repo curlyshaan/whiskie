@@ -427,6 +427,26 @@ export async function initDatabase() {
       );
     `);
 
+    // Stock profiles table - comprehensive research dossier
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS stock_profiles (
+        symbol VARCHAR(10) PRIMARY KEY,
+        business_model TEXT,
+        moats TEXT,
+        competitive_advantages TEXT,
+        fundamentals JSONB,
+        risks TEXT,
+        catalysts TEXT,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        profile_version INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_profiles_updated ON stock_profiles(last_updated);
+    `);
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_market_trend_date ON market_trend_patterns(pattern_date);
     `);
