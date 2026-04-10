@@ -3,6 +3,8 @@ import tradier from './tradier.js';
 import claude from './claude.js';
 import * as db from './db.js';
 import assetClassData from './asset-class-data.js';
+import yahooPython from './yahoo-python-client.js';
+import advancedFMPScreener from './advanced-fmp-screener.js';
 
 /**
  * Opus-Driven Screener for Quality and Overvalued Stocks
@@ -33,25 +35,43 @@ class OpusScreener {
       const allStocks = this.getAllStocks();
       console.log(`   Analyzing ${allStocks.length} stocks with Opus...`);
 
-      // Fetch fundamental data for all stocks (using cache)
-      console.log('   📊 Fetching fundamental data...');
+      // Fetch fundamental data using hybrid approach (Python yfinance + FMP free + cache)
+      console.log('   📊 Fetching fundamental data (hybrid: Python yfinance + FMP free)...');
       const fundamentalsData = {};
-      let cached = 0;
-      let fetched = 0;
+      const insiderData = {};
+      let yahooCount = 0;
+      let fmpCount = 0;
+      let cachedCount = 0;
 
       for (const stock of allStocks) {
-        const data = await fmpCache.getFundamentals(stock.symbol);
+        // Try cache first
+        let data = await fmpCache.getCached(stock.symbol);
+
+        if (data) {
+          cachedCount++;
+        } else {
+          // Fetch from Python yfinance service
+          data = await yahooPython.getFundamentals(stock.symbol);
+          if (data) {
+            yahooCount++;
+            // Cache for 30 days
+            await fmpCache.cacheFundamentals(stock.symbol, data, 30);
+          }
+        }
+
         if (data) {
           fundamentalsData[stock.symbol] = data;
+        }
 
-          // Check if cached
-          const wasCached = await fmpCache.getCached(stock.symbol);
-          if (wasCached) cached++;
-          else fetched++;
+        // Fetch insider trading from FMP free (only free smart money signal)
+        const insider = await advancedFMPScreener.getInsiderTrading(stock.symbol);
+        if (insider && insider.length > 0) {
+          insiderData[stock.symbol] = insider;
+          fmpCount++;
         }
       }
 
-      console.log(`   ✅ Loaded ${Object.keys(fundamentalsData).length} stocks (${cached} cached, ${fetched} fetched)`);
+      console.log(`   ✅ Loaded ${Object.keys(fundamentalsData).length} stocks (${cachedCount} cached, ${yahooCount} from Yahoo, ${fmpCount} with insider data)`);
 
       // Get current market prices
       console.log('   📈 Fetching current market prices...');
@@ -81,7 +101,8 @@ class OpusScreener {
           stocksForAnalysis.push({
             symbol,
             fundamentals: fundamentalsData[symbol],
-            market: marketData[symbol]
+            market: marketData[symbol],
+            insiderTrading: insiderData[symbol] || null
           });
         }
       }
@@ -150,16 +171,20 @@ class OpusScreener {
 
 **Stock Data:**
 
-${sortedStocks.map(s => `
+${sortedStocks.map(s => {
+  const insiderSignal = s.insiderTrading ? advancedFMPScreener.analyzeInsiderTrading(s.insiderTrading) : null;
+  return `
 ${s.symbol} (${s.fundamentals.sector})
   Market Cap: $${(s.fundamentals.marketCap / 1e9).toFixed(1)}B
   Price: $${s.market.price} (52w high: $${s.market.high52w}, ${((s.market.price - s.market.high52w) / s.market.high52w * 100).toFixed(1)}% from high)
   P/E: ${s.fundamentals.peRatio.toFixed(1)}, PEG: ${s.fundamentals.pegRatio.toFixed(2)}
   Revenue Growth: ${(s.fundamentals.revenueGrowth * 100).toFixed(1)}%, Earnings Growth: ${(s.fundamentals.earningsGrowth * 100).toFixed(1)}%
   Debt/Equity: ${s.fundamentals.debtToEquity.toFixed(2)}, ROE: ${(s.fundamentals.roe * 100).toFixed(1)}%
-  Operating Margin: ${(s.fundamentals.operatingMargin * 100).toFixed(1)}%, Net Margin: ${(s.fundamentals.netMargin * 100).toFixed(1)}%
-  FCF/Share: $${s.fundamentals.freeCashflowPerShare.toFixed(2)}
-`).join('\n')}
+  Operating Margin: ${(s.fundamentals.operatingMargin * 100).toFixed(1)}%, Net Margin: ${(s.fundamentals.profitMargin * 100).toFixed(1)}%
+  FCF: $${(s.fundamentals.freeCashflow / 1e9).toFixed(2)}B
+  Target Price: $${s.fundamentals.targetMeanPrice.toFixed(2)} (${s.fundamentals.numberOfAnalysts} analysts)${insiderSignal ? `\n  Insider Trading: ${insiderSignal.signal} - ${insiderSignal.reason}` : ''}
+`;
+}).join('\n')}
 
 **Output Format (JSON):**
 

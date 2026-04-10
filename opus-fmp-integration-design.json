@@ -1,0 +1,311 @@
+```json
+{
+  "phase1_integration": {
+    "insider_trading": {
+      "use_cases": ["quality_confirmation", "overvalued_warning", "entry_timing", "risk_assessment"],
+      "scoring_rules": {
+        "bullish_signal": "3+ insider buys in 90 days AND total buy value > $500k AND buy value > 2x sell value",
+        "bearish_signal": "4+ insider sells in 90 days AND total sell value > $2M AND sell value > 3x buy value",
+        "neutral_filter": "Ignore routine 10b5-1 sales unless volume spikes >50% above historical average",
+        "quality_boost": "+10 points if cluster buying (3+ insiders buying within 30 days)",
+        "overvalued_boost": "+8 points if cluster selling (4+ insiders selling within 30 days)",
+        "entry_timing": "Recent insider buy within 14 days = +3 quality points (fresh conviction)",
+        "risk_flag": "C-suite selling >$5M in single transaction = immediate Opus review"
+      },
+      "integration_points": ["opus_screener", "daily_analysis", "weekly_review"],
+      "cache_duration": "7 days",
+      "api_endpoint": "/v4/insider-trading",
+      "priority": "critical"
+    },
+    "institutional_ownership": {
+      "use_cases": ["smart_money_confirmation", "accumulation_detection", "distribution_warning"],
+      "scoring_rules": {
+        "bullish_signal": "5+ of top 10 institutions increasing positions >5% in latest quarter",
+        "bearish_signal": "5+ of top 10 institutions decreasing positions >5% in latest quarter",
+        "quality_boost": "+9 points if institutional accumulation (net increase >10% of shares outstanding)",
+        "overvalued_boost": "+9 points if institutional distribution (net decrease >10% of shares outstanding)",
+        "concentration_check": "If top 3 holders own >40%, reduce quality score by -3 (liquidity risk)",
+        "new_position_signal": "3+ new institutional positions >$10M = +4 quality points (discovery phase)",
+        "exit_signal": "3+ institutions fully exiting positions = +6 overvalued points (smart money leaving)"
+      },
+      "integration_points": ["opus_screener", "weekly_review"],
+      "cache_duration": "30 days",
+      "api_endpoint": "/v3/institutional-holder",
+      "priority": "critical"
+    },
+    "analyst_estimates": {
+      "use_cases": ["estimate_revision_momentum", "consensus_divergence", "earnings_setup"],
+      "scoring_rules": {
+        "bullish_signal": "Current quarter EPS estimate revised up >8% in last 30 days",
+        "bearish_signal": "Current quarter EPS estimate revised down >8% in last 30 days",
+        "quality_boost": "+7 points if positive estimate revisions (upward momentum)",
+        "overvalued_boost": "+7 points if negative estimate revisions (deteriorating outlook)",
+        "consensus_strength": "If 80%+ of analysts rate Buy/Strong Buy, +4 quality points",
+        "consensus_weakness": "If 60%+ of analysts rate Hold/Sell, +5 overvalued points",
+        "revision_velocity": "3+ upward revisions in 14 days = +5 quality points (accelerating momentum)",
+        "downgrade_cascade": "3+ downward revisions in 14 days = +6 overvalued points (deteriorating fast)"
+      },
+      "integration_points": ["opus_screener", "daily_analysis"],
+      "cache_duration": "14 days",
+      "api_endpoint": "/v3/analyst-estimates",
+      "priority": "critical"
+    }
+  },
+  "phase2_integration": {
+    "earnings_surprises": {
+      "use_cases": ["quality_consistency", "execution_track_record", "reliability_assessment"],
+      "scoring_rules": {
+        "quality_signal": "5+ consecutive quarters beating EPS estimates",
+        "broken_signal": "2+ consecutive quarters missing EPS estimates OR 3 misses in last 4 quarters",
+        "quality_boost": "+8 points if consistent beats (demonstrates execution reliability)",
+        "overvalued_boost": "+7 points if recent misses (execution deteriorating)",
+        "beat_magnitude": "Average beat >10% over 4 quarters = +3 quality points (conservative guidance)",
+        "miss_magnitude": "Average miss >5% over 2 quarters = +4 overvalued points (guidance credibility issue)",
+        "surprise_trend": "Improving surprise % quarter-over-quarter = +3 quality points",
+        "deteriorating_trend": "Declining surprise % quarter-over-quarter = +3 overvalued points"
+      },
+      "integration_points": ["opus_screener", "weekly_review"],
+      "cache_duration": "90 days",
+      "api_endpoint": "/v3/earnings-surprises",
+      "priority": "high"
+    },
+    "price_targets": {
+      "use_cases": ["sentiment_gauge", "upside_potential", "analyst_conviction"],
+      "scoring_rules": {
+        "bullish_signal": "Consensus target >25% above current price",
+        "bearish_signal": "Consensus target <5% above current price",
+        "quality_consideration": "High upside (>25%) supports quality thesis, +5 points",
+        "overvalued_consideration": "Low upside (<10%) supports overvalued thesis, +5 points",
+        "target_revision_up": "Consensus target raised >10% in 30 days = +4 quality points",
+        "target_revision_down": "Consensus target lowered >10% in 30 days = +5 overvalued points",
+        "analyst_dispersion": "If target range >40% (high/low), reduce confidence by -2 points (uncertainty)",
+        "recent_upgrade": "Analyst upgrade to Buy within 14 days = +3 quality points"
+      },
+      "integration_points": ["opus_screener", "daily_analysis"],
+      "cache_duration": "30 days",
+      "api_endpoint": "/v4/price-target-consensus",
+      "priority": "high"
+    },
+    "cash_flow": {
+      "use_cases": ["quality_validation", "financial_health", "earnings_quality"],
+      "scoring_rules": {
+        "quality_signal": "Positive FCF AND operating CF growing >10% YoY",
+        "broken_signal": "Negative FCF despite positive net income (earnings quality issue)",
+        "quality_boost": "+10 points if strong FCF generation (FCF/revenue >10%)",
+        "overvalued_boost": "+10 points if FCF deterioration (FCF declining >20% YoY)",
+        "cash_conversion": "Operating CF > net income = +4 quality points (high quality earnings)",
+        "cash_burn": "Operating CF < net income by >20% = +5 overvalued points (low quality earnings)",
+        "capex_efficiency": "FCF margin improving YoY = +3 quality points",
+        "capex_spike": "Capex >150% of historical average = -2 quality points (investment cycle risk)"
+      },
+      "integration_points": ["opus_screener", "weekly_review"],
+      "cache_duration": "90 days",
+      "api_endpoint": "/v3/cash-flow-statement",
+      "priority": "high"
+    }
+  },
+  "phase3_integration": {
+    "sec_filings": {
+      "use_cases": ["risk_detection", "language_analysis", "material_change_detection"],
+      "implementation": "NLP analysis of 10-K/10-Q MD&A section: detect risk factor additions, increased risk language frequency, litigation mentions, going concern warnings",
+      "scoring_rules": {
+        "risk_flag": "New risk factors added in latest filing = Opus review required",
+        "language_shift": "Risk language frequency up >30% YoY = +4 overvalued points",
+        "litigation_mention": "New material litigation disclosed = immediate Opus review"
+      },
+      "integration_points": ["weekly_review"],
+      "cache_duration": "90 days",
+      "api_endpoint": "/v3/sec_filings",
+      "priority": "low - implement after Phase 1 & 2 proven, requires NLP infrastructure"
+    },
+    "etf_holdings": {
+      "use_cases": ["passive_flow_analysis", "rebalancing_pressure", "liquidity_assessment"],
+      "implementation": "Track which ETFs hold stock, calculate passive ownership %, predict quarterly rebalancing flows based on index changes",
+      "scoring_rules": {
+        "passive_ownership": "If >30% passive ownership, note potential rebalancing volatility",
+        "index_addition": "Recent addition to major index = +3 quality points (passive inflows coming)",
+        "index_removal": "At risk of index removal = +4 overvalued points (passive outflows coming)"
+      },
+      "integration_points": ["weekly_review"],
+      "cache_duration": "30 days",
+      "api_endpoint": "/v3/etf-holder",
+      "priority": "medium - useful for timing, implement after Phase 1"
+    },
+    "balance_sheet": {
+      "use_cases": ["deep_fundamental_health", "working_capital_trends", "asset_quality"],
+      "implementation": "Supplement existing debt/equity with working capital analysis, current ratio trends, inventory turnover, receivables quality",
+      "scoring_rules": {
+        "working_capital": "Working capital increasing >15% YoY = +4 quality points",
+        "current_ratio": "Current ratio >2.0 and improving = +3 quality points",
+        "inventory_buildup": "Inventory growing >20% faster than revenue = +4 overvalued points (demand issue)",
+        "receivables_spike": "Receivables growing >25% faster than revenue = +3 overvalued points (collection issue)"
+      },
+      "integration_points": ["opus_screener", "weekly_review"],
+      "cache_duration": "90 days",
+      "api_endpoint": "/v3/balance-sheet-statement",
+      "priority": "medium - enhances quality detection"
+    }
+  },
+  "implementation_priority": {
+    "sprint_1_immediate": {
+      "feeds": ["insider_trading", "institutional_ownership", "analyst_estimates"],
+      "rationale": "Highest signal-to-noise ratio, directly actionable, clear scoring rules",
+      "estimated_effort": "2 weeks - API integration + Opus prompt updates",
+      "success_metrics": "10+ point score improvements on known quality stocks, early warnings on deteriorating stocks"
+    },
+    "sprint_2_next": {
+      "feeds": ["earnings_surprises", "price_targets", "cash_flow"],
+      "rationale": "Strong fundamental signals, enhance quality/overvalued detection",
+      "estimated_effort": "2 weeks - API integration + scoring framework updates",
+      "success_metrics": "Improved quality consistency detection, better FCF-based filtering"
+    },
+    "sprint_3_future": {
+      "feeds": ["balance_sheet", "etf_holdings"],
+      "rationale": "Incremental improvements, useful but not critical",
+      "estimated_effort": "1 week - straightforward API integration",
+      "success_metrics": "Enhanced working capital analysis, passive flow awareness"
+    },
+    "backlog": {
+      "feeds": ["sec_filings"],
+      "rationale": "Requires NLP infrastructure, lower ROI initially",
+      "estimated_effort": "4+ weeks - NLP pipeline + risk language detection",
+      "success_metrics": "Early risk detection from filing language changes"
+    }
+  },
+  "integration_workflow": {
+    "sunday_screening_enhanced": [
+      "Step 1: Fetch fundamental data (existing: P/E, margins, growth, debt)",
+      "Step 2: Fetch Phase 1 data (insider trading 90d, institutional ownership, analyst estimates)",
+      "Step 3: Fetch Phase 2 data (earnings surprises 8 quarters, price targets, cash flow statements)",
+      "Step 4: Calculate base scores (fundamentals + technical)",
+      "Step 5: Apply Phase 1 adjustments (insider +10, institutional +9, estimates +7)",
+      "Step 6: Apply Phase 2 adjustments (surprises +8, targets +5, cash flow +10)",
+      "Step 7: Opus analyzes ALL data → final quality/overvalued scores (0-100)",
+      "Step 8: Update watchlists with enhanced scores + signal breakdown",
+      "Step 9: Flag stocks requiring immediate review (risk flags, cluster signals)"
+    ],
+    "daily_analysis_enhanced": [
+      "Step 1: Check watchlists for price triggers (existing: dips, breakdowns)",
+      "Step 2: Fetch fresh insider trading (last 7 days from cache)",
+      "Step 3: Check analyst estimate changes (last 14 days from cache)",
+      "Step 4: Check price target revisions (last 30 days from cache)",
+      "Step 5: Opus analyzes with fresh signals → trade decisions",
+      "Step 6: If new bullish signals (insider buy, estimate upgrade), boost quality score +5",
+      "Step 7: If new bearish signals (insider sell, estimate downgrade), boost overvalued score +5",
+      "Step 8: Submit trades for approval with signal justification"
+    ],
+    "weekly_review_enhanced": [
+      "Step 1: Review all watchlist positions",
+      "Step 2: Check for institutional ownership changes (quarterly updates)",
+      "Step 3: Review earnings surprise history for upcoming earnings",
+      "Step 4: Check cash flow trends for deterioration signals",
+      "Step 5: Opus re-scores all positions with latest data",
+      "Step 6: Recommend position adjustments (increase quality, reduce overvalued)",
+      "Step 7: Flag positions for exit if multiple bearish signals converge"
+    ]
+  },
+  "scoring_framework": {
+    "quality_score_max": 100,
+    "quality_components": {
+      "fundamentals_base": 35,
+      "insider_trading": 10,
+      "institutional_ownership": 9,
+      "analyst_estimates": 7,
+      "earnings_consistency": 8,
+      "cash_flow_strength": 10,
+      "price_target_upside": 5,
+      "balance_sheet_health": 4,
+      "technical_confirmation": 12
+    },
+    "quality_thresholds": {
+      "excellent": "85-100 (strong buy on dips)",
+      "good": "70-84 (buy on dips)",
+      "acceptable": "55-69 (hold, buy on significant dips)",
+      "questionable": "40-54 (monitor, no new positions)",
+      "poor": "0-39 (avoid)"
+    },
+    "overvalued_score_max": 100,
+    "overvalued_components": {
+      "valuation_metrics_base": 30,
+      "insider_selling": 8,
+      "institutional_distribution": 9,
+      "estimate_downgrades": 7,
+      "earnings_misses": 7,
+      "fcf_deterioration": 10,
+      "target_downgrades": 5,
+      "balance_sheet_deterioration": 4,
+      "technical_breakdown": 15,
+      "debt_growth": 5
+    },
+    "overvalued_thresholds": {
+      "extreme": "85-100 (strong short candidate)",
+      "high": "70-84 (short on rallies)",
+      "moderate": "55-69 (reduce exposure, short on strength)",
+      "mild": "40-54 (monitor, no new longs)",
+      "low": "0-39 (not overvalued)"
+    }
+  },
+  "data_freshness_requirements": {
+    "real_time": ["price_data", "technical_indicators"],
+    "daily_update": ["insider_trading", "analyst_estimates", "price_targets"],
+    "weekly_update": ["institutional_ownership"],
+    "quarterly_update": ["earnings_surprises", "cash_flow", "balance_sheet"],
+    "as_filed": ["sec_filings"]
+  },
+  "cache_strategy": {
+    "insider_trading": {
+      "duration": "7 days",
+      "refresh_trigger": "New filing detected",
+      "storage": "PostgreSQL with transaction_date index"
+    },
+    "institutional_ownership": {
+      "duration": "30 days",
+      "refresh_trigger": "13F filing deadline (45 days after quarter end)",
+      "storage": "PostgreSQL with quarter_end index"
+    },
+    "analyst_estimates": {
+      "duration": "14 days",
+      "refresh_trigger": "Estimate revision detected",
+      "storage": "PostgreSQL with revision_date index"
+    },
+    "earnings_surprises": {
+      "duration": "90 days",
+      "refresh_trigger": "Earnings announcement",
+      "storage": "PostgreSQL with earnings_date index"
+    },
+    "price_targets": {
+      "duration": "30 days",
+      "refresh_trigger": "Target revision detected",
+      "storage": "PostgreSQL with revision_date index"
+    },
+    "cash_flow": {
+      "duration": "90 days",
+      "refresh_trigger": "Quarterly filing",
+      "storage": "PostgreSQL with period_end index"
+    }
+  },
+  "opus_prompt_enhancements": {
+    "quality_analysis": "When analyzing quality stocks, prioritize: (1) Insider buying clusters, (2) Institutional accumulation, (3) Positive estimate revisions, (4) Consistent earnings beats, (5) Strong FCF generation. Weight recent signals (last 30 days) 1.5x higher than older signals.",
+    "overvalued_analysis": "When analyzing overvalued stocks, prioritize: (1) Insider selling clusters, (2) Institutional distribution, (3) Negative estimate revisions, (4) Earnings misses, (5) FCF deterioration. Multiple converging signals (3+) indicate high conviction short opportunity.",
+    "entry_timing": "For quality stocks, optimal entry signals: (1) Recent insider buy within 14 days, (2) Price dip >8% with no fundamental deterioration, (3) Positive estimate revision during dip. For overvalued stocks, optimal short entry: (1) Technical breakdown confirmed, (2) Recent insider selling, (3) Negative estimate revision.",
+    "risk_assessment": "Red flags requiring immediate review: (1) C-suite selling >$5M, (2) 3+ institutions fully exiting, (3) Negative FCF despite positive earnings, (4) 3+ consecutive estimate downgrades, (5) Earnings miss >10%. Any 2+ red flags = exit position immediately."
+  },
+  "success_metrics": {
+    "phase1_success": {
+      "metric": "Quality score accuracy",
+      "target": "Known quality stocks (AAPL, MSFT, GOOGL) score 80+",
+      "measurement": "Weekly score tracking"
+    },
+    "phase2_success": {
+      "metric": "Early deterioration detection",
+      "target": "Detect overvalued signals 2+ weeks before major breakdown",
+      "measurement": "Backtest on historical breakdowns"
+    },
+    "overall_success": {
+      "metric": "Trade win rate improvement",
+      "target": "10%+ improvement in win rate vs baseline",
+      "measurement": "6-month rolling performance"
+    }
+  }
+}
+```

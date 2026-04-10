@@ -2,21 +2,23 @@ import axios from 'axios';
 
 /**
  * Financial Modeling Prep (FMP) API Integration
- * Handles API key rotation across 3 free accounts (250 calls/day each = 750 total)
+ * Updated to use /stable/ API (v3 deprecated as of Aug 2025)
  *
  * Free tier limits:
  * - 250 API calls per day per key
  * - Resets at midnight UTC
+ * - Only Profile and Insider Trading endpoints work on free plan
+ * - All other endpoints (quotes, financials, institutional, analyst data) require paid subscription
  *
  * Strategy:
  * - Rotate through 3 keys to get 750 calls/day
- * - Cache fundamental data (changes quarterly)
- * - Refresh cache every 3 months to stay on free tier
+ * - Cache data aggressively since free tier is limited
+ * - Most endpoints return 402 (payment required) on free plan
  */
 
 class FMPClient {
   constructor() {
-    this.BASE_URL = 'https://financialmodelingprep.com/api/v3';
+    this.BASE_URL = 'https://financialmodelingprep.com/stable';
 
     // Load API keys from environment
     this.apiKeys = [
