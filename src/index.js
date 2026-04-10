@@ -1851,15 +1851,16 @@ ${historyContext}`;
         // STEP 2: Validate asset class allocation with VIX-adjusted quantities
         const adjustedRecs = await this.validateAndAdjustAssetClassAllocation(recommendations, portfolio);
 
+        // Batch submit all trades for approval
+        const submittedTrades = [];
+        const approvalIds = [];
+
         for (const rec of adjustedRecs) {
           const action = rec.type === 'short' ? 'SHORT' : 'BUY';
-          console.log(`   💰 Executing trade: ${action} ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
+          console.log(`   💰 Preparing trade: ${action} ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
 
           try {
-            // Submit trade for approval instead of auto-executing
-            console.log(`   📧 Submitting ${rec.symbol} for approval...`);
-
-            await tradeApproval.submitForApproval({
+            const approvalId = await tradeApproval.submitForApproval({
               symbol: rec.symbol,
               action: rec.type === 'short' ? 'sell_short' : 'buy',
               quantity: rec.quantity,
@@ -1869,13 +1870,31 @@ ${historyContext}`;
               orderType: 'limit',
               intent: rec.intent || 'momentum',
               reasoning: rec.reasoning
-            });
+            }, true);  // skipEmail = true for batch
 
-            console.log(`   ✅ Trade submitted for approval`);
+            submittedTrades.push({
+              symbol: rec.symbol,
+              action: rec.type === 'short' ? 'sell_short' : 'buy',
+              quantity: rec.quantity,
+              entryPrice: rec.entryPrice,
+              stopLoss: rec.stopLoss,
+              takeProfit: rec.takeProfit,
+              reasoning: rec.reasoning
+            });
+            approvalIds.push(approvalId);
+
+            console.log(`   ✅ ${rec.symbol} queued for approval`);
           } catch (error) {
             console.error(`   ❌ Failed to submit trade for ${rec.symbol}:`, error.message);
             await email.sendErrorAlert(error, `Trade submission: ${rec.symbol}`);
           }
+        }
+
+        // Send single batch email for all trades
+        if (submittedTrades.length > 0) {
+          console.log(`\n📧 Sending batch approval email for ${submittedTrades.length} trades...`);
+          await tradeApproval.sendBatchApprovalEmail(approvalIds, submittedTrades);
+          console.log(`✅ Batch approval email sent`);
         }
 
         console.log('✅ All trades processed');

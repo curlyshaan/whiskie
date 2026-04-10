@@ -54,7 +54,7 @@ class TradeApprovalManager {
    * Submit trade for approval
    * Returns approval ID
    */
-  async submitForApproval(trade) {
+  async submitForApproval(trade, skipEmail = false) {
     const {
       symbol,
       action,
@@ -84,8 +84,10 @@ class TradeApprovalManager {
 
     const approvalId = result.rows[0].id;
 
-    // Send email notification
-    await this.sendApprovalEmail(approvalId, trade);
+    // Send email notification (unless batching)
+    if (!skipEmail) {
+      await this.sendApprovalEmail(approvalId, trade);
+    }
 
     console.log(`📧 Trade approval ${approvalId} submitted for ${symbol}`);
     return approvalId;
