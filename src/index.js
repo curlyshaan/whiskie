@@ -1309,19 +1309,40 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
       console.log('⏳ This will take 3-5 minutes...');
       console.log('');
 
+      // Fetch stock analysis history for long candidates
+      console.log('📚 Fetching previous analyses for long candidates...');
+      const longStockHistory = {};
+      for (const symbol of candidates.longs) {
+        const history = await trendLearning.getStockAnalysisHistory(symbol, 3);
+        if (history.length > 0) {
+          longStockHistory[symbol] = history;
+        }
+      }
+      console.log(`✅ Found previous analyses for ${Object.keys(longStockHistory).length} stocks`);
+
+      // Build stock history context
+      let stockHistoryContext = '';
+      if (Object.keys(longStockHistory).length > 0) {
+        stockHistoryContext = '\n\n**PREVIOUS STOCK ANALYSES (reference these to save time):**\n';
+        Object.entries(longStockHistory).forEach(([symbol, history]) => {
+          stockHistoryContext += `\n${symbol}:\n`;
+          history.forEach((analysis, i) => {
+            stockHistoryContext += `  ${i + 1}. ${analysis.analysis_date}: ${analysis.recommendation} (${analysis.confidence} confidence)\n`;
+            stockHistoryContext += `     Thesis: ${analysis.thesis?.substring(0, 200) || 'N/A'}...\n`;
+          });
+        });
+      }
+
       const phase2Question = `You are managing a $100k portfolio. You are in PHASE 2: LONG ANALYSIS.
 
-**CRITICAL: You have 50,000 tokens for extended thinking. USE THEM ALL. Analyze each stock deeply:**
-- Spend 2-3 minutes thinking about each stock
-- Consider multiple scenarios and outcomes
-- Evaluate risks thoroughly
-- Compare alternatives
-- Think through second-order effects
+**Deep Analysis Approach:**
+Take your time with each stock. Don't rush through the analysis. For stocks you've analyzed before, you can reference your previous notes and focus on what's changed. For new stocks, build a comprehensive understanding from scratch. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
 
 **Input:** ${candidates.longs.length} long candidates from Phase 1
 
 **Long Candidates:**
 ${candidates.longs.map(sym => `- ${sym}: $${fullMarketData[sym]?.price || 'N/A'} (${fullMarketData[sym]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[sym]?.change_percentage || 0}%)`).join('\n')}
+${stockHistoryContext}
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
@@ -1407,19 +1428,40 @@ ${historyContext}`;
       console.log('⏳ This will take 3-5 minutes...');
       console.log('');
 
+      // Fetch stock analysis history for short candidates
+      console.log('📚 Fetching previous analyses for short candidates...');
+      const shortStockHistory = {};
+      for (const symbol of candidates.shorts) {
+        const history = await trendLearning.getStockAnalysisHistory(symbol, 3);
+        if (history.length > 0) {
+          shortStockHistory[symbol] = history;
+        }
+      }
+      console.log(`✅ Found previous analyses for ${Object.keys(shortStockHistory).length} stocks`);
+
+      // Build short stock history context
+      let shortHistoryContext = '';
+      if (Object.keys(shortStockHistory).length > 0) {
+        shortHistoryContext = '\n\n**PREVIOUS STOCK ANALYSES (reference these to save time):**\n';
+        Object.entries(shortStockHistory).forEach(([symbol, history]) => {
+          shortHistoryContext += `\n${symbol}:\n`;
+          history.forEach((analysis, i) => {
+            shortHistoryContext += `  ${i + 1}. ${analysis.analysis_date}: ${analysis.recommendation} (${analysis.confidence} confidence)\n`;
+            shortHistoryContext += `     Thesis: ${analysis.thesis?.substring(0, 200) || 'N/A'}...\n`;
+          });
+        });
+      }
+
       const phase3Question = `You are managing a $100k portfolio. You are in PHASE 3: SHORT ANALYSIS.
 
-**CRITICAL: You have 50,000 tokens for extended thinking. USE THEM ALL. Analyze each stock deeply:**
-- Spend 2-3 minutes thinking about each stock
-- Consider multiple scenarios and outcomes
-- Evaluate risks thoroughly
-- Compare alternatives
-- Think through second-order effects
+**Deep Analysis Approach:**
+Take your time with each stock. Don't rush through the analysis. For stocks you've analyzed before, you can reference your previous notes and focus on what's changed. For new stocks, build a comprehensive understanding from scratch. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
 
 **Input:** ${candidates.shorts.length} short candidates from Phase 1
 
 **Short Candidates:**
 ${candidates.shorts.map(sym => `- ${sym}: $${fullMarketData[sym]?.price || 'N/A'} (${fullMarketData[sym]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[sym]?.change_percentage || 0}%)`).join('\n')}
+${shortHistoryContext}
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
