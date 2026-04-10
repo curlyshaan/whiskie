@@ -273,6 +273,17 @@ ${JSON.stringify(economic, null, 2)}
    * Note: thinking blocks are kept internal, only text is returned to user
    */
   parseAnalysisResponse(response) {
+    // Debug: log response structure
+    if (!response.content) {
+      console.error('❌ Response missing content field:', JSON.stringify(response, null, 2));
+      return {
+        analysis: '',
+        thinking: null,
+        model: response.model || 'unknown',
+        usage: response.usage || {}
+      };
+    }
+
     const textBlock = response.content.find(b => b.type === 'text');
     const thinkingBlock = response.content.find(b => b.type === 'thinking');
 
