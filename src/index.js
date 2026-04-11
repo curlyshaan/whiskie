@@ -227,15 +227,15 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule weekly portfolio review + screening - Sunday 9:00 PM ET
+      // Schedule weekly portfolio review + screening - Sunday 12:30 PM ET
       // ORDER MATTERS: FMP screening → Opus screening → Weekly review (fully sequential)
-      cron.schedule('0 21 * * 0', async () => {
+      cron.schedule('30 12 * * 0', async () => {
         const scheduledTime = new Date();
         const jobId = await db.logCronJobStart('FMP Screening Part 2', 'weekly', scheduledTime);
         const reviewJobId = await db.logCronJobStart('Weekly Review', 'weekly', scheduledTime);
 
         try {
-          console.log('\n⏰ Sunday 9:00 PM - Full weekly screening + review');
+          console.log('\n⏰ Sunday 12:30 PM - Full weekly screening + review');
 
           // STEP 1: Run second half of fundamental value screening (FMP data)
           console.log('\n📊 STEP 1: Fundamental screening (second half)...');
