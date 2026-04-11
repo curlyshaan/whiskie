@@ -96,32 +96,68 @@ class WhiskieBot {
 
       // Schedule pre-market gap scanner at 9:00 AM ET
       cron.schedule('0 9 * * 1-5', async () => {
-        console.log('\n⏰ 9:00 AM Pre-Market Gap Scan');
-        this.latestGapReport = await runPreMarketScan();
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Pre-Market Scan', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ 9:00 AM Pre-Market Gap Scan');
+          this.latestGapReport = await runPreMarketScan();
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Pre-market scan failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+        }
       }, {
         timezone: 'America/New_York'
       });
 
       // Schedule daily analysis at 10:00 AM and 2:00 PM ET
       cron.schedule('0 10 * * 1-5', async () => {
-        console.log('\n⏰ 10:00 AM Analysis - Market has settled after open');
-        await this.runDailyAnalysis();
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Morning Analysis', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ 10:00 AM Analysis - Market has settled after open');
+          await this.runDailyAnalysis();
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Morning analysis failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+        }
       }, {
         timezone: 'America/New_York'
       });
 
       cron.schedule('0 14 * * 1-5', async () => {
-        console.log('\n⏰ 2:00 PM Analysis - Afternoon check');
-        await this.runDailyAnalysis();
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Afternoon Analysis', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ 2:00 PM Analysis - Afternoon check');
+          await this.runDailyAnalysis();
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Afternoon analysis failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+        }
       }, {
         timezone: 'America/New_York'
       });
 
       // Schedule end-of-day summary at 4:30 PM ET (after market close)
       cron.schedule('30 16 * * 1-5', async () => {
-        console.log('\n⏰ End of day summary triggered');
-        await this.sendDailySummary();
-        console.log('✅ Daily summary complete');
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Daily Summary', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ End of day summary triggered');
+          await this.sendDailySummary();
+          console.log('✅ Daily summary complete');
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Daily summary failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+        }
       }, {
         timezone: 'America/New_York'
       });
@@ -151,12 +187,17 @@ class WhiskieBot {
 
       // Schedule fundamental screening - Saturday 9:00 PM ET (first half)
       cron.schedule('0 21 * * 6', async () => {
-        console.log('\n⏰ Saturday 9:00 PM - Fundamental screening (first half)');
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('FMP Screening Part 1', 'weekly', scheduledTime);
+
         try {
+          console.log('\n⏰ Saturday 9:00 PM - Fundamental screening (first half)');
           await fundamentalScreener.runWeeklyScreen('saturday');
           console.log('✅ Saturday screening complete');
+          await db.logCronJobComplete(jobId, true);
         } catch (error) {
           console.error('❌ Error in Saturday screening:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
           await email.sendErrorAlert(error, 'Saturday fundamental screening failed');
         }
       }, {
@@ -168,12 +209,17 @@ class WhiskieBot {
       cron.schedule('0 10 * * 6', async () => {
         const weekNumber = Math.ceil((new Date().getTime() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000));
         if (weekNumber % 2 === 0) {
-          console.log('\n⏰ Saturday 10:00 AM - Biweekly deep stock research');
+          const scheduledTime = new Date();
+          const jobId = await db.logCronJobStart('Biweekly Deep Research', 'weekly', scheduledTime);
+
           try {
+            console.log('\n⏰ Saturday 10:00 AM - Biweekly deep stock research');
             await stockProfiles.runBiweeklyDeepResearch();
             console.log('✅ Biweekly research complete');
+            await db.logCronJobComplete(jobId, true);
           } catch (error) {
             console.error('❌ Error in biweekly research:', error);
+            await db.logCronJobComplete(jobId, false, error.message);
             await email.sendErrorAlert(error, 'Biweekly stock research failed');
           }
         }
@@ -184,12 +230,18 @@ class WhiskieBot {
       // Schedule weekly portfolio review + screening - Sunday 9:00 PM ET
       // ORDER MATTERS: FMP screening → Opus screening → Weekly review (fully sequential)
       cron.schedule('0 21 * * 0', async () => {
-        console.log('\n⏰ Sunday 9:00 PM - Full weekly screening + review');
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('FMP Screening Part 2', 'weekly', scheduledTime);
+        const reviewJobId = await db.logCronJobStart('Weekly Review', 'weekly', scheduledTime);
+
         try {
+          console.log('\n⏰ Sunday 9:00 PM - Full weekly screening + review');
+
           // STEP 1: Run second half of fundamental value screening (FMP data)
           console.log('\n📊 STEP 1: Fundamental screening (second half)...');
           await fundamentalScreener.runWeeklyScreen('sunday');
           console.log('✅ Fundamental screening complete');
+          await db.logCronJobComplete(jobId, true);
 
           // STEP 2: Clear expired FMP cache entries
           console.log('\n🗑️ STEP 2: Clearing expired FMP cache...');
@@ -204,9 +256,12 @@ class WhiskieBot {
           console.log('\n📋 STEP 4: Weekly portfolio review...');
           await runWeeklyReview();
           console.log('✅ Weekly review complete');
+          await db.logCronJobComplete(reviewJobId, true);
 
         } catch (error) {
           console.error('❌ Error in Sunday tasks:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await db.logCronJobComplete(reviewJobId, false, error.message);
           await email.sendErrorAlert(error, 'Sunday screening/review failed');
         }
       }, {
@@ -1601,6 +1656,44 @@ ${historyContext}`;
       console.log(`✅ Phase 3 complete (${phase3Duration}s)`);
       console.log('');
 
+      // Extract per-stock reasoning from Phase 2 and Phase 3 for use in trade approvals
+      const stockReasoningMap = this.extractStockReasoningFromPhases(
+        phase2Analysis.analysis,
+        phase3Analysis.analysis
+      );
+      console.log(`📝 Extracted reasoning for ${Object.keys(stockReasoningMap).length} stocks from Phase 2/3`);
+      console.log('');
+
+      // Save Phase 2 and Phase 3 to database for dashboard display
+      await db.logAIDecision({
+        type: 'phase2-long-analysis',
+        symbol: null,
+        recommendation: phase2Analysis.analysis,
+        reasoning: `Phase 2: Deep long analysis of ${candidates.longs.length} candidates (50k token thinking budget)`,
+        model: 'opus',
+        confidence: 'high',
+        inputTokens: phase2Analysis.usage?.input_tokens,
+        outputTokens: phase2Analysis.usage?.output_tokens,
+        totalTokens: (phase2Analysis.usage?.input_tokens || 0) + (phase2Analysis.usage?.output_tokens || 0),
+        durationSeconds: parseInt(phase2Duration)
+      });
+
+      await db.logAIDecision({
+        type: 'phase3-short-analysis',
+        symbol: null,
+        recommendation: phase3Analysis.analysis,
+        reasoning: `Phase 3: Deep short analysis of ${candidates.shorts.length} candidates (50k token thinking budget)`,
+        model: 'opus',
+        confidence: 'high',
+        inputTokens: phase3Analysis.usage?.input_tokens,
+        outputTokens: phase3Analysis.usage?.output_tokens,
+        totalTokens: (phase3Analysis.usage?.input_tokens || 0) + (phase3Analysis.usage?.output_tokens || 0),
+        durationSeconds: parseInt(phase3Duration)
+      });
+
+      console.log('✅ Phase 2 and Phase 3 saved to database');
+      console.log('');
+
       // PHASE 4: Portfolio construction combining insights from Phase 2 & 3 (20k thinking budget)
       console.log('');
       console.log('═══════════════════════════════════════');
@@ -1860,6 +1953,9 @@ ${historyContext}`;
           const action = rec.type === 'short' ? 'SHORT' : 'BUY';
           console.log(`   💰 Preparing trade: ${action} ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
 
+          // Use detailed reasoning from Phase 2/3 if available, otherwise fall back to Phase 4 reasoning
+          const detailedReasoning = stockReasoningMap[rec.symbol] || rec.reasoning;
+
           try {
             const approvalId = await tradeApproval.submitForApproval({
               symbol: rec.symbol,
@@ -1870,7 +1966,7 @@ ${historyContext}`;
               takeProfit: rec.takeProfit,
               orderType: 'limit',
               intent: rec.intent || 'momentum',
-              reasoning: rec.reasoning
+              reasoning: detailedReasoning
             }, true);  // skipEmail = true for batch
 
             submittedTrades.push({
@@ -1940,6 +2036,52 @@ ${historyContext}`;
       console.error('═══════════════════════════════════════');
       console.error('');
     }
+  }
+
+  /**
+   * Extract per-stock reasoning from Phase 2 and Phase 3 analyses
+   * Returns a map of symbol -> reasoning text
+   */
+  extractStockReasoningFromPhases(phase2Text, phase3Text) {
+    const reasoningMap = {};
+
+    // Extract from Phase 2 (long analysis)
+    const phase2Sections = phase2Text.split(/SYMBOL:\s*([A-Z]{1,5})/gi);
+    for (let i = 1; i < phase2Sections.length; i += 2) {
+      const symbol = phase2Sections[i].trim();
+      const content = phase2Sections[i + 1];
+
+      if (content) {
+        // Extract the reasoning section
+        const reasoningMatch = content.match(/REASONING:\s*([^\n]+(?:\n(?!SYMBOL:|DECISION:|ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:)[^\n]+)*)/i);
+        if (reasoningMatch) {
+          reasoningMap[symbol] = reasoningMatch[1].trim();
+        } else {
+          // Fallback: take first 500 chars of content
+          reasoningMap[symbol] = content.substring(0, 500).trim();
+        }
+      }
+    }
+
+    // Extract from Phase 3 (short analysis)
+    const phase3Sections = phase3Text.split(/SYMBOL:\s*([A-Z]{1,5})/gi);
+    for (let i = 1; i < phase3Sections.length; i += 2) {
+      const symbol = phase3Sections[i].trim();
+      const content = phase3Sections[i + 1];
+
+      if (content) {
+        // Extract the reasoning section
+        const reasoningMatch = content.match(/REASONING:\s*([^\n]+(?:\n(?!SYMBOL:|DECISION:|ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:|TECHNICAL_CHECKLIST:)[^\n]+)*)/i);
+        if (reasoningMatch) {
+          reasoningMap[symbol] = reasoningMatch[1].trim();
+        } else {
+          // Fallback: take first 500 chars of content
+          reasoningMap[symbol] = content.substring(0, 500).trim();
+        }
+      }
+    }
+
+    return reasoningMap;
   }
 
   /**

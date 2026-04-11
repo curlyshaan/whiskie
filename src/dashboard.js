@@ -182,6 +182,22 @@ router.get('/api/watchlist', async (req, res) => {
 });
 
 /**
+ * Cron Jobs Status endpoint - View scheduled job execution history
+ */
+router.get('/cron-status', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const executions = await db.getCronJobExecutions(days);
+
+    const html = generateCronStatusHTML(executions, days);
+    res.send(html);
+  } catch (error) {
+    console.error('Cron status error:', error);
+    res.status(500).send('Error loading cron status');
+  }
+});
+
+/**
  * Logs endpoint - View detailed system logs
  */
 router.get('/logs', async (req, res) => {
@@ -504,6 +520,9 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
     <a href="/approvals" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;" id="approvalsBtn">
       ⚖️ Trade Approvals
     </a>
+    <a href="/cron-status" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;">
+      ⏰ Cron Jobs
+    </a>
 
     <div class="stats">
       <div class="stat-card">
@@ -545,12 +564,26 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
           const outputTokens = a.output_tokens || 0;
           const totalTokens = a.total_tokens || (inputTokens + outputTokens);
 
+          // Determine phase label
+          let phaseLabel = 'Analysis';
+          let phaseEmoji = '📊';
+          if (a.decision_type === 'phase2-long-analysis') {
+            phaseLabel = 'Phase 2: Long Analysis';
+            phaseEmoji = '📈';
+          } else if (a.decision_type === 'phase3-short-analysis') {
+            phaseLabel = 'Phase 3: Short Analysis';
+            phaseEmoji = '📉';
+          } else if (a.decision_type === 'deep-analysis') {
+            phaseLabel = 'Phase 4: Portfolio Construction';
+            phaseEmoji = '🎯';
+          }
+
           const cleanedRecommendation = stripThinkingBlocks(a.recommendation || 'No recommendation');
           const htmlContent = markdownToHtml(cleanedRecommendation);
           return `
             <details>
               <summary>
-                ${time} ET Analysis <span class="timestamp">(${date})</span>
+                ${phaseEmoji} ${time} ET ${phaseLabel} <span class="timestamp">(${date})</span>
                 ${totalTokens > 0 ? `<span class="token-usage"> • ${totalTokens.toLocaleString()} tokens</span>` : ''}
               </summary>
               <div class="analysis-content">${htmlContent}</div>
@@ -1152,5 +1185,212 @@ router.post('/api/trigger-deep-research', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+function generateCronStatusHTML(executions, days) {
+  // Group executions by job name
+  const jobGroups = {};
+  executions.forEach(exec => {
+    if (!jobGroups[exec.job_name]) {
+      jobGroups[exec.job_name] = [];
+    }
+    jobGroups[exec.job_name].push(exec);
+  });
+
+  // Define expected jobs
+  const expectedJobs = [
+    { name: 'Pre-Market Scan', type: 'daily', schedule: '9:00 AM ET Mon-Fri' },
+    { name: 'Morning Analysis', type: 'daily', schedule: '10:00 AM ET Mon-Fri' },
+    { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri' },
+    { name: 'Daily Summary', type: 'daily', schedule: '4:30 PM ET Mon-Fri' },
+    { name: 'FMP Screening Part 1', type: 'weekly', schedule: 'Saturday 9:00 PM ET' },
+    { name: 'FMP Screening Part 2', type: 'weekly', schedule: 'Sunday 9:00 PM ET' },
+    { name: 'Weekly Review', type: 'weekly', schedule: 'Sunday 9:00 PM ET' }
+  ];
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Cron Job Status - Whiskie</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0e27;
+      color: #e0e0e0;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    h1 {
+      font-size: 2.5rem;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      color: #888;
+      margin-bottom: 30px;
+      font-size: 1.1rem;
+    }
+    .back-btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 20px;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .back-btn:hover { opacity: 0.9; }
+    .section {
+      background: #1a1f3a;
+      padding: 25px;
+      border-radius: 12px;
+      margin-bottom: 25px;
+      border: 1px solid #2a2f4a;
+    }
+    .section-title {
+      font-size: 1.5rem;
+      margin-bottom: 20px;
+      color: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th {
+      background: #0f1425;
+      padding: 12px;
+      text-align: left;
+      color: #888;
+      font-weight: 600;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+    }
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #2a2f4a;
+    }
+    tr:hover {
+      background: #0f1425;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .status-completed { background: #10b98120; color: #10b981; }
+    .status-failed { background: #ef444420; color: #ef4444; }
+    .status-running { background: #f59e0b20; color: #f59e0b; }
+    .status-pending { background: #6b728020; color: #9ca3af; }
+    .job-type-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .type-daily { background: #3b82f620; color: #3b82f6; }
+    .type-weekly { background: #8b5cf620; color: #8b5cf6; }
+    .error-message {
+      color: #ef4444;
+      font-size: 0.85rem;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⏰ Cron Job Status</h1>
+    <p class="subtitle">Scheduled job execution history (last ${days} days)</p>
+
+    <a href="/" class="back-btn">← Back to Dashboard</a>
+
+    <div class="section">
+      <div class="section-title">📋 Expected Jobs</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Job Name</th>
+            <th>Type</th>
+            <th>Schedule</th>
+            <th>Last Run</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${expectedJobs.map(job => {
+            const executions = jobGroups[job.name] || [];
+            const lastExec = executions[0];
+            const lastRunTime = lastExec ? new Date(lastExec.scheduled_time).toLocaleString('en-US', { timeZone: 'America/New_York' }) : 'Never';
+            const status = lastExec ? lastExec.status : 'pending';
+            return `
+              <tr>
+                <td><strong>${job.name}</strong></td>
+                <td><span class="job-type-badge type-${job.type}">${job.type.toUpperCase()}</span></td>
+                <td>${job.schedule}</td>
+                <td>${lastRunTime}</td>
+                <td><span class="status-badge status-${status}">${status.toUpperCase()}</span></td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <div class="section-title">📊 Execution History</div>
+      ${executions.length === 0 ?
+        '<p style="color: #666; text-align: center; padding: 40px;">No executions recorded yet.</p>' :
+        `<table>
+          <thead>
+            <tr>
+              <th>Job Name</th>
+              <th>Scheduled Time</th>
+              <th>Started</th>
+              <th>Completed</th>
+              <th>Duration</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${executions.map(exec => {
+              const scheduledTime = new Date(exec.scheduled_time).toLocaleString('en-US', { timeZone: 'America/New_York' });
+              const startedTime = exec.started_at ? new Date(exec.started_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York' }) : '-';
+              const completedTime = exec.completed_at ? new Date(exec.completed_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York' }) : '-';
+              const duration = exec.duration_seconds ? `${Math.floor(exec.duration_seconds / 60)}m ${exec.duration_seconds % 60}s` : '-';
+              return `
+                <tr>
+                  <td><strong>${exec.job_name}</strong></td>
+                  <td>${scheduledTime}</td>
+                  <td>${startedTime}</td>
+                  <td>${completedTime}</td>
+                  <td>${duration}</td>
+                  <td>
+                    <span class="status-badge status-${exec.status}">${exec.status.toUpperCase()}</span>
+                    ${exec.error_message ? `<div class="error-message">${exec.error_message}</div>` : ''}
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>`
+      }
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
 
 export default router;

@@ -482,6 +482,34 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_learning_insights_applied ON learning_insights(applied);
     `);
 
+    // Cron job execution tracking
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS cron_job_executions (
+        id SERIAL PRIMARY KEY,
+        job_name VARCHAR(100) NOT NULL,
+        job_type VARCHAR(50) NOT NULL,
+        scheduled_time TIMESTAMP NOT NULL,
+        started_at TIMESTAMP,
+        completed_at TIMESTAMP,
+        status VARCHAR(20) DEFAULT 'pending',
+        error_message TEXT,
+        duration_seconds INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_cron_job_name ON cron_job_executions(job_name);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_cron_scheduled_time ON cron_job_executions(scheduled_time);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_cron_status ON cron_job_executions(status);
+    `);
+
     console.log('✅ Database schema initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
@@ -1204,6 +1232,62 @@ export async function updateETBStatus(symbol, shortable) {
     return result.rows[0];
   } catch (error) {
     console.error(`Error updating ETB status for ${symbol}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Log cron job execution start
+ */
+export async function logCronJobStart(jobName, jobType, scheduledTime) {
+  try {
+    const result = await pool.query(
+      `INSERT INTO cron_job_executions (job_name, job_type, scheduled_time, started_at, status)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP, 'running')
+       RETURNING id`,
+      [jobName, jobType, scheduledTime]
+    );
+    return result.rows[0].id;
+  } catch (error) {
+    console.error('Error logging cron job start:', error);
+    throw error;
+  }
+}
+
+/**
+ * Log cron job execution completion
+ */
+export async function logCronJobComplete(jobId, success, errorMessage = null) {
+  try {
+    const status = success ? 'completed' : 'failed';
+    await pool.query(
+      `UPDATE cron_job_executions
+       SET completed_at = CURRENT_TIMESTAMP,
+           status = $2,
+           error_message = $3,
+           duration_seconds = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - started_at))
+       WHERE id = $1`,
+      [jobId, status, errorMessage]
+    );
+  } catch (error) {
+    console.error('Error logging cron job completion:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get recent cron job executions
+ */
+export async function getCronJobExecutions(days = 7) {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM cron_job_executions
+       WHERE scheduled_time >= CURRENT_DATE - INTERVAL '${days} days'
+       ORDER BY scheduled_time DESC, job_name ASC`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching cron job executions:', error);
     throw error;
   }
 }
