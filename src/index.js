@@ -185,20 +185,42 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule fundamental screening - Saturday 12:30 PM ET (first half)
-      cron.schedule('30 12 * * 6', async () => {
+      // Schedule combined weekly screening - Saturday 3:00 PM ET
+      // Runs full fundamental screening + Opus screening + weekly review
+      cron.schedule('0 15 * * 6', async () => {
         const scheduledTime = new Date();
-        const jobId = await db.logCronJobStart('FMP Screening Part 1', 'weekly', scheduledTime);
+        const screeningJobId = await db.logCronJobStart('Weekly Fundamental Screening', 'weekly', scheduledTime);
+        const reviewJobId = await db.logCronJobStart('Weekly Review', 'weekly', scheduledTime);
 
         try {
-          console.log('\n⏰ Saturday 12:30 PM - Fundamental screening (first half)');
-          await fundamentalScreener.runWeeklyScreen('saturday');
-          console.log('✅ Saturday screening complete');
-          await db.logCronJobComplete(jobId, true);
+          console.log('\n⏰ Saturday 3:00 PM - Full weekly screening + review');
+
+          // STEP 1: Run full fundamental value screening (all stocks in one pass)
+          console.log('\n📊 STEP 1: Fundamental screening (all stocks)...');
+          await fundamentalScreener.runWeeklyScreen('full');
+          console.log('✅ Fundamental screening complete');
+          await db.logCronJobComplete(screeningJobId, true);
+
+          // STEP 2: Clear expired FMP cache entries
+          console.log('\n🗑️ STEP 2: Clearing expired FMP cache...');
+          await fmpCache.clearExpired();
+
+          // STEP 3: Opus screens for quality and overvalued stocks
+          console.log('\n🧠 STEP 3: Opus quality + overvalued screening...');
+          await opusScreener.runWeeklyOpusScreening();
+          console.log('✅ Opus screening complete');
+
+          // STEP 4: Run weekly portfolio review with Opus
+          console.log('\n📋 STEP 4: Weekly portfolio review...');
+          await runWeeklyReview();
+          console.log('✅ Weekly review complete');
+          await db.logCronJobComplete(reviewJobId, true);
+
         } catch (error) {
-          console.error('❌ Error in Saturday screening:', error);
-          await db.logCronJobComplete(jobId, false, error.message);
-          await email.sendErrorAlert(error, 'Saturday fundamental screening failed');
+          console.error('❌ Error in Saturday weekly tasks:', error);
+          await db.logCronJobComplete(screeningJobId, false, error.message);
+          await db.logCronJobComplete(reviewJobId, false, error.message);
+          await email.sendErrorAlert(error, 'Saturday weekly screening/review failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -222,47 +244,6 @@ class WhiskieBot {
             await db.logCronJobComplete(jobId, false, error.message);
             await email.sendErrorAlert(error, 'Biweekly stock research failed');
           }
-        }
-      }, {
-        timezone: 'America/New_York'
-      });
-
-      // Schedule weekly portfolio review + screening - Sunday 12:30 PM ET
-      // ORDER MATTERS: FMP screening → Opus screening → Weekly review (fully sequential)
-      cron.schedule('30 12 * * 0', async () => {
-        const scheduledTime = new Date();
-        const jobId = await db.logCronJobStart('FMP Screening Part 2', 'weekly', scheduledTime);
-        const reviewJobId = await db.logCronJobStart('Weekly Review', 'weekly', scheduledTime);
-
-        try {
-          console.log('\n⏰ Sunday 12:30 PM - Full weekly screening + review');
-
-          // STEP 1: Run second half of fundamental value screening (FMP data)
-          console.log('\n📊 STEP 1: Fundamental screening (second half)...');
-          await fundamentalScreener.runWeeklyScreen('sunday');
-          console.log('✅ Fundamental screening complete');
-          await db.logCronJobComplete(jobId, true);
-
-          // STEP 2: Clear expired FMP cache entries
-          console.log('\n🗑️ STEP 2: Clearing expired FMP cache...');
-          await fmpCache.clearExpired();
-
-          // STEP 3: Opus screens for quality and overvalued stocks using FMP data
-          console.log('\n🧠 STEP 3: Opus quality + overvalued screening...');
-          await opusScreener.runWeeklyOpusScreening();
-          console.log('✅ Opus screening complete');
-
-          // STEP 4: Run weekly portfolio review with Opus (now has fresh watchlists)
-          console.log('\n📋 STEP 4: Weekly portfolio review...');
-          await runWeeklyReview();
-          console.log('✅ Weekly review complete');
-          await db.logCronJobComplete(reviewJobId, true);
-
-        } catch (error) {
-          console.error('❌ Error in Sunday tasks:', error);
-          await db.logCronJobComplete(jobId, false, error.message);
-          await db.logCronJobComplete(reviewJobId, false, error.message);
-          await email.sendErrorAlert(error, 'Sunday screening/review failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -296,11 +277,11 @@ class WhiskieBot {
       console.log('   • 2:00 PM ET - Afternoon analysis + trim/tax/trailing checks');
       console.log('📊 Daily summary: 4:30 PM ET');
       console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
-      console.log('📅 Fundamental screening: Saturday 9:00 PM ET (first half)');
-      console.log('📅 Full weekly screening: Sunday 9:00 PM ET');
-      console.log('   → Fundamental screening (second half)');
+      console.log('📅 Weekly screening: Saturday 3:00 PM ET');
+      console.log('   → Full fundamental screening (all stocks)');
       console.log('   → Opus quality + overvalued screening');
       console.log('   → Weekly portfolio review');
+      console.log('📅 Biweekly deep research: Saturday 10:00 AM ET (even weeks)');
       console.log('💡 Press Ctrl+C to stop\n');
 
       this.botStarted = true;
@@ -358,6 +339,49 @@ class WhiskieBot {
         res.json({
           success: true,
           message: 'Weekly review started. This will take 5-10 minutes. Check logs for progress.'
+        });
+      } catch (error) {
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    app.post('/api/trigger-saturday-screening', async (req, res) => {
+      try {
+        console.log('📡 Manual Saturday screening triggered via API');
+
+        // Import and run full weekly screening
+        const fundamentalScreener = (await import('./fundamental-screener.js')).default;
+        const opusScreener = (await import('./opus-screener.js')).default;
+        const { runWeeklyReview } = await import('./weekly-review.js');
+        const fmpCache = (await import('./fmp-cache.js')).default;
+
+        // Run all steps sequentially
+        (async () => {
+          try {
+            console.log('\n📊 STEP 1: Fundamental screening (all stocks)...');
+            await fundamentalScreener.runWeeklyScreen('full');
+
+            console.log('\n🗑️ STEP 2: Clearing expired FMP cache...');
+            await fmpCache.clearExpired();
+
+            console.log('\n🧠 STEP 3: Opus quality + overvalued screening...');
+            await opusScreener.runWeeklyOpusScreening();
+
+            console.log('\n📋 STEP 4: Weekly portfolio review...');
+            await runWeeklyReview();
+
+            console.log('✅ Full weekly screening complete');
+          } catch (error) {
+            console.error('❌ Error in manual screening:', error);
+          }
+        })();
+
+        res.json({
+          success: true,
+          message: 'Saturday screening started. This will take 10-15 minutes. Check logs for progress.'
         });
       } catch (error) {
         res.status(500).json({
