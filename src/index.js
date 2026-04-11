@@ -185,13 +185,13 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule fundamental screening - Saturday 9:00 PM ET (first half)
-      cron.schedule('0 21 * * 6', async () => {
+      // Schedule fundamental screening - Saturday 12:30 PM ET (first half)
+      cron.schedule('30 12 * * 6', async () => {
         const scheduledTime = new Date();
         const jobId = await db.logCronJobStart('FMP Screening Part 1', 'weekly', scheduledTime);
 
         try {
-          console.log('\n⏰ Saturday 9:00 PM - Fundamental screening (first half)');
+          console.log('\n⏰ Saturday 12:30 PM - Fundamental screening (first half)');
           await fundamentalScreener.runWeeklyScreen('saturday');
           console.log('✅ Saturday screening complete');
           await db.logCronJobComplete(jobId, true);

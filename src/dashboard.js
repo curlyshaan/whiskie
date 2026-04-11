@@ -1202,7 +1202,7 @@ function generateCronStatusHTML(executions, days) {
     { name: 'Morning Analysis', type: 'daily', schedule: '10:00 AM ET Mon-Fri' },
     { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri' },
     { name: 'Daily Summary', type: 'daily', schedule: '4:30 PM ET Mon-Fri' },
-    { name: 'FMP Screening Part 1', type: 'weekly', schedule: 'Saturday 9:00 PM ET' },
+    { name: 'FMP Screening Part 1', type: 'weekly', schedule: 'Saturday 12:30 PM ET' },
     { name: 'FMP Screening Part 2', type: 'weekly', schedule: 'Sunday 12:30 PM ET' },
     { name: 'Weekly Review', type: 'weekly', schedule: 'Sunday 12:30 PM ET' }
   ];
