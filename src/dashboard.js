@@ -1,5 +1,5 @@
 import express from 'express';
-import db from './db.js';
+import * as db from './db.js';
 import { stripThinkingBlocks } from './utils.js';
 
 const router = express.Router();
