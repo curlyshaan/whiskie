@@ -2,63 +2,61 @@ import axios from 'axios';
 
 /**
  * Financial Modeling Prep (FMP) API Integration
- * Updated to use /stable/ API (v3 deprecated as of Aug 2025)
+ * Using paid plan with single API key
  *
- * Free tier limits:
- * - 250 API calls per day per key
- * - Resets at midnight UTC
- * - Only Profile and Insider Trading endpoints work on free plan
- * - All other endpoints (quotes, financials, institutional, analyst data) require paid subscription
+ * Paid plan benefits:
+ * - 300 API calls per MINUTE (essentially unlimited for our use)
+ * - Access to all endpoints (quotes, financials, ratios, income statements)
+ * - Real-time data
  *
  * Strategy:
- * - Rotate through 3 keys to get 750 calls/day
- * - Cache data aggressively since free tier is limited
- * - Most endpoints return 402 (payment required) on free plan
+ * - Single paid key with 300 calls/minute rate limit
+ * - 90-day cache to optimize performance
+ * - No daily limit concerns
  */
 
 class FMPClient {
   constructor() {
     this.BASE_URL = 'https://financialmodelingprep.com/stable';
 
-    // Load API keys from environment
-    this.apiKeys = [
-      process.env.FMP_API_KEY_1 || '4WeyS0aP8qcZE7MncNLbUfUYeP3d3Y6z',
-      process.env.FMP_API_KEY_2 || 'PH18udQcNJBriR8PSStFP88SRrJfR2Is',
-      process.env.FMP_API_KEY_3 || 'DEMO_KEY_PLACEHOLDER_SUPPLY_LATER'
-    ];
+    // Single paid API key
+    this.apiKey = process.env.FMP_API_KEY_1 || '4WeyS0aP8qcZE7MncNLbUfUYeP3d3Y6z';
 
-    // Track usage per key (resets daily)
-    this.keyUsage = [0, 0, 0];
-    this.currentKeyIndex = 0;
-    this.MAX_CALLS_PER_KEY = 250;
+    // Track usage for monitoring
+    this.callCount = 0;
+    this.RATE_LIMIT_PER_MINUTE = 300;
     this.lastResetDate = new Date().toDateString();
   }
 
   /**
-   * Get current API key with rotation
+   * Get current API key
    */
   getCurrentKey() {
-    // Reset counters if new day
+    // Reset counter if new day
     const today = new Date().toDateString();
     if (today !== this.lastResetDate) {
-      this.keyUsage = [0, 0, 0];
-      this.currentKeyIndex = 0;
+      this.callCount = 0;
       this.lastResetDate = today;
-      console.log('🔄 FMP API key usage counters reset for new day');
+      console.log('🔄 FMP API usage counter reset for new day');
     }
 
-    // Check if current key is near limit
-    if (this.keyUsage[this.currentKeyIndex] >= this.MAX_CALLS_PER_KEY - 10) {
-      // Rotate to next key
-      this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
-      console.log(`🔄 Rotating to FMP API key ${this.currentKeyIndex + 1}`);
-    }
-
-    return this.apiKeys[this.currentKeyIndex];
+    return this.apiKey;
   }
 
   /**
-   * Make API request with automatic key rotation
+   * Get current usage stats
+   */
+  getUsageStats() {
+    return {
+      calls: this.callCount,
+      limit: 'No daily limit (300 calls/minute)',
+      remaining: 'Unlimited',
+      percentage: 'N/A'
+    };
+  }
+
+  /**
+   * Make API request
    */
   async request(endpoint, params = {}) {
     const apiKey = this.getCurrentKey();
@@ -73,25 +71,19 @@ class FMPClient {
       });
 
       // Increment usage counter
-      this.keyUsage[this.currentKeyIndex]++;
+      this.callCount++;
 
       return response.data;
     } catch (error) {
-      // Check if rate limit error
+      // Check if rate limit error (429)
       if (error.response?.status === 429) {
-        console.warn(`⚠️ Rate limit hit on key ${this.currentKeyIndex + 1}, rotating...`);
-
-        // Force rotation to next key
-        this.keyUsage[this.currentKeyIndex] = this.MAX_CALLS_PER_KEY;
-        this.currentKeyIndex = (this.currentKeyIndex + 1) % this.apiKeys.length;
-
-        // Retry with new key
-        return this.request(endpoint, params);
+        console.warn(`⚠️ Rate limit hit (300 calls/minute exceeded)`);
+        throw new Error(`FMP API rate limit exceeded. Slow down requests.`);
       }
 
       // Check if authentication error
       if (error.response?.status === 403 || error.response?.status === 401) {
-        throw new Error(`FMP API authentication failed (key ${this.currentKeyIndex + 1}). Please verify API keys are set in Railway environment variables: FMP_API_KEY_1, FMP_API_KEY_2, FMP_API_KEY_3`);
+        throw new Error(`FMP API authentication failed. Please verify API key is set correctly.`);
       }
 
       throw error;
@@ -102,7 +94,7 @@ class FMPClient {
    * Get company profile (market cap, sector, industry)
    */
   async getProfile(symbol) {
-    const data = await this.request(`/profile/${symbol}`);
+    const data = await this.request(`/profile`, { symbol });
     return data[0] || null;
   }
 
@@ -110,7 +102,7 @@ class FMPClient {
    * Get key metrics (P/E, PEG, debt/equity, etc.)
    */
   async getKeyMetrics(symbol) {
-    const data = await this.request(`/key-metrics/${symbol}`, { limit: 1 });
+    const data = await this.request(`/key-metrics`, { symbol, limit: 1 });
     return data[0] || null;
   }
 
@@ -118,7 +110,7 @@ class FMPClient {
    * Get financial ratios (margins, ROE, etc.)
    */
   async getFinancialRatios(symbol) {
-    const data = await this.request(`/ratios/${symbol}`, { limit: 1 });
+    const data = await this.request(`/ratios`, { symbol, limit: 1 });
     return data[0] || null;
   }
 
@@ -126,7 +118,7 @@ class FMPClient {
    * Get income statement (revenue, earnings)
    */
   async getIncomeStatement(symbol) {
-    const data = await this.request(`/income-statement/${symbol}`, { limit: 4 });
+    const data = await this.request(`/income-statement`, { symbol, limit: 4 });
     return data || [];
   }
 
@@ -203,22 +195,6 @@ class FMPClient {
     }
   }
 
-  /**
-   * Get usage statistics
-   */
-  getUsageStats() {
-    return {
-      currentKey: this.currentKeyIndex + 1,
-      usage: this.keyUsage.map((count, i) => ({
-        key: i + 1,
-        calls: count,
-        remaining: this.MAX_CALLS_PER_KEY - count,
-        percentage: ((count / this.MAX_CALLS_PER_KEY) * 100).toFixed(1) + '%'
-      })),
-      totalCalls: this.keyUsage.reduce((sum, count) => sum + count, 0),
-      totalRemaining: (this.MAX_CALLS_PER_KEY * 3) - this.keyUsage.reduce((sum, count) => sum + count, 0)
-    };
-  }
 }
 
 export default new FMPClient();

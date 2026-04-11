@@ -91,10 +91,8 @@ class FundamentalScreener {
       // Show FMP API usage stats
       const fmpStats = (await import('./fmp.js')).default.getUsageStats();
       console.log(`\n   📊 FMP API Usage:`);
-      fmpStats.usage.forEach(key => {
-        console.log(`      Key ${key.key}: ${key.calls}/250 calls (${key.percentage})`);
-      });
-      console.log(`      Total: ${fmpStats.totalCalls} calls, ${fmpStats.totalRemaining} remaining today`);
+      console.log(`      Total calls this session: ${fmpStats.calls}`);
+      console.log(`      Rate limit: 300 calls/minute (no daily limit)`);
 
       // Show cache statistics
       const cacheStats = await fmpCache.getCacheStats();

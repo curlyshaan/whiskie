@@ -329,6 +329,32 @@ class TradeApprovalManager {
   }
 
   /**
+   * Clear all pending approvals
+   * Marks all pending trades as rejected with reason "Cleared by user"
+   */
+  async clearAllPending() {
+    const result = await db.query(
+      `UPDATE trade_approvals
+       SET status = 'rejected', rejected_at = NOW(), rejection_reason = 'Cleared by user'
+       WHERE status = 'pending'
+       RETURNING id, symbol`
+    );
+
+    const cleared = result.rows || [];
+
+    if (cleared.length > 0) {
+      console.log(`🗑️ Cleared ${cleared.length} pending trade approvals`);
+      cleared.forEach(t => console.log(`   - ${t.symbol} (ID: ${t.id})`));
+    }
+
+    return {
+      success: true,
+      count: cleared.length,
+      trades: cleared
+    };
+  }
+
+  /**
    * Get approval statistics
    */
   async getApprovalStats() {

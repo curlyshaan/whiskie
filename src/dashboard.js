@@ -995,6 +995,12 @@ router.get('/approvals', async (req, res) => {
       text-decoration: none;
       display: inline-block;
       margin-bottom: 20px;
+      margin-right: 10px;
+    }
+    .btn-clear-all {
+      background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+      color: white;
+      margin-bottom: 20px;
     }
     .empty-state {
       text-align: center;
@@ -1010,6 +1016,7 @@ router.get('/approvals', async (req, res) => {
     <p class="subtitle">Review and approve pending trades</p>
 
     <a href="/" class="btn btn-back">← Back to Dashboard</a>
+    ${pending.length > 0 ? `<button class="btn btn-clear-all" onclick="clearAllPending()">🗑️ Clear All Pending</button>` : ''}
 
     <div class="stats">
       <div class="stat-card">
@@ -1136,6 +1143,24 @@ router.get('/approvals', async (req, res) => {
       }
     }
 
+    async function clearAllPending() {
+      if (!confirm('Clear all pending approvals? This will reject all pending trades.')) return;
+
+      try {
+        const res = await fetch('/api/approvals/clear-all', { method: 'POST' });
+        const data = await res.json();
+
+        if (data.success) {
+          alert(\`Cleared \${data.count} pending trade(s)\`);
+          location.reload();
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (error) {
+        alert('Error clearing approvals: ' + error.message);
+      }
+    }
+
     // Auto-refresh every 30 seconds
     setTimeout(() => location.reload(), 30000);
   </script>
@@ -1163,6 +1188,16 @@ router.post('/api/approvals/:id/reject', async (req, res) => {
     const tradeApproval = (await import('./trade-approval.js')).default;
     const { reason } = req.body;
     const result = await tradeApproval.rejectTrade(parseInt(req.params.id), reason);
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/approvals/clear-all', async (req, res) => {
+  try {
+    const tradeApproval = (await import('./trade-approval.js')).default;
+    const result = await tradeApproval.clearAllPending();
     res.json(result);
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
