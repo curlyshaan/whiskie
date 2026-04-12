@@ -665,8 +665,7 @@ class FundamentalScreener {
         volumeMoreThan: 500000,
         priceMoreThan: this.MIN_PRICE,
         priceToEarningsRatioLowerThan: 15,
-        priceToBookRatioLowerThan: 3,
-        limit: 100
+        priceToBookRatioLowerThan: 3
       });
       deepValue.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${deepValue.length} deep value candidates`);
@@ -680,7 +679,6 @@ class FundamentalScreener {
         priceToEarningsRatioMoreThan: 15,
         priceToEarningsRatioLowerThan: 25,
         returnOnEquityMoreThan: 0.20,
-        limit: 100
       });
       garp.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${garp.length} GARP candidates`);
@@ -692,7 +690,6 @@ class FundamentalScreener {
         volumeMoreThan: 500000,
         priceMoreThan: this.MIN_PRICE,
         revenueGrowthQuarterlyYoyMoreThan: 0.30,
-        limit: 100
       });
       highGrowth.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${highGrowth.length} high growth candidates`);
@@ -704,7 +701,6 @@ class FundamentalScreener {
         volumeMoreThan: 500000,
         priceMoreThan: this.MIN_PRICE,
         freeCashFlowYieldMoreThan: 0.08,
-        limit: 100
       });
       cashMachine.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${cashMachine.length} cash machine candidates`);
@@ -717,7 +713,6 @@ class FundamentalScreener {
         priceMoreThan: this.MIN_PRICE,
         revenueGrowthQuarterlyYoyMoreThan: 0.15,
         operatingMarginMoreThan: 0.05,
-        limit: 100
       });
       inflection.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${inflection.length} inflection candidates`);
@@ -731,7 +726,6 @@ class FundamentalScreener {
         priceToEarningsRatioLowerThan: 20,
         debtToEquityLowerThan: 1.0,
         operatingMarginMoreThan: 0.01,
-        limit: 100
       });
       turnaround.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${turnaround.length} turnaround candidates`);
@@ -746,7 +740,6 @@ class FundamentalScreener {
         priceMoreThan: this.MIN_PRICE,
         priceToEarningsRatioMoreThan: 40,
         priceToBookRatioMoreThan: 5,
-        limit: 100
       });
       overvalued.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${overvalued.length} overvalued candidates`);
@@ -759,7 +752,6 @@ class FundamentalScreener {
         priceMoreThan: this.MIN_PRICE,
         operatingMarginLowerThan: 0.05,
         debtToEquityMoreThan: 2.0,
-        limit: 100
       });
       deteriorating.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${deteriorating.length} deteriorating quality candidates`);
@@ -773,7 +765,6 @@ class FundamentalScreener {
         priceToEarningsRatioMoreThan: 50,
         priceToSalesRatioMoreThan: 15,
         betaMoreThan: 1.5,
-        limit: 100
       });
       overextended.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${overextended.length} overextended momentum candidates`);
