@@ -144,8 +144,8 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule end-of-day summary at 4:30 PM ET (after market close)
-      cron.schedule('30 16 * * 1-5', async () => {
+      // Schedule end-of-day summary at 6:00 PM ET
+      cron.schedule('0 18 * * 1-5', async () => {
         const scheduledTime = new Date();
         const jobId = await db.logCronJobStart('Daily Summary', 'daily', scheduledTime);
 
