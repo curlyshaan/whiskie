@@ -533,27 +533,45 @@ class WhiskieBot {
               console.log(`📊 Processing ${assetClass} (${symbols.length} stocks)...`);
               for (const symbol of symbols) {
                 try {
-                  // Fetch company profile from FMP to get sector/industry
+                  // Fetch company profile from FMP to get sector/industry/market cap
                   let sector = null;
                   let subIndustry = null;
+                  let marketCapTier = null;
+                  let lastPrice = null;
+
                   try {
                     const profile = await fmpClient.getCompanyProfile(symbol);
                     if (profile && profile.length > 0) {
                       sector = profile[0].sector || null;
                       subIndustry = profile[0].industry || null;
+                      lastPrice = profile[0].price || null;
+
+                      // Calculate market cap tier
+                      const marketCap = profile[0].mktCap;
+                      if (marketCap) {
+                        if (marketCap >= 10_000_000_000) {
+                          marketCapTier = 'Large';
+                        } else if (marketCap >= 2_000_000_000) {
+                          marketCapTier = 'Mid';
+                        } else {
+                          marketCapTier = 'Small';
+                        }
+                      }
                     }
                   } catch (fmpError) {
                     console.log(`\n⚠️  Could not fetch profile for ${symbol}, using nulls`);
                   }
 
                   await db.query(
-                    `INSERT INTO stock_universe (symbol, asset_class, sector, sub_industry, status)
-                     VALUES ($1, $2, $3, $4, 'active')
+                    `INSERT INTO stock_universe (symbol, asset_class, sector, sub_industry, market_cap_tier, last_price, status)
+                     VALUES ($1, $2, $3, $4, $5, $6, 'active')
                      ON CONFLICT (symbol) DO UPDATE SET
                        asset_class = $2,
                        sector = $3,
-                       sub_industry = $4`,
-                    [symbol, assetClass, sector, subIndustry]
+                       sub_industry = $4,
+                       market_cap_tier = $5,
+                       last_price = $6`,
+                    [symbol, assetClass, sector, subIndustry, marketCapTier, lastPrice]
                   );
                   totalAdded++;
                   process.stdout.write('.');
