@@ -27,10 +27,16 @@ class FMPClient {
     this.RATE_LIMIT_PER_MINUTE = 300;
     this.lastResetDate = new Date().toDateString();
 
-    // Rate limiting: 350ms between calls = 171 calls/min (safely under 300/min)
+    // Rate limiting: 400ms between calls = 150 calls/min (safely under 300/min)
     // With 6 API calls per stock in getFundamentals, this prevents rate limit errors
+    // 407 stocks × 6 calls = 2,442 calls over ~16 minutes (safe for Saturday screening)
     this.lastCallTime = 0;
-    this.MIN_CALL_INTERVAL = 350; // milliseconds
+    this.MIN_CALL_INTERVAL = 400; // milliseconds
+
+    // Short-term cache for Saturday screening (30 minutes)
+    // Prevents re-fetching same data when Opus screening runs after fundamental screening
+    this.cache = new Map();
+    this.CACHE_TTL = 30 * 60 * 1000; // 30 minutes
   }
 
   /**
@@ -61,10 +67,17 @@ class FMPClient {
   }
 
   /**
-   * Make API request with automatic rate limiting
+   * Make API request with automatic rate limiting and 30-minute cache
    */
   async request(endpoint, params = {}) {
-    // Rate limiting: ensure 350ms between calls
+    // Check cache first (30-minute TTL for Saturday screening)
+    const cacheKey = `${endpoint}:${JSON.stringify(params)}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+      return cached.data;
+    }
+
+    // Rate limiting: ensure 400ms between calls
     const now = Date.now();
     const timeSinceLastCall = now - this.lastCallTime;
     if (timeSinceLastCall < this.MIN_CALL_INTERVAL) {
@@ -86,6 +99,12 @@ class FMPClient {
 
       // Increment usage counter
       this.callCount++;
+
+      // Cache the result
+      this.cache.set(cacheKey, {
+        data: response.data,
+        timestamp: Date.now()
+      });
 
       return response.data;
     } catch (error) {
