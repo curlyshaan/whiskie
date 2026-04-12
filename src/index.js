@@ -2033,13 +2033,35 @@ ${historyContext}`;
       if (recommendations.length > 0) {
         console.log(`✅ Found ${recommendations.length} trade recommendations`);
 
+        // Validate sector constraints (0-3 per sub-sector)
+        console.log('🔍 Validating sector constraints...');
+        const sectorValidator = (await import('./sector-validator.js')).default;
+        const validation = sectorValidator.validateTrades(recommendations);
+
+        if (!validation.valid) {
+          console.log(`⚠️ Sector constraint violations detected:`);
+          validation.violations.forEach(v => {
+            console.log(`   - ${v.symbol} rejected: ${v.reason}`);
+          });
+          console.log(`✅ Adjusted to ${validation.adjustedTrades.length} trades (from ${recommendations.length})`);
+          console.log('   Sub-sector breakdown:');
+          validation.subSectorBreakdown.forEach(sb => {
+            console.log(`   - ${sb.subSector}: ${sb.count} stocks (${sb.symbols.join(', ')})`);
+          });
+        } else {
+          console.log(`✅ All trades pass sector constraints`);
+        }
+
+        // Use validated trades
+        const validatedRecommendations = validation.adjustedTrades;
+
         // Get portfolio state and VIX regime
         const portfolio = await analysisEngine.getPortfolioState();
         const regime = await vixRegime.getRegime();
 
         // STEP 1: Apply VIX adjustment to all trade quantities BEFORE sector validation
         console.log(`\n📊 Applying VIX regime adjustments (${regime.name}: ${(regime.positionSizeMultiplier * 100).toFixed(0)}% multiplier)...`);
-        for (const rec of recommendations) {
+        for (const rec of validatedRecommendations) {
           const originalQuantity = rec.quantity;
           const tradeValue = originalQuantity * rec.entryPrice;
           const originalPositionSize = tradeValue / portfolio.totalValue;
@@ -2058,7 +2080,7 @@ ${historyContext}`;
         }
 
         // STEP 2: Validate asset class allocation with VIX-adjusted quantities
-        const adjustedRecs = await this.validateAndAdjustAssetClassAllocation(recommendations, portfolio);
+        const adjustedRecs = await this.validateAndAdjustAssetClassAllocation(validatedRecommendations, portfolio);
 
         // Batch submit all trades for approval
         const submittedTrades = [];

@@ -510,6 +510,46 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_cron_status ON cron_job_executions(status);
     `);
 
+    // Error logging table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS error_log (
+        id SERIAL PRIMARY KEY,
+        error_type VARCHAR(100) NOT NULL,
+        error_message TEXT NOT NULL,
+        stack_trace TEXT,
+        context JSONB,
+        occurrence_count INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_error_log_type ON error_log(error_type);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_error_log_created ON error_log(created_at);
+    `);
+
+    // Performance metrics table (already exists, just ensure it has the right structure)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS performance_metrics (
+        id SERIAL PRIMARY KEY,
+        metric_name VARCHAR(100) NOT NULL,
+        metric_value DECIMAL(12, 2) NOT NULL,
+        metadata JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_performance_metric_name ON performance_metrics(metric_name);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_performance_created ON performance_metrics(created_at);
+    `);
+
     console.log('✅ Database schema initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
