@@ -44,7 +44,8 @@ class FundamentalScreener {
     const startTime = Date.now();
 
     try {
-      let allStocks = this.getAllStocks();
+      // Use FMP company screener for pre-filtering (much faster than screening all 407 stocks)
+      let allStocks = await this.getScreenerCandidates();
 
       if (part === 'saturday') {
         allStocks = allStocks.slice(0, Math.ceil(allStocks.length / 2));
@@ -53,7 +54,7 @@ class FundamentalScreener {
         allStocks = allStocks.slice(Math.ceil(allStocks.length / 2));
         console.log(`   Screening second half: ${allStocks.length} stocks...`);
       } else {
-        console.log(`   Screening ${allStocks.length} stocks...`);
+        console.log(`   Screening ${allStocks.length} pre-filtered candidates...`);
       }
 
       const longCandidates = [];
@@ -577,6 +578,97 @@ class FundamentalScreener {
       }
     }
     return stocks;
+  }
+
+  /**
+   * Use FMP company screener to pre-filter candidates by pathway
+   * Much more efficient than screening all 407 stocks individually
+   */
+  async getScreenerCandidates() {
+    console.log('\n🔍 Using FMP company screener for pre-filtering...');
+    const fmpModule = await import('./fmp.js');
+    const fmp = fmpModule.default;
+
+    const candidates = new Set();
+
+    try {
+      // Deep Value pathway: Low P/E, Low P/B
+      console.log('   Screening: Deep Value...');
+      const deepValue = await fmp.screenCompanies({
+        marketCapMoreThan: this.MIN_MARKET_CAP,
+        volumeMoreThan: 500000,
+        priceMoreThan: this.MIN_PRICE,
+        priceToEarningsRatioLowerThan: 15,
+        priceToBookRatioLowerThan: 3,
+        limit: 100
+      });
+      deepValue.forEach(s => candidates.add(s.symbol));
+      console.log(`   Found ${deepValue.length} deep value candidates`);
+
+      // GARP pathway: Moderate P/E, High ROE
+      console.log('   Screening: GARP...');
+      const garp = await fmp.screenCompanies({
+        marketCapMoreThan: this.MIN_MARKET_CAP,
+        volumeMoreThan: 500000,
+        priceMoreThan: this.MIN_PRICE,
+        priceToEarningsRatioMoreThan: 15,
+        priceToEarningsRatioLowerThan: 25,
+        returnOnEquityMoreThan: 0.20,
+        limit: 100
+      });
+      garp.forEach(s => candidates.add(s.symbol));
+      console.log(`   Found ${garp.length} GARP candidates`);
+
+      // High Growth pathway: Strong revenue growth
+      console.log('   Screening: High Growth...');
+      const highGrowth = await fmp.screenCompanies({
+        marketCapMoreThan: this.MIN_MARKET_CAP,
+        volumeMoreThan: 500000,
+        priceMoreThan: this.MIN_PRICE,
+        revenueGrowthQuarterlyYoyMoreThan: 0.30,
+        limit: 100
+      });
+      highGrowth.forEach(s => candidates.add(s.symbol));
+      console.log(`   Found ${highGrowth.length} high growth candidates`);
+
+      // Cash Machine pathway: High FCF yield
+      console.log('   Screening: Cash Machine...');
+      const cashMachine = await fmp.screenCompanies({
+        marketCapMoreThan: this.MIN_MARKET_CAP,
+        volumeMoreThan: 500000,
+        priceMoreThan: this.MIN_PRICE,
+        freeCashFlowYieldMoreThan: 0.08,
+        limit: 100
+      });
+      cashMachine.forEach(s => candidates.add(s.symbol));
+      console.log(`   Found ${cashMachine.length} cash machine candidates`);
+
+      // Overvalued pathway: High P/E, High P/B (for shorts)
+      console.log('   Screening: Overvalued (shorts)...');
+      const overvalued = await fmp.screenCompanies({
+        marketCapMoreThan: this.MIN_SHORT_MARKET_CAP,
+        volumeMoreThan: 1000000,
+        priceMoreThan: this.MIN_PRICE,
+        priceToEarningsRatioMoreThan: 40,
+        priceToBookRatioMoreThan: 5,
+        limit: 100
+      });
+      overvalued.forEach(s => candidates.add(s.symbol));
+      console.log(`   Found ${overvalued.length} overvalued candidates`);
+
+      const uniqueCandidates = Array.from(candidates);
+      console.log(`\n   ✅ Total unique candidates from screener: ${uniqueCandidates.length}`);
+
+      // Map to our stock format with asset class
+      return uniqueCandidates.map(symbol => {
+        const assetClass = assetClassData.getAssetClass(symbol);
+        return { symbol, assetClass };
+      }).filter(s => s.assetClass); // Only include stocks in our universe
+
+    } catch (error) {
+      console.error('   ⚠️ Screener failed, falling back to full universe:', error.message);
+      return this.getAllStocks();
+    }
   }
 
   /**

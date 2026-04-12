@@ -216,6 +216,29 @@ class FMPClient {
   }
 
   /**
+   * Company Screener - pre-filter stocks by fundamental criteria
+   * Much more efficient than fetching individual stock profiles
+   * Docs: /stable/company-screener
+   *
+   * Long pathways params:
+   *   Deep Value:   priceToEarningsRatioLowerThan, priceToBookRatioLowerThan
+   *   High Growth:  revenueGrowthQuarterlyYoyMoreThan
+   *   Inflection:   operatingIncomeGrowthQuarterlyYoyMoreThan
+   *   Cash Machine: freeCashFlowYieldMoreThan
+   *
+   * Short pathway params:
+   *   priceToEarningsRatioMoreThan, priceToBookRatioMoreThan
+   */
+  async screenCompanies(params = {}) {
+    const defaults = {
+      exchange: 'nasdaq,nyse,amex',
+      limit: 200
+    };
+    const data = await this.request(`/company-screener`, { ...defaults, ...params });
+    return data || [];
+  }
+
+  /**
    * Get comprehensive fundamental data for screening
    * Uses TTM ratios (current valuation) + quarterly growth rates
    */
