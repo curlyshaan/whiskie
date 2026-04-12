@@ -636,7 +636,7 @@ class FMPClient {
         // Growth rates (true YoY from financial-growth)
         revenueGrowth: latestGrowth.revenueGrowth || 0,
         earningsGrowth: latestGrowth.netIncomeGrowth || 0,
-        epsGrowth: latestGrowth.epsGrowth || 0,
+        epsGrowth: latestGrowth.epsgrowth || 0,
         grossProfitGrowth: latestGrowth.grossProfitGrowth || 0,
         fcfGrowth: latestGrowth.freeCashFlowGrowth || 0,
 
