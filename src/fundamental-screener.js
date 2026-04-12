@@ -198,6 +198,14 @@ class FundamentalScreener {
    * Extract all fundamental metrics
    */
   extractMetrics(fundamentals, price, dollarVolume) {
+    // Calculate accrual ratio for earnings quality check
+    const netIncome = fundamentals.netIncome || 0;
+    const operatingCashFlow = fundamentals.operatingCashFlow || 0;
+    const totalAssets = fundamentals.totalAssets || 0;
+    const accrualRatio = totalAssets > 0
+      ? (netIncome - operatingCashFlow) / totalAssets
+      : 0;
+
     return {
       peRatio: fundamentals.peRatio || 0,
       pegRatio: fundamentals.pegRatio || 0,
@@ -220,6 +228,7 @@ class FundamentalScreener {
         ? (fundamentals.freeCashflow / fundamentals.marketCap) : 0,
       debtToEquity: fundamentals.debtToEquity || 0,
       shortFloat: fundamentals.shortFloat || null,
+      accrualRatio,  // FIX #4: Earnings quality check
       price,
       dollarVolume,
       marketCap: fundamentals.marketCap || 0
@@ -266,6 +275,11 @@ class FundamentalScreener {
     // Market cap requirement: $2B minimum (quality value vs value traps)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.deepValue) return { score: 0, reasons: [] };
 
+    // FIX #4: Accrual ratio check - reject if earnings not backed by cash
+    if (metrics.accrualRatio > 0.12) {
+      return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    }
+
     let score = 0;
     const reasons = [];
 
@@ -308,6 +322,11 @@ class FundamentalScreener {
     // Market cap requirement: $500M minimum (growth emerges small)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.highGrowth) return { score: 0, reasons: [] };
 
+    // FIX #4: Accrual ratio check - reject if earnings not backed by cash
+    if (metrics.accrualRatio > 0.12) {
+      return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    }
+
     let score = 0;
     const reasons = [];
 
@@ -348,45 +367,80 @@ class FundamentalScreener {
     // Market cap requirement: $500M minimum (catch early momentum)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.inflection) return { score: 0, reasons: [] };
 
+    // FIX #4: Accrual ratio check - reject if earnings not backed by cash
+    if (metrics.accrualRatio > 0.12) {
+      return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    }
+
+    // FIX #1: Multi-criteria requirement - need at least 2 of 4 criteria to score
+    let criteriaCount = 0;
     let score = 0;
     const reasons = [];
 
-    // This is the "catch the next NVDA" pathway
+    // Criterion 1: Revenue acceleration
     const acceleration = metrics.revenueGrowthQ - metrics.revenueGrowthPrevQ;
+    let revenueScore = 0;
     if (acceleration > 0.10 && metrics.revenueGrowthQ > 0) {
-      score += 35;
+      revenueScore = 35;
       reasons.push(`Revenue accelerating: ${(metrics.revenueGrowthPrevQ * 100).toFixed(0)}% → ${(metrics.revenueGrowthQ * 100).toFixed(0)}%`);
+      criteriaCount++;
     } else if (acceleration > 0.05 && metrics.revenueGrowthQ > 0) {
-      score += 20;
+      revenueScore = 20;
       reasons.push('Revenue growth picking up');
+      criteriaCount++;
     }
 
+    // Criterion 2: Margin expansion
     const marginExpansion = metrics.operatingMargin - metrics.operatingMarginPrev;
+    let marginScore = 0;
     if (marginExpansion > 0.05) {
-      score += 30;
+      marginScore = 30;
       reasons.push(`Margin expanding: +${(marginExpansion * 100).toFixed(1)}pp`);
+      criteriaCount++;
     } else if (marginExpansion > 0.02) {
-      score += 15;
+      marginScore = 15;
       reasons.push('Margins improving');
+      criteriaCount++;
     }
 
+    // Criterion 3: FCF growth
+    let fcfScore = 0;
     if (metrics.freeCashflow > 0 && metrics.fcfGrowth > 0.50) {
-      score += 20;
+      fcfScore = 20;
       reasons.push('FCF growing rapidly');
+      criteriaCount++;
     }
 
-    // Bonus: still not too expensive despite the inflection
+    // Criterion 4: Reasonable valuation
+    let valuationScore = 0;
     if (metrics.pegRatio > 0 && metrics.pegRatio < 3.0) {
-      score += 15;
+      valuationScore = 15;
       reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (reasonable)`);
+      criteriaCount++;
     }
 
+    // Require at least 2 criteria to pass - prevents single-metric false positives
+    if (criteriaCount < 2) {
+      return { score: 0, reasons: ['Inflection requires 2+ criteria (revenue accel, margin expansion, FCF growth, or valuation)'] };
+    }
+
+    score = revenueScore + marginScore + fcfScore + valuationScore;
     return { score, reasons };
   }
 
   scoreCashMachine(metrics, marketCap) {
     // Market cap requirement: $2B minimum (8% FCF yield at $500M = distress signal)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.cashMachine) return { score: 0, reasons: [] };
+
+    // FIX #3: FCF yield trap protection - declining revenue + high yield = melting ice cube
+    if (metrics.revenueGrowth < -0.05 && metrics.fcfGrowth <= 0.10) {
+      return { score: 0, reasons: ['Cash Machine requires FCF growth >10% when revenue declining >5%'] };
+    }
+
+    // FIX #4: Accrual ratio check - reject if earnings not backed by cash
+    if (metrics.accrualRatio > 0.12) {
+      return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    }
 
     let score = 0;
     const reasons = [];
@@ -424,6 +478,11 @@ class FundamentalScreener {
   scoreQARP(metrics, marketCap) {
     // Market cap requirement: $2B minimum (quality verification)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.qarp) return { score: 0, reasons: [] };
+
+    // FIX #4: Accrual ratio check - reject if earnings not backed by cash
+    if (metrics.accrualRatio > 0.12) {
+      return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    }
 
     let score = 0;
     const reasons = [];
@@ -467,6 +526,11 @@ class FundamentalScreener {
   scoreTurnaround(metrics, marketCap) {
     // Market cap requirement: $500M minimum (distress acceptable, upside compensates)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.turnaround) return { score: 0, reasons: [] };
+
+    // FIX #2: Debt ceiling - D/E > 2.0 = auto-fail (balance sheet must survive recovery)
+    if (metrics.debtToEquity > 2.0) {
+      return { score: 0, reasons: ['Turnaround requires D/E ≤ 2.0 (balance sheet must survive recovery period)'] };
+    }
 
     let score = 0;
     const reasons = [];
@@ -520,6 +584,13 @@ class FundamentalScreener {
   scoreShort(metrics, sector, sectorConfig, quote) {
     const reasons = [];
 
+    // FIX #4: Accrual ratio bonus for shorts - high accruals = earnings quality issues
+    let accrualBonus = 0;
+    if (metrics.accrualRatio > 0.15) {
+      accrualBonus = 15;
+      reasons.push(`High accruals (${(metrics.accrualRatio * 100).toFixed(1)}%) - earnings quality concerns`);
+    }
+
     // CRITERIA 1: Extreme valuation
     const valuationScore = this.scoreShortValuation(metrics, sectorConfig, reasons);
     if (valuationScore < 20) return null;
@@ -532,7 +603,7 @@ class FundamentalScreener {
     const safetyPassed = this.shortSafetyCheck(metrics, reasons);
     if (!safetyPassed) return null;
 
-    const totalScore = valuationScore + deteriorationScore;
+    const totalScore = valuationScore + deteriorationScore + accrualBonus;
     if (totalScore < this.SHORT_THRESHOLD) return null;
 
     return { score: totalScore, reasons };

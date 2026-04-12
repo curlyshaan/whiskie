@@ -530,9 +530,11 @@ class FMPClient {
       }
 
       // BATCH 2: Quarterly data (45-day cache)
-      const [financialGrowth, incomeStatements] = await Promise.all([
+      const [financialGrowth, incomeStatements, cashFlowStatements, balanceSheets] = await Promise.all([
         this.getFinancialGrowth(symbol, 5),
-        this.getIncomeStatement(symbol, 8)
+        this.getIncomeStatement(symbol, 8),
+        this.getCashFlowStatement(symbol, 4),
+        this.getBalanceSheet(symbol, 4)
       ]);
 
       if (!financialGrowth || financialGrowth.length === 0) {
@@ -543,6 +545,14 @@ class FMPClient {
         console.warn(`⚠️ ${symbol}: income-statement returned empty (quarterly metrics unavailable)`);
       }
 
+      if (!cashFlowStatements || cashFlowStatements.length === 0) {
+        console.warn(`⚠️ ${symbol}: cash-flow-statement returned empty (cash flow metrics unavailable)`);
+      }
+
+      if (!balanceSheets || balanceSheets.length === 0) {
+        console.warn(`⚠️ ${symbol}: balance-sheet returned empty (balance sheet metrics unavailable)`);
+      }
+
       // Extract growth rates from financial-growth endpoint (true YoY)
       const latestGrowth = financialGrowth[0] || {};
       const prevGrowth = financialGrowth[1] || {};
@@ -550,6 +560,10 @@ class FMPClient {
       // Calculate quarterly metrics from income statements
       const latestQ = incomeStatements[0] || {};
       const prevQ = incomeStatements[1] || {};
+
+      // Get cash flow and balance sheet data for accrual ratio
+      const latestCF = cashFlowStatements[0] || {};
+      const latestBS = balanceSheets[0] || {};
 
       const revenueGrowthQ = latestGrowth.revenueGrowth || 0;
       const revenueGrowthPrevQ = prevGrowth.revenueGrowth || 0;
@@ -605,6 +619,11 @@ class FMPClient {
         freeCashflow: freeCashflow,
         freeCashFlowYield: keyMetricsTTM?.freeCashFlowYieldTTM || 0,
         operatingCashFlowPerShare: ratiosTTM.operatingCashFlowPerShareTTM || 0,
+
+        // Accrual ratio components (for earnings quality check)
+        netIncome: latestQ.netIncome || 0,
+        operatingCashFlow: latestCF.operatingCashFlow || 0,
+        totalAssets: latestBS.totalAssets || 0,
 
         // Quality metrics
         incomeQuality: keyMetricsTTM?.incomeQualityTTM || 0,
