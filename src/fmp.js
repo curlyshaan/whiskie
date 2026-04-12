@@ -289,6 +289,82 @@ class FMPClient {
   }
 
   /**
+   * Get insider trading activity for a symbol
+   * Returns corporate insider trades (executives, directors, 10% owners)
+   */
+  async getInsiderTrading(symbol) {
+    try {
+      const trades = await this.request(`/insider-trading/search`, { symbol });
+      return trades || [];
+    } catch (error) {
+      console.error(`Error fetching insider trades for ${symbol}:`, error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Analyze insider trading patterns
+   * Returns summary of recent activity (last 30 days)
+   */
+  analyzeInsiderActivity(trades) {
+    if (!trades || trades.length === 0) {
+      return { signal: 'none', summary: 'No insider trades in last 30 days' };
+    }
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const recentTrades = trades.filter(t => new Date(t.transactionDate) >= thirtyDaysAgo);
+
+    if (recentTrades.length === 0) {
+      return { signal: 'none', summary: 'No recent insider trades' };
+    }
+
+    // Filter for actual buy/sell transactions (exclude option exercises, gifts, etc)
+    const buys = recentTrades.filter(t =>
+      t.acquisitionOrDisposition === 'A' &&
+      (t.transactionType === 'P-Purchase' || t.transactionType === 'M-Exempt')
+    );
+    const sells = recentTrades.filter(t =>
+      t.acquisitionOrDisposition === 'D' &&
+      (t.transactionType === 'S-Sale' || t.transactionType === 'F-InKind')
+    );
+
+    const uniqueInsiders = new Set(recentTrades.map(t => t.reportingName)).size;
+    const totalValue = recentTrades.reduce((sum, t) => sum + (t.securitiesTransacted * t.price), 0);
+
+    let signal = 'neutral';
+    let summary = '';
+
+    if (buys.length >= 3 && sells.length === 0) {
+      signal = 'bullish_cluster';
+      summary = `${uniqueInsiders} insiders buying (${buys.length} buys, 0 sells) - strong conviction`;
+    } else if (sells.length >= 5 && buys.length === 0) {
+      signal = 'bearish_cluster';
+      summary = `${uniqueInsiders} insiders selling (${sells.length} sells, 0 buys) - distribution`;
+    } else if (buys.length > sells.length * 2) {
+      signal = 'bullish';
+      summary = `Net buying: ${buys.length} buys vs ${sells.length} sells`;
+    } else if (sells.length > buys.length * 2) {
+      signal = 'bearish';
+      summary = `Net selling: ${sells.length} sells vs ${buys.length} buys`;
+    } else {
+      summary = `${recentTrades.length} trades (${buys.length} buys, ${sells.length} sells)`;
+    }
+
+    return {
+      signal,
+      summary,
+      recentTrades: recentTrades.length,
+      buys: buys.length,
+      sells: sells.length,
+      uniqueInsiders,
+      totalValue: Math.round(totalValue),
+      trades: recentTrades.slice(0, 5) // Return top 5 most recent
+    };
+  }
+
+  /**
    * Get congressional trading activity for a symbol
    * Returns both Senate and House trades
    */
