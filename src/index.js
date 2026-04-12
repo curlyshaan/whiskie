@@ -524,6 +524,8 @@ class WhiskieBot {
         (async () => {
           try {
             const assetClassData = await import('./asset-class-data.js');
+            const fmpModule = await import('./fmp.js');
+            const fmpClient = fmpModule.default;
             let totalProcessed = 0;
             let totalAdded = 0;
 
@@ -531,11 +533,27 @@ class WhiskieBot {
               console.log(`📊 Processing ${assetClass} (${symbols.length} stocks)...`);
               for (const symbol of symbols) {
                 try {
+                  // Fetch company profile from FMP to get sector/industry
+                  let sector = null;
+                  let subIndustry = null;
+                  try {
+                    const profile = await fmpClient.getCompanyProfile(symbol);
+                    if (profile && profile.length > 0) {
+                      sector = profile[0].sector || null;
+                      subIndustry = profile[0].industry || null;
+                    }
+                  } catch (fmpError) {
+                    console.log(`\n⚠️  Could not fetch profile for ${symbol}, using nulls`);
+                  }
+
                   await db.query(
-                    `INSERT INTO stock_universe (symbol, asset_class, status)
-                     VALUES ($1, $2, 'active')
-                     ON CONFLICT (symbol) DO UPDATE SET asset_class = $2`,
-                    [symbol, assetClass]
+                    `INSERT INTO stock_universe (symbol, asset_class, sector, sub_industry, status)
+                     VALUES ($1, $2, $3, $4, 'active')
+                     ON CONFLICT (symbol) DO UPDATE SET
+                       asset_class = $2,
+                       sector = $3,
+                       sub_industry = $4`,
+                    [symbol, assetClass, sector, subIndustry]
                   );
                   totalAdded++;
                   process.stdout.write('.');
