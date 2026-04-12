@@ -76,6 +76,11 @@ class FundamentalScreener {
 
           processed++;
 
+          // Debug logging for first 10 stocks
+          if (processed <= 10 && result !== null) {
+            console.log(`   DEBUG ${stock.symbol}: Long=${result.longScore || 'null'} (${result.longPathway || 'none'}), Short=${result.shortScore || 'null'}`);
+          }
+
           if (processed % 50 === 0) {
             console.log(`   Progress: ${processed}/${allStocks.length} | Longs: ${longCandidates.length} | Shorts: ${shortCandidates.length}`);
           }
@@ -148,11 +153,6 @@ class FundamentalScreener {
 
       const longResult = this.scoreLong(metrics, sector, sectorConfig);
       const shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
-
-      // Debug logging for first 10 stocks to see actual scores
-      if (processed < 10) {
-        console.log(`   DEBUG ${stock.symbol}: Long=${longResult?.score || 'null'} (${longResult?.pathway || 'none'}), Short=${shortResult?.score || 'null'}`);
-      }
 
       if (longResult === null && shortResult === null) return null;
 
