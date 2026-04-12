@@ -268,6 +268,7 @@ export async function initDatabase() {
       CREATE TABLE IF NOT EXISTS stock_universe (
         id SERIAL PRIMARY KEY,
         symbol VARCHAR(10) UNIQUE NOT NULL,
+        asset_class VARCHAR(50),
         sector VARCHAR(100),
         sub_industry VARCHAR(100),
         market_cap_tier VARCHAR(20),
