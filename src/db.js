@@ -299,6 +299,33 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_stock_universe_status ON stock_universe(status);
     `);
 
+    // ETF watchlist table - track ETFs for hedging/exposure (separate from stock screening)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS etf_watchlist (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) UNIQUE NOT NULL,
+        name VARCHAR(100),
+        category VARCHAR(50),
+        expense_ratio DECIMAL(5, 4),
+        aum BIGINT,
+        avg_daily_volume BIGINT,
+        tracking_index VARCHAR(100),
+        purpose TEXT,
+        current_price DECIMAL(10, 2),
+        status VARCHAR(20) DEFAULT 'active',
+        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_etf_watchlist_symbol ON etf_watchlist(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_etf_watchlist_category ON etf_watchlist(category);
+    `);
+
     // Value watchlist table - fundamental screening results
     await client.query(`
       CREATE TABLE IF NOT EXISTS value_watchlist (

@@ -496,8 +496,7 @@ class FMPClient {
    */
   async screenCompanies(params = {}) {
     const defaults = {
-      exchange: 'nasdaq,nyse,amex',
-      limit: 200
+      exchange: 'nasdaq,nyse,amex'
     };
     const data = await this.request(`/company-screener`, { ...defaults, ...params });
     return data || [];
@@ -517,12 +516,12 @@ class FMPClient {
       ]);
 
       if (!ratiosTTM) {
-        console.warn(`⚠️ ${symbol}: ratios-ttm returned null`);
+        // Silently return null - likely an ETF or non-equity security
         return null;
       }
 
       if (!keyMetricsTTM) {
-        console.warn(`⚠️ ${symbol}: key-metrics-ttm returned null`);
+        // Silently return null - likely an ETF or non-equity security
         return null;
       }
 
