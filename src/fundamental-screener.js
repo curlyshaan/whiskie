@@ -139,9 +139,12 @@ class FundamentalScreener {
       const marketCap = fundamentals.marketCap || 0;
       if (marketCap < this.MIN_MARKET_CAP) return null;
 
+      // Get volume trend (fundamental signal, not technical)
+      const volumeTrend = await this.getVolumeTrend(stock.symbol);
+
       const sector = normalizeSectorName(fundamentals.sector);
       const sectorConfig = getSectorConfig(sector);
-      const metrics = this.extractMetrics(fundamentals, price, dollarVolume);
+      const metrics = this.extractMetrics(fundamentals, price, dollarVolume, volumeTrend);
 
       const longResult = this.scoreLong(metrics, sector, sectorConfig);
       const shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
@@ -171,7 +174,7 @@ class FundamentalScreener {
   /**
    * Extract all fundamental metrics
    */
-  extractMetrics(fundamentals, price, dollarVolume) {
+  extractMetrics(fundamentals, price, dollarVolume, volumeTrend) {
     return {
       peRatio: fundamentals.peRatio || 0,
       pegRatio: fundamentals.pegRatio || 0,
@@ -196,7 +199,10 @@ class FundamentalScreener {
       shortFloat: fundamentals.shortFloat || null,
       price,
       dollarVolume,
-      marketCap: fundamentals.marketCap || 0
+      marketCap: fundamentals.marketCap || 0,
+      // Volume trend (institutional accumulation/distribution signal)
+      volumeTrend: volumeTrend?.trend || 'unknown',
+      volumeChange: volumeTrend?.change || 0
     };
   }
 
@@ -538,6 +544,12 @@ class FundamentalScreener {
       reasons.push('Negative earnings growth with high P/E');
     }
 
+    // Volume trend deterioration (institutional distribution signal)
+    if (metrics.volumeTrend === 'declining') {
+      score += 15;
+      reasons.push(`Volume declining ${metrics.volumeChange.toFixed(0)}% (distribution)`);
+    }
+
     return score;
   }
 
@@ -564,6 +576,43 @@ class FundamentalScreener {
     // ETB (easy to borrow) check also happens at execution
 
     return true;
+  }
+
+  /**
+   * Get volume trend for a stock (institutional accumulation/distribution signal)
+   * Uses Yahoo Finance historical data to compare recent vs older volume
+   */
+  async getVolumeTrend(symbol) {
+    try {
+      // Get 30 days of historical data
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 30);
+
+      const historicalData = await yahooFinance.getHistoricalData(symbol, startDate, endDate);
+      if (!historicalData || historicalData.length < 15) {
+        return { trend: 'unknown', change: 0 };
+      }
+
+      // Recent 5 days average
+      const recent5 = historicalData.slice(0, 5);
+      const recentAvg = recent5.reduce((sum, d) => sum + (d.volume || 0), 0) / 5;
+
+      // Older 5 days average (15 days back)
+      const older5 = historicalData.slice(15, 20);
+      const olderAvg = older5.reduce((sum, d) => sum + (d.volume || 0), 0) / 5;
+
+      if (olderAvg === 0) {
+        return { trend: 'unknown', change: 0 };
+      }
+
+      const change = ((recentAvg - olderAvg) / olderAvg) * 100;
+      const trend = change > 20 ? 'rising' : change < -20 ? 'declining' : 'stable';
+
+      return { trend, change };
+    } catch (error) {
+      return { trend: 'unknown', change: 0 };
+    }
   }
 
   /**
