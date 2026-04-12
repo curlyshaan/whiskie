@@ -574,7 +574,7 @@ class FMPClient {
         pegRatio: ratiosTTM.priceToEarningsGrowthRatioTTM || 0,
         priceToBook: ratiosTTM.priceToBookRatioTTM || 0,
         priceToSales: ratiosTTM.priceToSalesRatioTTM || 0,
-        evToEbitda: keyMetricsTTM?.enterpriseValueOverEBITDATTM || 0,
+        evToEbitda: keyMetricsTTM?.evToEBITDATTM || 0,
         grahamNumber: keyMetricsTTM?.grahamNumberTTM || 0,
         earningsYield: keyMetricsTTM?.earningsYieldTTM || 0,
 
@@ -591,7 +591,7 @@ class FMPClient {
         // TTM Financial Health
         debtToEquity: ratiosTTM.debtToEquityRatioTTM || 0,
         currentRatio: ratiosTTM.currentRatioTTM || 0,
-        interestCoverage: ratiosTTM.interestCoverageTTM || 0,
+        interestCoverage: ratiosTTM.interestCoverageRatioTTM || 0,
 
         // TTM Profitability
         operatingMargin: ratiosTTM.operatingProfitMarginTTM || 0,
