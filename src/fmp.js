@@ -158,6 +158,32 @@ class FMPClient {
   }
 
   /**
+   * Get cash flow statement (operating cash flow, FCF)
+   * Use period=quarter for quarterly data
+   */
+  async getCashFlowStatement(symbol, limit = 4) {
+    const data = await this.request(`/cash-flow-statement`, {
+      symbol,
+      period: 'quarter',
+      limit
+    });
+    return data || [];
+  }
+
+  /**
+   * Get balance sheet (assets, liabilities, equity)
+   * Use period=quarter for quarterly data
+   */
+  async getBalanceSheet(symbol, limit = 4) {
+    const data = await this.request(`/balance-sheet-statement`, {
+      symbol,
+      period: 'quarter',
+      limit
+    });
+    return data || [];
+  }
+
+  /**
    * Get financial growth rates (true YoY growth)
    * Returns revenueGrowth, netIncomeGrowth, epsGrowth, etc.
    */
