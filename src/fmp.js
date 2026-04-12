@@ -528,6 +528,22 @@ class FMPClient {
 
       // Extract growth rates from financial-growth endpoint (true YoY)
       const latestGrowth = financialGrowth[0] || {};
+      const prevGrowth = financialGrowth[1] || {};
+
+      // Calculate quarterly metrics from income statements
+      const latestQ = incomeStatements[0] || {};
+      const prevQ = incomeStatements[1] || {};
+
+      const revenueGrowthQ = latestGrowth.revenueGrowth || 0;
+      const revenueGrowthPrevQ = prevGrowth.revenueGrowth || 0;
+
+      const operatingMarginQ = latestQ.revenue ? (latestQ.operatingIncome / latestQ.revenue) : 0;
+      const operatingMarginPrevQ = prevQ.revenue ? (prevQ.operatingIncome / prevQ.revenue) : 0;
+
+      // Calculate TTM free cash flow from shares outstanding and FCF per share
+      const sharesOutstanding = latestQ.weightedAverageShsOutDil || 0;
+      const fcfPerShare = ratiosTTM.freeCashFlowPerShareTTM || 0;
+      const freeCashflow = sharesOutstanding * fcfPerShare;
 
       return {
         symbol,
@@ -568,6 +584,12 @@ class FMPClient {
 
         // TTM Cash Flow
         freeCashflowPerShare: ratiosTTM.freeCashFlowPerShareTTM || 0,
+        freeCashflow: freeCashflow,
+
+        // Quarterly metrics for inflection detection
+        revenueGrowthQ: revenueGrowthQ,
+        revenueGrowthPrevQ: revenueGrowthPrevQ,
+        operatingMarginPrev: operatingMarginPrevQ,
 
         // Price data
         price: profile?.price || 0,
