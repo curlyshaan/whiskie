@@ -208,19 +208,30 @@ class FMPClient {
 
   /**
    * Analyze volume trend from historical data
-   * Compares recent 5-day average vs 10-15 days ago average
+   * Compares recent 5-day average vs older period
+   *
+   * @param {Array} historicalData - Array of daily price/volume data
+   * @param {number} lookbackDays - How far back to compare (20, 50, 90, 200)
+   * @returns {Object} Volume trend analysis
    */
-  analyzeVolumeTrend(historicalData) {
-    if (!historicalData || historicalData.length < 15) {
-      return { trend: 'unknown', change: 0, recentAvg: 0, olderAvg: 0 };
+  analyzeVolumeTrend(historicalData, lookbackDays = 15) {
+    if (!historicalData || historicalData.length < lookbackDays + 5) {
+      return {
+        trend: 'unknown',
+        change: 0,
+        recentAvg: 0,
+        olderAvg: 0,
+        lookbackDays,
+        dataPoints: historicalData?.length || 0
+      };
     }
 
     // Recent 5 days (indices 0-4)
     const recent5 = historicalData.slice(0, 5);
     const recentAvg = recent5.reduce((sum, d) => sum + (d.volume || 0), 0) / 5;
 
-    // Older 5 days (indices 10-14, skipping 5-9 for cleaner comparison)
-    const older5 = historicalData.slice(10, 15);
+    // Older 5 days (starting at lookbackDays offset)
+    const older5 = historicalData.slice(lookbackDays, lookbackDays + 5);
     const olderAvg = older5.reduce((sum, d) => sum + (d.volume || 0), 0) / 5;
 
     const change = olderAvg > 0 ? ((recentAvg - olderAvg) / olderAvg * 100) : 0;
@@ -233,8 +244,31 @@ class FMPClient {
       trend,
       change: parseFloat(change.toFixed(1)),
       recentAvg: Math.round(recentAvg),
-      olderAvg: Math.round(olderAvg)
+      olderAvg: Math.round(olderAvg),
+      lookbackDays,
+      dataPoints: historicalData.length
     };
+  }
+
+  /**
+   * Get volume trend with custom lookback period
+   * Allows Opus to request different timeframes for analysis
+   */
+  async getVolumeTrend(symbol, lookbackDays = 15) {
+    try {
+      // Fetch enough historical data for the requested lookback
+      const requiredDays = lookbackDays + 10; // +10 for the comparison window
+      const emaData = await this.request(`/technical-indicators/ema`, {
+        symbol,
+        periodLength: Math.max(50, requiredDays), // Ensure we get enough data
+        timeframe: '1day'
+      });
+
+      return this.analyzeVolumeTrend(emaData, lookbackDays);
+    } catch (error) {
+      console.error(`Error fetching volume trend for ${symbol}:`, error.message);
+      return null;
+    }
   }
 
   /**
