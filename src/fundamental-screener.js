@@ -62,8 +62,9 @@ class FundamentalScreener {
             console.log(`   Progress: ${processed}/${allStocks.length} stocks screened...`);
           }
 
-          // Rate limiting (Yahoo Finance free tier)
-          await new Promise(resolve => setTimeout(resolve, 100));
+          // Rate limiting: 300 calls/min = 5 calls/sec = 200ms per call minimum
+          // Each stock makes ~3-5 FMP calls, so use 500ms delay to stay under limit
+          await new Promise(resolve => setTimeout(resolve, 500));
 
         } catch (error) {
           errors++;
