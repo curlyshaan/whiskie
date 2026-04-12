@@ -37,6 +37,7 @@ class OpusScreener {
       console.log('   📊 Fetching fundamental data from FMP...');
       const fundamentalsData = {};
       let fmpCount = 0;
+      const totalStocks = allStocks.length;
 
       for (const stock of allStocks) {
         // Fetch from FMP directly (no cache)
@@ -45,6 +46,11 @@ class OpusScreener {
         if (data) {
           fmpCount++;
           fundamentalsData[stock.symbol] = data;
+        }
+
+        // Progress logging every 50 stocks
+        if (fmpCount % 50 === 0) {
+          console.log(`   Progress: ${fmpCount}/${totalStocks} stocks loaded`);
         }
 
         // 500ms delay to stay under 300 calls/minute (120 calls/min with 500ms delay)
