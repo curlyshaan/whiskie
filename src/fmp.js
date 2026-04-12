@@ -516,7 +516,7 @@ class FMPClient {
         this.getKeyMetricsTTM(symbol)
       ]);
 
-      if (!profile || !ratiosTTM) {
+      if (!ratiosTTM || !keyMetricsTTM) {
         return null;
       }
 
@@ -531,9 +531,9 @@ class FMPClient {
 
       return {
         symbol,
-        marketCap: profile.mktCap || 0,
-        sector: profile.sector || 'Unknown',
-        industry: profile.industry || 'Unknown',
+        marketCap: keyMetricsTTM?.marketCap || 0,
+        sector: profile?.sector || 'Unknown',
+        industry: profile?.industry || 'Unknown',
 
         // TTM Valuation (current price × TTM earnings)
         peRatio: ratiosTTM.priceToEarningsRatioTTM || 0,
@@ -563,15 +563,15 @@ class FMPClient {
         operatingMargin: ratiosTTM.operatingProfitMarginTTM || 0,
         netMargin: ratiosTTM.netProfitMarginTTM || 0,
         grossMargin: ratiosTTM.grossProfitMarginTTM || 0,
-        roe: ratiosTTM.returnOnEquityTTM || 0,
-        roic: keyMetricsTTM?.roicTTM || 0,
+        roe: keyMetricsTTM?.returnOnEquityTTM || 0,
+        roic: keyMetricsTTM?.returnOnInvestedCapitalTTM || 0,
 
         // TTM Cash Flow
         freeCashflowPerShare: ratiosTTM.freeCashFlowPerShareTTM || 0,
 
         // Price data
-        price: profile.price || 0,
-        beta: profile.beta || 0,
+        price: profile?.price || 0,
+        beta: profile?.beta || 0,
 
         // Quarterly statements for trend analysis
         incomeStatements: incomeStatements.slice(0, 4) // Last 4 quarters
