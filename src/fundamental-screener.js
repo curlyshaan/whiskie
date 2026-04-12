@@ -30,8 +30,8 @@ class FundamentalScreener {
     this.MIN_MARKET_CAP = 500_000_000;      // $500M market cap minimum
     this.MIN_SHORT_MARKET_CAP = 2_000_000_000; // $2B minimum for shorts
     this.MIN_SHORT_DOLLAR_VOLUME = 20_000_000; // $20M daily volume for shorts
-    this.LONG_THRESHOLD = 35;               // Pass if ANY pathway ≥35
-    this.SHORT_THRESHOLD = 60;              // Must score ≥60 with all 3 criteria
+    this.LONG_THRESHOLD = 25;               // Pass if ANY pathway ≥25 (lowered from 35 for testing)
+    this.SHORT_THRESHOLD = 50;              // Must score ≥50 with all 3 criteria (lowered from 60)
     this.MAX_SHORT_FLOAT = 0.20;            // Max 20% short float (meme stock risk)
   }
 
@@ -148,6 +148,11 @@ class FundamentalScreener {
 
       const longResult = this.scoreLong(metrics, sector, sectorConfig);
       const shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
+
+      // Debug logging for first 10 stocks to see actual scores
+      if (processed < 10) {
+        console.log(`   DEBUG ${stock.symbol}: Long=${longResult?.score || 'null'} (${longResult?.pathway || 'none'}), Short=${shortResult?.score || 'null'}`);
+      }
 
       if (longResult === null && shortResult === null) return null;
 
