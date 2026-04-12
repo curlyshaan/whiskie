@@ -562,6 +562,9 @@ class WhiskieBot {
                     } else {
                       console.log(`\n⚠️  FMP returned null/empty for ${symbol}`);
                     }
+
+                    // Rate limit: 250ms delay = 240 calls/min (safely under 300/min limit)
+                    await new Promise(resolve => setTimeout(resolve, 250));
                   } catch (fmpError) {
                     console.log(`\n⚠️  FMP API error for ${symbol}:`, fmpError.message);
                   }
