@@ -541,15 +541,15 @@ class WhiskieBot {
                   let avgDailyVolume = null;
 
                   try {
-                    const profile = await fmpClient.getCompanyProfile(symbol);
-                    if (profile && profile.length > 0) {
-                      sector = profile[0].sector || null;
-                      subIndustry = profile[0].industry || null;
-                      lastPrice = profile[0].price || null;
-                      avgDailyVolume = profile[0].volAvg || null;
+                    const profile = await fmpClient.getProfile(symbol);
+                    if (profile) {
+                      sector = profile.sector || null;
+                      subIndustry = profile.industry || null;
+                      lastPrice = profile.price || null;
+                      avgDailyVolume = profile.volAvg || null;
 
                       // Calculate market cap tier
-                      const marketCap = profile[0].mktCap;
+                      const marketCap = profile.mktCap;
                       if (marketCap) {
                         if (marketCap >= 10_000_000_000) {
                           marketCapTier = 'Large';
