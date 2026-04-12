@@ -207,9 +207,6 @@ class FundamentalScreener {
       olderAvgVolume: technicals?.olderAvgVolume || 0
     };
   }
-      marketCap: fundamentals.marketCap || 0,
-    };
-  }
 
   // ─────────────────────────────────────────────
   // LONG SCORING - 4 independent pathways
