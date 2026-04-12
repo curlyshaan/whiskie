@@ -538,6 +538,7 @@ class WhiskieBot {
                   let subIndustry = null;
                   let marketCapTier = null;
                   let lastPrice = null;
+                  let avgDailyVolume = null;
 
                   try {
                     const profile = await fmpClient.getCompanyProfile(symbol);
@@ -545,6 +546,7 @@ class WhiskieBot {
                       sector = profile[0].sector || null;
                       subIndustry = profile[0].industry || null;
                       lastPrice = profile[0].price || null;
+                      avgDailyVolume = profile[0].volAvg || null;
 
                       // Calculate market cap tier
                       const marketCap = profile[0].mktCap;
@@ -563,15 +565,16 @@ class WhiskieBot {
                   }
 
                   await db.query(
-                    `INSERT INTO stock_universe (symbol, asset_class, sector, sub_industry, market_cap_tier, last_price, status)
-                     VALUES ($1, $2, $3, $4, $5, $6, 'active')
+                    `INSERT INTO stock_universe (symbol, asset_class, sector, sub_industry, market_cap_tier, last_price, avg_daily_volume, status)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
                      ON CONFLICT (symbol) DO UPDATE SET
                        asset_class = $2,
                        sector = $3,
                        sub_industry = $4,
                        market_cap_tier = $5,
-                       last_price = $6`,
-                    [symbol, assetClass, sector, subIndustry, marketCapTier, lastPrice]
+                       last_price = $6,
+                       avg_daily_volume = $7`,
+                    [symbol, assetClass, sector, subIndustry, marketCapTier, lastPrice, avgDailyVolume]
                   );
                   totalAdded++;
                   process.stdout.write('.');
@@ -606,6 +609,61 @@ class WhiskieBot {
         res.json({ success: true, message: 'Migration complete: asset_class column added to stock_universe table' });
       } catch (error) {
         console.error('❌ Migration failed:', error);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/update-etb-status', async (req, res) => {
+      try {
+        console.log('📡 Manual ETB status update triggered via API');
+        (async () => {
+          try {
+            const tradierModule = await import('./tradier.js');
+            const tradier = tradierModule.default;
+
+            console.log('🔍 Fetching ETB list from Tradier...');
+            const etbList = await tradier.getETBList();
+
+            if (!etbList || etbList.length === 0) {
+              console.error('❌ No ETB data received from Tradier');
+              return;
+            }
+
+            console.log(`📊 Received ${etbList.length} stocks on ETB list`);
+
+            const allStocks = await db.query('SELECT symbol FROM stock_universe WHERE status = $1', ['active']);
+            console.log(`📈 Checking ${allStocks.rows.length} stocks in universe`);
+
+            let shortableCount = 0;
+            let notShortableCount = 0;
+
+            for (const stock of allStocks.rows) {
+              const isETB = etbList.some(etb => etb.symbol === stock.symbol);
+
+              await db.query(
+                `UPDATE stock_universe SET shortable = $1, last_etb_check = NOW() WHERE symbol = $2`,
+                [isETB, stock.symbol]
+              );
+
+              if (isETB) {
+                shortableCount++;
+                process.stdout.write('✓');
+              } else {
+                notShortableCount++;
+                process.stdout.write('·');
+              }
+            }
+
+            console.log('\n\n✅ ETB status update complete!');
+            console.log(`✓ Shortable: ${shortableCount}`);
+            console.log(`· Not shortable: ${notShortableCount}`);
+            console.log(`📊 Shortable percentage: ${((shortableCount / allStocks.rows.length) * 100).toFixed(1)}%`);
+          } catch (error) {
+            console.error('❌ Error updating ETB status:', error);
+          }
+        })();
+        res.json({ success: true, message: 'ETB status update started. Check logs for progress.' });
+      } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
     });
