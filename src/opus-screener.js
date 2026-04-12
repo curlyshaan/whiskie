@@ -3,8 +3,6 @@ import tradier from './tradier.js';
 import claude from './claude.js';
 import * as db from './db.js';
 import assetClassData from './asset-class-data.js';
-import yahooPython from './yahoo-python-client.js';
-import advancedFMPScreener from './advanced-fmp-screener.js';
 
 /**
  * Opus-Driven Screener for Quality and Overvalued Stocks
@@ -90,8 +88,7 @@ class OpusScreener {
           stocksForAnalysis.push({
             symbol,
             fundamentals: fundamentalsData[symbol],
-            market: marketData[symbol],
-            insiderTrading: insiderData[symbol] || null
+            market: marketData[symbol]
           });
         }
       }
