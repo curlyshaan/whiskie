@@ -1,4 +1,4 @@
-import fmpCache from './fmp-cache.js';
+import fmp from './fmp.js';
 import tradier from './tradier.js';
 import * as db from './db.js';
 import assetClassData from './asset-class-data.js';
@@ -142,7 +142,7 @@ class FundamentalScreener {
       if (price < this.MIN_PRICE) return null;
       if (dollarVolume < this.MIN_DOLLAR_VOLUME) return null;
 
-      const fundamentals = await fmpCache.getFundamentals(stock.symbol);
+      const fundamentals = await fmp.getFundamentals(stock.symbol);
       if (!fundamentals) return null;
 
       const marketCap = fundamentals.marketCap || 0;
@@ -843,18 +843,12 @@ class FundamentalScreener {
   }
 
   /**
-   * Log cache statistics
+   * Log FMP API usage statistics
    */
   async logCacheStats(stockCount) {
     try {
       const fmpStats = (await import('./fmp.js')).default.getUsageStats();
       console.log(`\n   📊 FMP API Usage: ${fmpStats.calls} calls`);
-
-      const cacheStats = await fmpCache.getCacheStats();
-      console.log(`   💾 Cache Stats:`);
-      console.log(`      TTM (1-day):        ${cacheStats.TTM.valid} valid, ${cacheStats.TTM.expired} expired`);
-      console.log(`      Quarterly (45-day): ${cacheStats.QUARTERLY.valid} valid, ${cacheStats.QUARTERLY.expired} expired`);
-      console.log(`      Annual (90-day):    ${cacheStats.ANNUAL.valid} valid, ${cacheStats.ANNUAL.expired} expired`);
     } catch (error) {
       // Non-critical
     }

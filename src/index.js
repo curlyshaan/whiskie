@@ -25,7 +25,6 @@ import fundamentalScreener from './fundamental-screener.js';
 import qualityScreener from './quality-screener.js';
 import overvaluedScreener from './overvalued-screener.js';
 import tradeApproval from './trade-approval.js';
-import fmpCache from './fmp-cache.js';
 import opusScreener from './opus-screener.js';
 import tradeExecutor from './trade-executor.js';
 import circuitBreaker from './circuit-breaker.js';
@@ -83,10 +82,6 @@ class WhiskieBot {
       // Initialize trade approval system
       await tradeApproval.initDatabase();
       console.log('✅ Trade approval system initialized\n');
-
-      // Initialize FMP cache
-      await fmpCache.initDatabase();
-      console.log('✅ FMP cache initialized\n');
 
       // Load active orders from database
       await orderManager.loadActiveOrders();
@@ -208,11 +203,7 @@ class WhiskieBot {
           console.log('✅ Fundamental screening complete');
           await db.logCronJobComplete(screeningJobId, true);
 
-          // STEP 2: Clear expired FMP cache entries
-          console.log('\n🗑️ STEP 2: Clearing expired FMP cache...');
-          await fmpCache.clearExpired();
-
-          // STEP 3: Opus screens for quality and overvalued stocks
+          // STEP 2: Opus screens for quality and overvalued stocks
           console.log('\n🧠 STEP 3: Opus quality + overvalued screening...');
           await opusScreener.runWeeklyOpusScreening();
           console.log('✅ Opus screening complete');
@@ -410,10 +401,7 @@ class WhiskieBot {
             console.log('\n📊 STEP 1: Fundamental screening (all stocks)...');
             await fundamentalScreener.runWeeklyScreen('full');
 
-            console.log('\n🗑️ STEP 2: Clearing expired FMP cache...');
-            await fmpCache.clearExpired();
-
-            console.log('\n🧠 STEP 3: Opus quality + overvalued screening...');
+            console.log('\n🧠 STEP 2: Opus quality + overvalued screening...');
             await opusScreener.runWeeklyOpusScreening();
 
             console.log('\n📋 STEP 4: Weekly portfolio review...');

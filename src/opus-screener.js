@@ -1,4 +1,4 @@
-import fmpCache from './fmp-cache.js';
+import fmp from './fmp.js';
 import tradier from './tradier.js';
 import claude from './claude.js';
 import * as db from './db.js';
@@ -37,28 +37,18 @@ class OpusScreener {
       console.log('   📊 Fetching fundamental data from FMP...');
       const fundamentalsData = {};
       let fmpCount = 0;
-      let cachedCount = 0;
 
       for (const stock of allStocks) {
-        // Try cache first
-        let data = await fmpCache.getCached(stock.symbol);
+        // Fetch from FMP directly (no cache)
+        const data = await fmp.getFundamentals(stock.symbol);
 
         if (data) {
-          cachedCount++;
-        } else {
-          // Fetch from FMP paid API
-          data = await fmpCache.getFundamentals(stock.symbol);
-          if (data) {
-            fmpCount++;
-          }
-        }
-
-        if (data) {
+          fmpCount++;
           fundamentalsData[stock.symbol] = data;
         }
       }
 
-      console.log(`   ✅ Loaded ${Object.keys(fundamentalsData).length} stocks (${cachedCount} cached, ${fmpCount} from FMP)`);
+      console.log(`   ✅ Loaded ${Object.keys(fundamentalsData).length} stocks (${fmpCount} from FMP)`);
 
       // Get current market prices
       console.log('   📈 Fetching current market prices...');
