@@ -285,6 +285,34 @@ class FMPClient {
   }
 
   /**
+   * Get any technical indicator with custom parameters
+   * Allows Opus to request specific indicators during analysis
+   *
+   * Available indicators:
+   * - sma, ema, wma, dema, tema (moving averages)
+   * - rsi, williams, adx (oscillators)
+   * - standardDeviation
+   *
+   * @param {string} symbol - Stock symbol
+   * @param {string} indicator - Indicator type (sma, ema, rsi, williams, adx, etc.)
+   * @param {number} period - Period length (e.g., 14 for RSI, 50 for SMA)
+   * @param {string} timeframe - Timeframe (1day, 4hour, 1hour, etc.)
+   */
+  async getTechnicalIndicator(symbol, indicator, period = 14, timeframe = '1day') {
+    try {
+      const data = await this.request(`/technical-indicators/${indicator}`, {
+        symbol,
+        periodLength: period,
+        timeframe
+      });
+      return data || null;
+    } catch (error) {
+      console.error(`Error fetching ${indicator}(${period}) for ${symbol}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
    * Get earnings calendar (upcoming earnings dates)
    * Returns all upcoming earnings by default
    */
