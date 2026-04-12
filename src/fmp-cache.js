@@ -26,6 +26,19 @@ class FMPCache {
    * Initialize cache table with tiered structure
    */
   async initDatabase() {
+    // Check if old table structure exists and migrate
+    const tableCheck = await db.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_name = 'fmp_cache' AND column_name = 'data_type'
+    `);
+
+    if (tableCheck.rows.length === 0) {
+      // Old table exists without data_type column - drop and recreate
+      console.log('⚠️  Migrating fmp_cache table to tiered structure...');
+      await db.query(`DROP TABLE IF EXISTS fmp_cache`);
+    }
+
     await db.query(`
       CREATE TABLE IF NOT EXISTS fmp_cache (
         symbol VARCHAR(10) NOT NULL,
