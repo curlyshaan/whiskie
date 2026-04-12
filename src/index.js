@@ -562,6 +562,18 @@ class WhiskieBot {
       }
     });
 
+    app.post('/api/db-migrate-add-asset-class', async (req, res) => {
+      try {
+        console.log('📡 Database migration: Adding asset_class column');
+        await db.query(`ALTER TABLE stock_universe ADD COLUMN IF NOT EXISTS asset_class VARCHAR(50)`);
+        console.log('✅ Migration complete: asset_class column added');
+        res.json({ success: true, message: 'Migration complete: asset_class column added to stock_universe table' });
+      } catch (error) {
+        console.error('❌ Migration failed:', error);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     app.post('/api/trigger-eod-summary', async (req, res) => {
       try {
         console.log('📡 Manual EOD summary triggered via API');
