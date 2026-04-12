@@ -46,6 +46,9 @@ class OpusScreener {
           fmpCount++;
           fundamentalsData[stock.symbol] = data;
         }
+
+        // 500ms delay to stay under 300 calls/minute (120 calls/min with 500ms delay)
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
 
       console.log(`   ✅ Loaded ${Object.keys(fundamentalsData).length} stocks (${fmpCount} from FMP)`);
@@ -149,15 +152,15 @@ class OpusScreener {
 ${sortedStocks.map(s => {
   const insiderSignal = s.insiderTrading ? advancedFMPScreener.analyzeInsiderTrading(s.insiderTrading) : null;
   return `
-${s.symbol} (${s.fundamentals.sector})
-  Market Cap: $${(s.fundamentals.marketCap / 1e9).toFixed(1)}B
-  Price: $${s.market.price} (52w high: $${s.market.high52w}, ${((s.market.price - s.market.high52w) / s.market.high52w * 100).toFixed(1)}% from high)
-  P/E: ${s.fundamentals.peRatio.toFixed(1)}, PEG: ${s.fundamentals.pegRatio.toFixed(2)}
-  Revenue Growth: ${(s.fundamentals.revenueGrowth * 100).toFixed(1)}%, Earnings Growth: ${(s.fundamentals.earningsGrowth * 100).toFixed(1)}%
-  Debt/Equity: ${s.fundamentals.debtToEquity.toFixed(2)}, ROE: ${(s.fundamentals.roe * 100).toFixed(1)}%
-  Operating Margin: ${(s.fundamentals.operatingMargin * 100).toFixed(1)}%, Net Margin: ${(s.fundamentals.profitMargin * 100).toFixed(1)}%
-  FCF: $${(s.fundamentals.freeCashflow / 1e9).toFixed(2)}B
-  Target Price: $${s.fundamentals.targetMeanPrice.toFixed(2)} (${s.fundamentals.numberOfAnalysts} analysts)${insiderSignal ? `\n  Insider Trading: ${insiderSignal.signal} - ${insiderSignal.reason}` : ''}
+${s.symbol} (${s.fundamentals.sector || 'Unknown'})
+  Market Cap: $${((s.fundamentals.marketCap || 0) / 1e9).toFixed(1)}B
+  Price: $${s.market.price || 0} (52w high: $${s.market.high52w || 0}, ${(((s.market.price || 0) - (s.market.high52w || 1)) / (s.market.high52w || 1) * 100).toFixed(1)}% from high)
+  P/E: ${(s.fundamentals.peRatio || 0).toFixed(1)}, PEG: ${(s.fundamentals.pegRatio || 0).toFixed(2)}
+  Revenue Growth: ${((s.fundamentals.revenueGrowth || 0) * 100).toFixed(1)}%, Earnings Growth: ${((s.fundamentals.earningsGrowth || 0) * 100).toFixed(1)}%
+  Debt/Equity: ${(s.fundamentals.debtToEquity || 0).toFixed(2)}, ROE: ${((s.fundamentals.roe || 0) * 100).toFixed(1)}%
+  Operating Margin: ${((s.fundamentals.operatingMargin || 0) * 100).toFixed(1)}%, Net Margin: ${((s.fundamentals.profitMargin || 0) * 100).toFixed(1)}%
+  FCF: $${((s.fundamentals.freeCashflow || 0) / 1e9).toFixed(2)}B
+  Target Price: $${(s.fundamentals.targetMeanPrice || 0).toFixed(2)} (${s.fundamentals.numberOfAnalysts || 0} analysts)${insiderSignal ? `\n  Insider Trading: ${insiderSignal.signal} - ${insiderSignal.reason}` : ''}
 `;
 }).join('\n')}
 
