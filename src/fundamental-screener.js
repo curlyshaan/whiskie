@@ -646,144 +646,22 @@ class FundamentalScreener {
   }
 
   /**
-   * Use FMP company screener to pre-filter candidates by pathway
-   * Much more efficient than screening all 407 stocks individually
+   * Get all stocks from universe - screen them directly instead of using FMP screener
+   * More accurate and avoids getting 1000+ irrelevant stocks from FMP's entire database
    */
   async getScreenerCandidates() {
-    console.log('\n🔍 Using FMP company screener for pre-filtering...');
-    const fmpModule = await import('./fmp.js');
-    const fmp = fmpModule.default;
+    console.log('\n📊 Screening your 407-stock universe directly...');
 
-    const candidates = new Set();
-
-    try {
-      // LONG PATHWAYS
-
-      // Deep Value pathway: Low P/E, Low P/B
-      console.log('   Screening: Deep Value...');
-      const deepValue = await fmp.screenCompanies({
-        marketCapMoreThan: this.MIN_MARKET_CAP,
-        volumeMoreThan: 500000,
-        priceMoreThan: this.MIN_PRICE,
-        priceToEarningsRatioLowerThan: 15,
-        priceToBookRatioLowerThan: 3
-      });
-      deepValue.forEach(s => candidates.add(s.symbol));
-      console.log(`   Found ${deepValue.length} deep value candidates`);
-
-      // GARP pathway: Moderate P/E, High ROE
-      console.log('   Screening: GARP...');
-      const garp = await fmp.screenCompanies({
-        marketCapMoreThan: this.MIN_MARKET_CAP,
-        volumeMoreThan: 500000,
-        priceMoreThan: this.MIN_PRICE,
-        priceToEarningsRatioMoreThan: 15,
-        priceToEarningsRatioLowerThan: 25,
-        returnOnEquityMoreThan: 0.20,
-      });
-      garp.forEach(s => candidates.add(s.symbol));
-      console.log(`   Found ${garp.length} GARP candidates`);
-
-      // High Growth pathway: Strong revenue growth
-      console.log('   Screening: High Growth...');
-      const highGrowth = await fmp.screenCompanies({
-        marketCapMoreThan: this.MIN_MARKET_CAP,
-        volumeMoreThan: 500000,
-        priceMoreThan: this.MIN_PRICE,
-        revenueGrowthQuarterlyYoyMoreThan: 0.30,
-      });
-      highGrowth.forEach(s => candidates.add(s.symbol));
-      console.log(`   Found ${highGrowth.length} high growth candidates`);
-
-      // Cash Machine pathway: High FCF yield
-      console.log('   Screening: Cash Machine...');
-      const cashMachine = await fmp.screenCompanies({
-        marketCapMoreThan: this.MIN_MARKET_CAP,
-        volumeMoreThan: 500000,
-        priceMoreThan: this.MIN_PRICE,
-        freeCashFlowYieldMoreThan: 0.08,
-      });
-      cashMachine.forEach(s => candidates.add(s.symbol));
-      console.log(`   Found ${cashMachine.length} cash machine candidates`);
-
-      // Inflection pathway: Q-over-Q acceleration, margin expansion
-      console.log('   Screening: Inflection...');
-      const inflection = await fmp.screenCompanies({
-        marketCapMoreThan: this.MIN_MARKET_CAP,
-        volumeMoreThan: 500000,
-        priceMoreThan: this.MIN_PRICE,
-        revenueGrowthQuarterlyYoyMoreThan: 0.15,
-        operatingMarginMoreThan: 0.05,
-      });
-      inflection.forEach(s => candidates.add(s.symbol));
-      console.log(`   Found ${inflection.length} inflection candidates`);
-
-      // Turnaround pathway: Margin expansion, revenue stabilization, manageable debt
-      console.log('   Screening: Turnaround...');
-      const turnaround = await fmp.screenCompanies({
-        marketCapMoreThan: this.MIN_MARKET_CAP,
-        volumeMoreThan: 500000,
-        priceMoreThan: this.MIN_PRICE,
-        priceToEarningsRatioLowerThan: 20,
-        debtToEquityLowerThan: 1.0,
-        operatingMarginMoreThan: 0.01,
-      });
-      turnaround.forEach(s => candidates.add(s.symbol));
-      console.log(`   Found ${turnaround.length} turnaround candidates`);
-
-      // SHORT PATHWAYS
-
-      // 1. Overvalued pathway: High P/E, High P/B (existing)
-      console.log('   Screening: Overvalued (shorts)...');
-      const overvalued = await fmp.screenCompanies({
-        marketCapMoreThan: this.MIN_SHORT_MARKET_CAP,
-        volumeMoreThan: 1000000,
-        priceMoreThan: this.MIN_PRICE,
-        priceToEarningsRatioMoreThan: 40,
-        priceToBookRatioMoreThan: 5,
-      });
-      overvalued.forEach(s => candidates.add(s.symbol));
-      console.log(`   Found ${overvalued.length} overvalued candidates`);
-
-      // 2. Deteriorating Quality: Declining margins, high debt, negative cash flow
-      console.log('   Screening: Deteriorating Quality (shorts)...');
-      const deteriorating = await fmp.screenCompanies({
-        marketCapMoreThan: this.MIN_SHORT_MARKET_CAP,
-        volumeMoreThan: 500000,
-        priceMoreThan: this.MIN_PRICE,
-        operatingMarginLowerThan: 0.05,
-        debtToEquityMoreThan: 2.0,
-      });
-      deteriorating.forEach(s => candidates.add(s.symbol));
-      console.log(`   Found ${deteriorating.length} deteriorating quality candidates`);
-
-      // 3. Overextended Momentum: High valuations with slowing growth
-      console.log('   Screening: Overextended Momentum (shorts)...');
-      const overextended = await fmp.screenCompanies({
-        marketCapMoreThan: this.MIN_SHORT_MARKET_CAP,
-        volumeMoreThan: 1000000,
-        priceMoreThan: this.MIN_PRICE,
-        priceToEarningsRatioMoreThan: 50,
-        priceToSalesRatioMoreThan: 15,
-        betaMoreThan: 1.5,
-      });
-      overextended.forEach(s => candidates.add(s.symbol));
-      console.log(`   Found ${overextended.length} overextended momentum candidates`);
-
-      const uniqueCandidates = Array.from(candidates);
-      console.log(`\n   ✅ Total unique candidates from screener: ${uniqueCandidates.length}`);
-      console.log(`   📊 Breakdown: ${deepValue.length + garp.length + highGrowth.length + cashMachine.length + inflection.length + turnaround.length} longs, ${overvalued.length + deteriorating.length + overextended.length} shorts`);
-
-      // Map to our stock format with asset class
-      return uniqueCandidates.map(symbol => {
-        const assetClass = assetClassData.getAssetClass(symbol);
-        return { symbol, assetClass };
-      }).filter(s => s.assetClass); // Only include stocks in our universe
-
-    } catch (error) {
-      console.error('   ⚠️ Screener failed, falling back to full universe:', error.message);
-      return this.getAllStocks();
+    // Return all stocks from your curated universe
+    const stocks = [];
+    for (const [assetClass, symbols] of Object.entries(assetClassData.ASSET_CLASSES)) {
+      for (const symbol of symbols) {
+        stocks.push({ symbol, assetClass });
+      }
     }
+
+    console.log(`   ✅ Loaded ${stocks.length} stocks from universe`);
+    return stocks;
   }
 
   /**
