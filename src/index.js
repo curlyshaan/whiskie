@@ -546,10 +546,10 @@ class WhiskieBot {
                       sector = profile.sector || null;
                       subIndustry = profile.industry || null;
                       lastPrice = profile.price || null;
-                      avgDailyVolume = profile.volAvg || null;
+                      avgDailyVolume = profile.averageVolume || null;
 
                       // Calculate market cap tier
-                      const marketCap = profile.mktCap;
+                      const marketCap = profile.marketCap;
                       if (marketCap) {
                         if (marketCap >= 10_000_000_000) {
                           marketCapTier = 'Large';
