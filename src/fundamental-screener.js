@@ -91,12 +91,16 @@ class FundamentalScreener {
       console.log(`      Total calls this session: ${fmpStats.calls}`);
       console.log(`      Rate limit: 300 calls/minute (no daily limit)`);
 
-      // Show cache statistics
+      // Show cache statistics with tier breakdown
       const cacheStats = await fmpCache.getCacheStats();
-      console.log(`\n   💾 FMP Cache Stats:`);
-      console.log(`      Cached: ${cacheStats.valid} stocks`);
-      console.log(`      Expired: ${cacheStats.expired} stocks`);
-      console.log(`      Cache hit rate: ${((cacheStats.valid / allStocks.length) * 100).toFixed(1)}%`);
+      console.log(`\n   💾 FMP Cache Stats (Tiered):`);
+      console.log(`      TTM (1-day): ${cacheStats.TTM.valid} valid, ${cacheStats.TTM.expired} expired`);
+      console.log(`      Quarterly (45-day): ${cacheStats.QUARTERLY.valid} valid, ${cacheStats.QUARTERLY.expired} expired`);
+      console.log(`      Annual (90-day): ${cacheStats.ANNUAL.valid} valid, ${cacheStats.ANNUAL.expired} expired`);
+
+      const totalValid = cacheStats.TTM.valid + cacheStats.QUARTERLY.valid + cacheStats.ANNUAL.valid;
+      const cacheHitRate = allStocks.length > 0 ? ((totalValid / (allStocks.length * 3)) * 100).toFixed(1) : 0;
+      console.log(`      Overall cache hit rate: ${cacheHitRate}%`);
 
       // Update Value Watchlist in database (only on Sunday or full run)
       if (part === 'sunday' || part === 'full') {

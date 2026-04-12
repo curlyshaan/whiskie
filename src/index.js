@@ -1469,7 +1469,24 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
       // Fetch stock profiles for long candidates
       console.log('📚 Fetching stock profiles for long candidates...');
       const longProfiles = await stockProfiles.getStockProfiles(candidates.longs);
-      console.log(`✅ Found profiles for ${Object.keys(longProfiles).length} stocks`);
+      const profileCount = Object.keys(longProfiles).length;
+      const missingProfiles = candidates.longs.filter(s => !longProfiles[s]).length;
+      const staleProfiles = Object.values(longProfiles).filter(p => {
+        const daysOld = Math.floor((Date.now() - new Date(p.last_updated).getTime()) / (1000 * 60 * 60 * 24));
+        return daysOld > 14;
+      }).length;
+
+      console.log(`✅ Found profiles for ${profileCount}/${candidates.longs.length} long candidates`);
+      if (missingProfiles > 0) {
+        console.log(`   ⚠️ ${missingProfiles} stocks have no profile - will do full deep research`);
+      }
+      if (staleProfiles > 0) {
+        console.log(`   ⚠️ ${staleProfiles} profiles are stale (>14 days) - Opus will refresh these`);
+      }
+      const freshProfiles = profileCount - staleProfiles;
+      if (freshProfiles > 0) {
+        console.log(`   ✅ ${freshProfiles} fresh profiles loaded - saving ~${freshProfiles * 15}k tokens vs full rebuild`);
+      }
 
       // Build stock profile context
       let stockProfileContext = '';
@@ -1592,7 +1609,13 @@ ${historyContext}`;
       );
       const phase2Duration = ((Date.now() - phase2Start) / 1000).toFixed(1);
 
+      // Log token usage for Phase 2
+      const phase2Tokens = phase2Analysis.usage || {};
       console.log(`✅ Phase 2 complete (${phase2Duration}s)`);
+      console.log(`   Token usage: ${phase2Tokens.input_tokens || 'N/A'} input, ${phase2Tokens.output_tokens || 'N/A'} output`);
+      if (phase2Tokens.cache_read_input_tokens) {
+        console.log(`   Cache: ${phase2Tokens.cache_read_input_tokens} tokens read from cache`);
+      }
       console.log('');
 
       // PHASE 3: Deep analysis of SHORT candidates (50k thinking budget)
@@ -1736,7 +1759,13 @@ ${historyContext}`;
       );
       const phase3Duration = ((Date.now() - phase3Start) / 1000).toFixed(1);
 
+      // Log token usage for Phase 3
+      const phase3Tokens = phase3Analysis.usage || {};
       console.log(`✅ Phase 3 complete (${phase3Duration}s)`);
+      console.log(`   Token usage: ${phase3Tokens.input_tokens || 'N/A'} input, ${phase3Tokens.output_tokens || 'N/A'} output`);
+      if (phase3Tokens.cache_read_input_tokens) {
+        console.log(`   Cache: ${phase3Tokens.cache_read_input_tokens} tokens read from cache`);
+      }
       console.log('');
 
       // Extract per-stock reasoning from Phase 2 and Phase 3 for use in trade approvals
@@ -1892,6 +1921,9 @@ ${historyContext}`;
       const phase4Duration = ((Date.now() - phase4Start) / 1000).toFixed(1);
       const totalDuration = ((Date.now() - phase1Start) / 1000).toFixed(1);
 
+      // Log token usage for Phase 4
+      const phase4Tokens = analysis.usage || {};
+
       console.log('');
       console.log('═══════════════════════════════════════');
       console.log('✅ 4-PHASE OPUS ANALYSIS COMPLETE');
@@ -1901,18 +1933,18 @@ ${historyContext}`;
       console.log('Phase 3 Duration:', phase3Duration, 'seconds (short analysis, 50k tokens)');
       console.log('Phase 4 Duration:', phase4Duration, 'seconds (portfolio construction, 20k tokens)');
       console.log('Total Duration:', totalDuration, 'seconds');
+      console.log('');
+      console.log('📊 PHASE-BY-PHASE TOKEN USAGE:');
+      console.log(`   Phase 2: ${phase2Tokens.input_tokens || 'N/A'} input, ${phase2Tokens.output_tokens || 'N/A'} output`);
+      console.log(`   Phase 3: ${phase3Tokens.input_tokens || 'N/A'} input, ${phase3Tokens.output_tokens || 'N/A'} output`);
+      console.log(`   Phase 4: ${phase4Tokens.input_tokens || 'N/A'} input, ${phase4Tokens.output_tokens || 'N/A'} output`);
+
+      const totalInputTokens = (phase2Tokens.input_tokens || 0) + (phase3Tokens.input_tokens || 0) + (phase4Tokens.input_tokens || 0);
+      const totalOutputTokens = (phase2Tokens.output_tokens || 0) + (phase3Tokens.output_tokens || 0) + (phase4Tokens.output_tokens || 0);
+      console.log(`   Total: ${totalInputTokens.toLocaleString()} input, ${totalOutputTokens.toLocaleString()} output`);
+      console.log('');
       console.log('Response length:', analysis.analysis.length, 'characters');
       console.log('Model used:', analysis.model);
-
-      // Display token usage
-      if (analysis.usage) {
-        const totalTokens = (analysis.usage.input_tokens || 0) + (analysis.usage.output_tokens || 0);
-        console.log('');
-        console.log('📊 TOKEN USAGE:');
-        console.log('   Input tokens:', (analysis.usage.input_tokens || 0).toLocaleString());
-        console.log('   Output tokens:', (analysis.usage.output_tokens || 0).toLocaleString());
-        console.log('   Total tokens:', totalTokens.toLocaleString());
-      }
 
       console.log('');
       console.log('📊 ANALYSIS PREVIEW (first 1500 chars):');

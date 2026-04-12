@@ -33,7 +33,7 @@ class ClaudeAPI {
   /**
    * Send message to Claude (non-streaming)
    */
-  async sendMessage(messages, model = MODELS.SONNET, systemPrompt = null, enableThinking = false, thinkingBudget = 50000) {
+  async sendMessage(messages, model = MODELS.OPUS, systemPrompt = null, enableThinking = false, thinkingBudget = 50000) {
     try {
       const payload = {
         model,

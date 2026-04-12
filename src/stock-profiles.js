@@ -107,11 +107,32 @@ export async function getStaleProfiles(daysOld = 14) {
 
 /**
  * Build comprehensive stock profile using deep research
+ * Checks for existing profile and does incremental update if fresh
  */
 export async function buildStockProfile(symbol) {
-  console.log(`\n🔬 Building comprehensive profile for ${symbol}...`);
+  console.log(`\n🔬 Building profile for ${symbol}...`);
 
   try {
+    // Check if profile already exists
+    const existingProfile = await getStockProfile(symbol);
+
+    if (existingProfile) {
+      const daysOld = Math.floor((Date.now() - new Date(existingProfile.last_updated).getTime()) / (1000 * 60 * 60 * 24));
+
+      // If profile is fresh (<14 days), do incremental update (5k tokens)
+      if (daysOld < 14) {
+        console.log(`  ✅ Profile exists and is fresh (${daysOld} days old)`);
+        console.log(`  🔄 Running incremental update (5k tokens)...`);
+        return await updateStockProfile(symbol, existingProfile);
+      } else {
+        console.log(`  ⚠️ Profile exists but is stale (${daysOld} days old)`);
+        console.log(`  🔬 Running full rebuild (20k tokens)...`);
+      }
+    } else {
+      console.log(`  🆕 No existing profile found`);
+      console.log(`  🔬 Running full deep research (20k tokens)...`);
+    }
+
     // Fetch comprehensive data from multiple sources
     console.log('  📊 Fetching fundamentals from FMP...');
     const fundamentals = await fmp.getFundamentals(symbol);
@@ -205,6 +226,86 @@ Structure your response with clear section headers. Be thorough but concise. Foc
 
   } catch (error) {
     console.error(`❌ Error building profile for ${symbol}:`, error.message);
+    throw error;
+  }
+}
+
+/**
+ * Incremental update for existing profile (5k tokens)
+ */
+async function updateStockProfile(symbol, existingProfile) {
+  try {
+    // Fetch latest fundamentals and news
+    console.log('  📊 Fetching latest fundamentals...');
+    const fundamentals = await fmp.getFundamentals(symbol);
+
+    console.log('  📰 Fetching recent news...');
+    const news = await tavily.search(`${symbol} stock news earnings catalyst`, 3);
+
+    // Build incremental update prompt
+    const updatePrompt = `Update the stock profile for ${symbol} with latest information.
+
+**EXISTING PROFILE (${Math.floor((Date.now() - new Date(existingProfile.last_updated).getTime()) / (1000 * 60 * 60 * 24))} days old):**
+
+Business Model: ${existingProfile.business_model?.substring(0, 300)}...
+Moats: ${existingProfile.moats?.substring(0, 200)}...
+Risks: ${existingProfile.risks?.substring(0, 200)}...
+Catalysts: ${existingProfile.catalysts?.substring(0, 200)}...
+
+**LATEST FUNDAMENTALS:**
+${JSON.stringify(fundamentals, null, 2)}
+
+**RECENT NEWS:**
+${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 150)}...`).join('\n\n')}
+
+**Your Task:** Provide ONLY updates to the profile. Focus on:
+1. **CATALYSTS_UPDATE**: Any new catalysts or changes to existing ones
+2. **RISKS_UPDATE**: New risks or changes to risk severity
+3. **FUNDAMENTALS_UPDATE**: Material changes in financial metrics
+4. **BUSINESS_UPDATE**: Any strategic shifts or business model changes
+
+If nothing material has changed in a section, write "No material changes."
+
+Keep it concise - this is an incremental update, not a full rebuild.`;
+
+    console.log('  🤔 Running Opus incremental update (5k tokens)...');
+    const updateStart = Date.now();
+    const update = await claude.deepAnalysis(
+      {},
+      {},
+      news,
+      {},
+      updatePrompt,
+      5000  // 5k token thinking budget for incremental update
+    );
+    const updateDuration = ((Date.now() - updateStart) / 1000).toFixed(1);
+    console.log(`  ✅ Update complete (${updateDuration}s)`);
+
+    // Merge updates with existing profile
+    const updatedProfile = {
+      symbol,
+      business_model: existingProfile.business_model,
+      moats: existingProfile.moats,
+      competitive_advantages: existingProfile.competitive_advantages,
+      fundamentals: fundamentals || existingProfile.fundamentals,
+      risks: update.analysis.includes('RISKS_UPDATE') ?
+        update.analysis.match(/RISKS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.risks :
+        existingProfile.risks,
+      catalysts: update.analysis.includes('CATALYSTS_UPDATE') ?
+        update.analysis.match(/CATALYSTS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.catalysts :
+        existingProfile.catalysts,
+      profile_version: (existingProfile.profile_version || 1) + 1
+    };
+
+    // Save updated profile
+    console.log('  💾 Saving updated profile...');
+    await saveStockProfile(updatedProfile);
+
+    console.log(`✅ Incremental update for ${symbol} complete (saved 15k tokens vs full rebuild)`);
+    return updatedProfile;
+
+  } catch (error) {
+    console.error(`❌ Error updating profile for ${symbol}:`, error.message);
     throw error;
   }
 }
