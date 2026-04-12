@@ -255,6 +255,81 @@ class FMPClient {
   }
 
   /**
+   * Get congressional trading activity for a symbol
+   * Returns both Senate and House trades
+   */
+  async getCongressionalTrading(symbol) {
+    try {
+      const [senateTrades, houseTrades] = await Promise.all([
+        this.request(`/senate-trades`, { symbol }),
+        this.request(`/house-trades`, { symbol })
+      ]);
+
+      const allTrades = [
+        ...(senateTrades || []).map(t => ({ ...t, chamber: 'Senate' })),
+        ...(houseTrades || []).map(t => ({ ...t, chamber: 'House' }))
+      ];
+
+      // Sort by transaction date (most recent first)
+      allTrades.sort((a, b) => new Date(b.transactionDate) - new Date(a.transactionDate));
+
+      return allTrades;
+    } catch (error) {
+      console.error(`Error fetching congressional trades for ${symbol}:`, error.message);
+      return [];
+    }
+  }
+
+  /**
+   * Analyze congressional trading patterns
+   * Returns summary of recent activity (last 90 days)
+   */
+  analyzeCongressionalActivity(trades) {
+    if (!trades || trades.length === 0) {
+      return { signal: 'none', summary: 'No congressional trades in last 90 days' };
+    }
+
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+    const recentTrades = trades.filter(t => new Date(t.transactionDate) >= ninetyDaysAgo);
+
+    if (recentTrades.length === 0) {
+      return { signal: 'none', summary: 'No recent congressional trades' };
+    }
+
+    const buys = recentTrades.filter(t => t.type === 'Purchase').length;
+    const sells = recentTrades.filter(t => t.type === 'Sale').length;
+    const uniqueMembers = new Set(recentTrades.map(t => `${t.firstName} ${t.lastName}`)).size;
+
+    let signal = 'neutral';
+    let summary = '';
+
+    if (buys > sells * 2 && uniqueMembers >= 3) {
+      signal = 'bullish_cluster';
+      summary = `${uniqueMembers} members bought (${buys} buys vs ${sells} sells) - unusual cluster`;
+    } else if (sells > buys * 2 && uniqueMembers >= 3) {
+      signal = 'bearish_cluster';
+      summary = `${uniqueMembers} members sold (${sells} sells vs ${buys} buys) - distribution signal`;
+    } else if (recentTrades.length >= 5) {
+      signal = 'high_activity';
+      summary = `${recentTrades.length} trades by ${uniqueMembers} members (${buys} buys, ${sells} sells)`;
+    } else {
+      summary = `${recentTrades.length} trades (${buys} buys, ${sells} sells)`;
+    }
+
+    return {
+      signal,
+      summary,
+      recentTrades: recentTrades.length,
+      buys,
+      sells,
+      uniqueMembers,
+      trades: recentTrades.slice(0, 5) // Return top 5 most recent
+    };
+  }
+
+  /**
    * Company Screener - pre-filter stocks by fundamental criteria
    * Much more efficient than fetching individual stock profiles
    * Docs: /stable/company-screener
