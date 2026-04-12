@@ -282,17 +282,17 @@ class FMPClient {
 
   /**
    * Analyze congressional trading patterns
-   * Returns summary of recent activity (last 90 days)
+   * Returns summary of recent activity (last 30 days)
    */
   analyzeCongressionalActivity(trades) {
     if (!trades || trades.length === 0) {
-      return { signal: 'none', summary: 'No congressional trades in last 90 days' };
+      return { signal: 'none', summary: 'No congressional trades in last 30 days' };
     }
 
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const recentTrades = trades.filter(t => new Date(t.transactionDate) >= ninetyDaysAgo);
+    const recentTrades = trades.filter(t => new Date(t.transactionDate) >= thirtyDaysAgo);
 
     if (recentTrades.length === 0) {
       return { signal: 'none', summary: 'No recent congressional trades' };
