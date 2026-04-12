@@ -33,6 +33,7 @@ class FundamentalScreener {
     this.LONG_THRESHOLD = 25;               // Pass if ANY pathway ≥25 (lowered from 35 for testing)
     this.SHORT_THRESHOLD = 50;              // Must score ≥50 with all 3 criteria (lowered from 60)
     this.MAX_SHORT_FLOAT = 0.20;            // Max 20% short float (meme stock risk)
+    this.debugCounter = 0;                  // Track stocks for debug logging
   }
 
   /**
@@ -42,6 +43,9 @@ class FundamentalScreener {
   async runWeeklyScreen(part = 'full') {
     console.log(`\n💎 Running combined fundamental screening (${part})...`);
     const startTime = Date.now();
+
+    // Reset debug counter for this screening run
+    this.debugCounter = 0;
 
     try {
       // Use FMP company screener for pre-filtering (much faster than screening all 407 stocks)
@@ -144,15 +148,18 @@ class FundamentalScreener {
       const marketCap = fundamentals.marketCap || 0;
       if (marketCap < this.MIN_MARKET_CAP) return null;
 
-      // Get volume trend (fundamental signal, not technical)
-      const volumeTrend = await this.getVolumeTrend(stock.symbol);
-
       const sector = normalizeSectorName(fundamentals.sector);
       const sectorConfig = getSectorConfig(sector);
-      const metrics = this.extractMetrics(fundamentals, price, dollarVolume, volumeTrend);
+      const metrics = this.extractMetrics(fundamentals, price, dollarVolume);
 
       const longResult = this.scoreLong(metrics, sector, sectorConfig);
       const shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
+
+      // Debug: log first 10 stocks regardless of pass/fail
+      this.debugCounter++;
+      if (this.debugCounter <= 10) {
+        console.log(`   DEBUG ${stock.symbol}: Long=${longResult?.score || 0} (${longResult?.pathway || 'none'}), Short=${shortResult?.score || 0}`);
+      }
 
       if (longResult === null && shortResult === null) return null;
 
@@ -179,7 +186,7 @@ class FundamentalScreener {
   /**
    * Extract all fundamental metrics
    */
-  extractMetrics(fundamentals, price, dollarVolume, volumeTrend) {
+  extractMetrics(fundamentals, price, dollarVolume) {
     return {
       peRatio: fundamentals.peRatio || 0,
       pegRatio: fundamentals.pegRatio || 0,
@@ -204,10 +211,7 @@ class FundamentalScreener {
       shortFloat: fundamentals.shortFloat || null,
       price,
       dollarVolume,
-      marketCap: fundamentals.marketCap || 0,
-      // Volume trend (institutional accumulation/distribution signal)
-      volumeTrend: volumeTrend?.trend || 'unknown',
-      volumeChange: volumeTrend?.change || 0
+      marketCap: fundamentals.marketCap || 0
     };
   }
 
@@ -229,12 +233,6 @@ class FundamentalScreener {
       .sort((a, b) => b[1].score - a[1].score)[0];
 
     const [pathway, result] = best;
-
-    // Universal boost: rising volume = institutional accumulation
-    if (metrics.volumeTrend === 'rising') {
-      result.score += 10;
-      result.reasons.push(`Volume rising ${metrics.volumeChange.toFixed(0)}% (accumulation)`);
-    }
 
     if (result.score < this.LONG_THRESHOLD) return null;
 
@@ -554,12 +552,6 @@ class FundamentalScreener {
     if (metrics.earningsGrowth < 0 && metrics.peRatio > 30) {
       score += 20;
       reasons.push('Negative earnings growth with high P/E');
-    }
-
-    // Volume trend deterioration (institutional distribution signal)
-    if (metrics.volumeTrend === 'declining') {
-      score += 15;
-      reasons.push(`Volume declining ${metrics.volumeChange.toFixed(0)}% (distribution)`);
     }
 
     return score;
