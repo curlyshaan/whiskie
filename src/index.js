@@ -418,6 +418,43 @@ class WhiskieBot {
       }
     });
 
+    app.post('/api/trigger-batch-profiles/:batchNumber', async (req, res) => {
+      try {
+        const batchNumber = parseInt(req.params.batchNumber);
+        console.log(`📡 Manual batch profile build #${batchNumber} triggered via API`);
+        (async () => {
+          try {
+            const stockProfiles = await import('./stock-profiles.js');
+            const result = await stockProfiles.buildProfileBatch(batchNumber, 50);
+            console.log(`✅ Batch ${batchNumber} complete: ${result.successful} successful, ${result.skipped} skipped, ${result.failed} failed`);
+          } catch (error) {
+            console.error(`❌ Error in batch ${batchNumber}:`, error);
+          }
+        })();
+        res.json({ success: true, message: `Batch ${batchNumber} started. Processing 50 stocks. Check logs for progress.` });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-weekly-portfolio-review', async (req, res) => {
+      try {
+        console.log('📡 Manual weekly portfolio review triggered via API');
+        (async () => {
+          try {
+            const weeklyReview = await import('./weekly-portfolio-review.js');
+            await weeklyReview.runWeeklyPortfolioReview();
+            console.log('✅ Weekly portfolio review complete');
+          } catch (error) {
+            console.error('❌ Error in weekly portfolio review:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Weekly portfolio review started. This will take 5-10 minutes. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     app.post('/api/trigger-premarket-scan', async (req, res) => {
       try {
         console.log('📡 Manual pre-market scan triggered via API');

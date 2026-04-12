@@ -10,6 +10,32 @@ import tavily from './tavily.js';
  */
 
 /**
+ * Check if stock meets quality criteria for profile building
+ * Filters out penny stocks, low volume, and low market cap
+ */
+function checkStockQuality(symbol, fundamentals) {
+  // Check market cap (minimum $500M for both long and short)
+  const marketCap = fundamentals?.marketCap || 0;
+  if (marketCap < 500000000) {
+    return { passesFilter: false, reason: `Market cap too low: $${(marketCap / 1000000).toFixed(0)}M (min $500M)` };
+  }
+
+  // Check price (no penny stocks - minimum $5)
+  const price = fundamentals?.price || 0;
+  if (price < 5) {
+    return { passesFilter: false, reason: `Price too low: $${price.toFixed(2)} (min $5)` };
+  }
+
+  // Check average volume (minimum 500k shares/day)
+  const avgVolume = fundamentals?.avgVolume || 0;
+  if (avgVolume < 500000) {
+    return { passesFilter: false, reason: `Volume too low: ${(avgVolume / 1000).toFixed(0)}k shares/day (min 500k)` };
+  }
+
+  return { passesFilter: true };
+}
+
+/**
  * Save or update stock profile
  */
 export async function saveStockProfile(profile) {
@@ -116,6 +142,12 @@ export async function buildStockProfile(symbol) {
     // Check if profile already exists
     const existingProfile = await getStockProfile(symbol);
 
+    // Check if stock should be skipped
+    if (existingProfile && existingProfile.quality_flag !== 'active') {
+      console.log(`  ⏭️  Skipping ${symbol} - marked as ${existingProfile.quality_flag}: ${existingProfile.skip_reason}`);
+      return { symbol, skipped: true, reason: existingProfile.skip_reason };
+    }
+
     if (existingProfile) {
       const daysOld = Math.floor((Date.now() - new Date(existingProfile.last_updated).getTime()) / (1000 * 60 * 60 * 24));
 
@@ -136,6 +168,25 @@ export async function buildStockProfile(symbol) {
     // Fetch comprehensive data from multiple sources
     console.log('  📊 Fetching fundamentals from FMP...');
     const fundamentals = await fmp.getFundamentals(symbol);
+
+    // Quality check: filter out low-quality stocks
+    const qualityCheck = checkStockQuality(symbol, fundamentals);
+    if (!qualityCheck.passesFilter) {
+      console.log(`  ⚠️  Stock failed quality check: ${qualityCheck.reason}`);
+      // Save profile with skip flag
+      await db.query(
+        `INSERT INTO stock_profiles (symbol, quality_flag, skip_reason, last_updated)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (symbol) DO UPDATE SET
+           quality_flag = $2,
+           skip_reason = $3,
+           last_updated = NOW()`,
+        [symbol, 'low_quality', qualityCheck.reason]
+      );
+      return { symbol, skipped: true, reason: qualityCheck.reason };
+    }
+
+    console.log('  📊 Fetching fundamentals from FMP...');
 
     console.log('  📈 Fetching historical data...');
     const historicalData = await yahooFinance.getHistoricalData(
@@ -411,11 +462,99 @@ export async function runBiweeklyDeepResearch() {
   }
 }
 
+/**
+ * Build profiles for a batch of stocks from stock_universe
+ * Used for systematic coverage of all 400 stocks
+ */
+export async function buildProfileBatch(batchNumber, batchSize = 50) {
+  console.log('');
+  console.log('═══════════════════════════════════════');
+  console.log(`📚 BATCH PROFILE BUILD #${batchNumber}`);
+  console.log('═══════════════════════════════════════');
+  console.log('');
+
+  try {
+    // Get all active stocks from stock_universe
+    const allStocks = await db.query(
+      `SELECT symbol FROM stock_universe
+       WHERE status = 'active'
+       ORDER BY symbol`
+    );
+
+    const totalStocks = allStocks.rows.length;
+    const offset = (batchNumber - 1) * batchSize;
+    const batchStocks = allStocks.rows.slice(offset, offset + batchSize);
+
+    console.log(`📊 Total stocks in universe: ${totalStocks}`);
+    console.log(`📦 Batch ${batchNumber}: Processing stocks ${offset + 1}-${Math.min(offset + batchSize, totalStocks)}`);
+    console.log(`🎯 Stocks in this batch: ${batchStocks.length}`);
+    console.log('');
+
+    if (batchStocks.length === 0) {
+      console.log('ℹ️  No stocks in this batch');
+      return { batchNumber, processed: 0, successful: 0, skipped: 0, failed: 0 };
+    }
+
+    // Build profiles sequentially
+    const results = [];
+    let successful = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (let i = 0; i < batchStocks.length; i++) {
+      const symbol = batchStocks[i].symbol;
+      console.log(`\n[${i + 1}/${batchStocks.length}] Processing ${symbol}...`);
+
+      try {
+        const result = await buildStockProfile(symbol);
+
+        if (result.skipped) {
+          skipped++;
+          console.log(`  ⏭️  Skipped: ${result.reason}`);
+        } else {
+          successful++;
+          console.log(`  ✅ Profile saved`);
+        }
+
+        results.push({ symbol, success: true, result });
+      } catch (error) {
+        failed++;
+        console.error(`  ❌ Failed: ${error.message}`);
+        results.push({ symbol, success: false, error: error.message });
+      }
+    }
+
+    console.log('');
+    console.log('═══════════════════════════════════════');
+    console.log(`✅ BATCH ${batchNumber} COMPLETE`);
+    console.log('═══════════════════════════════════════');
+    console.log(`Processed: ${batchStocks.length}`);
+    console.log(`Successful: ${successful}`);
+    console.log(`Skipped (low quality): ${skipped}`);
+    console.log(`Failed: ${failed}`);
+    console.log('');
+
+    return {
+      batchNumber,
+      processed: batchStocks.length,
+      successful,
+      skipped,
+      failed,
+      results
+    };
+
+  } catch (error) {
+    console.error(`❌ Error in batch ${batchNumber}:`, error);
+    throw error;
+  }
+}
+
 export default {
   saveStockProfile,
   getStockProfile,
   getStockProfiles,
   getStaleProfiles,
   buildStockProfile,
-  runBiweeklyDeepResearch
+  runBiweeklyDeepResearch,
+  buildProfileBatch
 };

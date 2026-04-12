@@ -1236,9 +1236,18 @@ function generateCronStatusHTML(executions, days) {
     { name: 'Pre-Market Scan', type: 'daily', schedule: '9:00 AM ET Mon-Fri', endpoint: '/api/trigger-premarket-scan' },
     { name: 'Morning Analysis', type: 'daily', schedule: '10:00 AM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
     { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
-    { name: 'Daily Summary', type: 'daily', schedule: '4:30 PM ET Mon-Fri', endpoint: '/api/trigger-eod-summary' },
+    { name: 'Daily Summary', type: 'daily', schedule: '6:00 PM ET Mon-Fri', endpoint: '/api/trigger-eod-summary' },
     { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET', endpoint: '/api/trigger-saturday-screening' },
-    { name: 'Biweekly Deep Research', type: 'weekly', schedule: 'Sunday 10:00 AM ET (even weeks)', endpoint: '/api/trigger-deep-research' }
+    { name: 'Biweekly Deep Research', type: 'weekly', schedule: 'Sunday 10:00 AM ET (even weeks)', endpoint: '/api/trigger-deep-research' },
+    { name: 'Weekly Portfolio Review', type: 'weekly', schedule: 'Manual trigger', endpoint: '/api/trigger-weekly-portfolio-review' },
+    { name: 'Batch Profile Build #1', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/1' },
+    { name: 'Batch Profile Build #2', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/2' },
+    { name: 'Batch Profile Build #3', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/3' },
+    { name: 'Batch Profile Build #4', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/4' },
+    { name: 'Batch Profile Build #5', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/5' },
+    { name: 'Batch Profile Build #6', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/6' },
+    { name: 'Batch Profile Build #7', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/7' },
+    { name: 'Batch Profile Build #8', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/8' }
   ];
 
   return `

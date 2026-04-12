@@ -439,12 +439,29 @@ export async function initDatabase() {
         catalysts TEXT,
         last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         profile_version INTEGER DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        quality_flag VARCHAR(20) DEFAULT 'active',
+        skip_reason TEXT
       );
     `);
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_stock_profiles_updated ON stock_profiles(last_updated);
+    `);
+
+    // Add quality_flag and skip_reason columns if they don't exist
+    await client.query(`
+      ALTER TABLE stock_profiles
+      ADD COLUMN IF NOT EXISTS quality_flag VARCHAR(20) DEFAULT 'active';
+    `);
+
+    await client.query(`
+      ALTER TABLE stock_profiles
+      ADD COLUMN IF NOT EXISTS skip_reason TEXT;
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_profiles_quality ON stock_profiles(quality_flag);
     `);
 
     await client.query(`
