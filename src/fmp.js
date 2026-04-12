@@ -159,7 +159,7 @@ class FMPClient {
 
   /**
    * Get technical indicators using dedicated technical-indicators endpoint
-   * Includes: 200 EMA, 50 EMA, RSI(14)
+   * Includes: 200 EMA, 50 EMA, RSI(14), volume trend analysis
    */
   async getTechnicalIndicators(symbol) {
     try {
@@ -180,6 +180,9 @@ class FMPClient {
       const ema50 = ema50Data?.[0]?.ema || 0;
       const rsi = rsiData?.[0]?.rsi || 0;
 
+      // Volume trend analysis (recent 5 days vs 10-15 days ago)
+      const volumeTrend = this.analyzeVolumeTrend(ema200Data);
+
       return {
         price: currentPrice,
         ema50,
@@ -190,12 +193,48 @@ class FMPClient {
         ema50Distance: ema50 > 0 ? ((currentPrice - ema50) / ema50 * 100) : 0,
         ema200Distance: ema200 > 0 ? ((currentPrice - ema200) / ema200 * 100) : 0,
         // RSI interpretation
-        rsiBand: rsi > 70 ? 'overbought' : rsi < 30 ? 'oversold' : 'neutral'
+        rsiBand: rsi > 70 ? 'overbought' : rsi < 30 ? 'oversold' : 'neutral',
+        // Volume trend
+        volumeTrend: volumeTrend.trend,
+        volumeChange: volumeTrend.change,
+        recentAvgVolume: volumeTrend.recentAvg,
+        olderAvgVolume: volumeTrend.olderAvg
       };
     } catch (error) {
       console.error(`Error fetching technical indicators for ${symbol}:`, error.message);
       return null;
     }
+  }
+
+  /**
+   * Analyze volume trend from historical data
+   * Compares recent 5-day average vs 10-15 days ago average
+   */
+  analyzeVolumeTrend(historicalData) {
+    if (!historicalData || historicalData.length < 15) {
+      return { trend: 'unknown', change: 0, recentAvg: 0, olderAvg: 0 };
+    }
+
+    // Recent 5 days (indices 0-4)
+    const recent5 = historicalData.slice(0, 5);
+    const recentAvg = recent5.reduce((sum, d) => sum + (d.volume || 0), 0) / 5;
+
+    // Older 5 days (indices 10-14, skipping 5-9 for cleaner comparison)
+    const older5 = historicalData.slice(10, 15);
+    const olderAvg = older5.reduce((sum, d) => sum + (d.volume || 0), 0) / 5;
+
+    const change = olderAvg > 0 ? ((recentAvg - olderAvg) / olderAvg * 100) : 0;
+
+    let trend = 'stable';
+    if (change > 20) trend = 'increasing';      // 20%+ increase
+    else if (change < -20) trend = 'declining'; // 20%+ decline
+
+    return {
+      trend,
+      change: parseFloat(change.toFixed(1)),
+      recentAvg: Math.round(recentAvg),
+      olderAvg: Math.round(olderAvg)
+    };
   }
 
   /**

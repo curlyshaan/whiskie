@@ -139,9 +139,12 @@ class FundamentalScreener {
       const marketCap = fundamentals.marketCap || 0;
       if (marketCap < this.MIN_MARKET_CAP) return null;
 
+      // Get technical indicators (includes volume trend)
+      const technicals = await fmpCache.getTechnicalIndicators(stock.symbol);
+
       const sector = normalizeSectorName(fundamentals.sector);
       const sectorConfig = getSectorConfig(sector);
-      const metrics = this.extractMetrics(fundamentals, price, dollarVolume);
+      const metrics = this.extractMetrics(fundamentals, price, dollarVolume, technicals);
 
       const longResult = this.scoreLong(metrics, sector, sectorConfig);
       const shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
@@ -171,7 +174,7 @@ class FundamentalScreener {
   /**
    * Extract all fundamental metrics
    */
-  extractMetrics(fundamentals, price, dollarVolume) {
+  extractMetrics(fundamentals, price, dollarVolume, technicals) {
     return {
       peRatio: fundamentals.peRatio || 0,
       pegRatio: fundamentals.pegRatio || 0,
@@ -196,6 +199,14 @@ class FundamentalScreener {
       shortFloat: fundamentals.shortFloat || null,
       price,
       dollarVolume,
+      marketCap: fundamentals.marketCap || 0,
+      // Volume trend from technical indicators
+      volumeTrend: technicals?.volumeTrend || 'unknown',
+      volumeChange: technicals?.volumeChange || 0,
+      recentAvgVolume: technicals?.recentAvgVolume || 0,
+      olderAvgVolume: technicals?.olderAvgVolume || 0
+    };
+  }
       marketCap: fundamentals.marketCap || 0,
     };
   }
@@ -536,6 +547,12 @@ class FundamentalScreener {
     if (metrics.earningsGrowth < 0 && metrics.peRatio > 30) {
       score += 20;
       reasons.push('Negative earnings growth with high P/E');
+    }
+
+    // Volume trend deterioration (distribution signal)
+    if (metrics.volumeTrend === 'declining') {
+      score += 15;
+      reasons.push(`Volume declining ${metrics.volumeChange}% (distribution signal)`);
     }
 
     return score;
