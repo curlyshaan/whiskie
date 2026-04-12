@@ -344,12 +344,27 @@ export async function runBiweeklyDeepResearch() {
   console.log('');
 
   try {
-    // Get watchlist stocks
-    const watchlist = await db.getWatchlist();
-    console.log(`📋 Found ${watchlist.length} stocks in watchlist`);
+    // Get stocks from ALL watchlists
+    const mainWatchlist = await db.getWatchlist();
+    const qualityWatchlist = await db.query('SELECT DISTINCT symbol FROM quality_watchlist WHERE status = $1', ['active']);
+    const overvaluedWatchlist = await db.query('SELECT DISTINCT symbol FROM overvalued_watchlist WHERE status = $1', ['active']);
 
-    if (watchlist.length === 0) {
-      console.log('ℹ️  No stocks in watchlist, skipping deep research');
+    // Combine all watchlists and deduplicate
+    const allSymbols = new Set([
+      ...mainWatchlist.map(w => w.symbol),
+      ...qualityWatchlist.rows.map(w => w.symbol),
+      ...overvaluedWatchlist.rows.map(w => w.symbol)
+    ]);
+
+    const watchlistSymbols = Array.from(allSymbols);
+
+    console.log(`📋 Found ${watchlistSymbols.length} unique stocks across all watchlists:`);
+    console.log(`   - Main watchlist: ${mainWatchlist.length}`);
+    console.log(`   - Quality watchlist: ${qualityWatchlist.rows.length}`);
+    console.log(`   - Overvalued watchlist: ${overvaluedWatchlist.rows.length}`);
+
+    if (watchlistSymbols.length === 0) {
+      console.log('ℹ️  No stocks in any watchlist, skipping deep research');
       return;
     }
 
@@ -359,10 +374,9 @@ export async function runBiweeklyDeepResearch() {
 
     // Prioritize: stale profiles first, then new watchlist stocks
     const staleSymbols = staleProfiles.map(p => p.symbol);
-    const watchlistSymbols = watchlist.map(w => w.symbol);
     const newSymbols = watchlistSymbols.filter(s => !staleSymbols.includes(s));
 
-    const symbolsToResearch = [...staleSymbols, ...newSymbols].slice(0, 10);  // Limit to 10 per run
+    const symbolsToResearch = [...staleSymbols, ...newSymbols].slice(0, 50);  // Increased limit to 50 per run
 
     console.log(`🎯 Researching ${symbolsToResearch.length} stocks:`);
     console.log(`   - ${staleSymbols.length} stale profiles to refresh`);
