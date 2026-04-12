@@ -518,6 +518,50 @@ class WhiskieBot {
       }
     });
 
+    app.post('/api/populate-stock-universe', async (req, res) => {
+      try {
+        console.log('📡 Manual stock universe population triggered via API');
+        (async () => {
+          try {
+            const assetClassData = await import('./asset-class-data.js');
+            let totalProcessed = 0;
+            let totalAdded = 0;
+
+            for (const [assetClass, symbols] of Object.entries(assetClassData.default.ASSET_CLASSES)) {
+              console.log(`📊 Processing ${assetClass} (${symbols.length} stocks)...`);
+              for (const symbol of symbols) {
+                try {
+                  await db.query(
+                    `INSERT INTO stock_universe (symbol, asset_class, status)
+                     VALUES ($1, $2, 'active')
+                     ON CONFLICT (symbol) DO UPDATE SET asset_class = $2`,
+                    [symbol, assetClass]
+                  );
+                  totalAdded++;
+                  process.stdout.write('.');
+                } catch (error) {
+                  console.error(`\n❌ Error adding ${symbol}:`, error.message);
+                }
+                totalProcessed++;
+              }
+              console.log('');
+            }
+
+            const uniqueCount = await db.query('SELECT COUNT(DISTINCT symbol) as count FROM stock_universe');
+            console.log(`\n✅ Stock universe population complete!`);
+            console.log(`📈 Total stocks processed: ${totalProcessed}`);
+            console.log(`✅ Successfully added: ${totalAdded}`);
+            console.log(`🎯 Unique stocks in universe: ${uniqueCount.rows[0].count}`);
+          } catch (error) {
+            console.error('❌ Error populating stock universe:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Stock universe population started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     app.post('/api/trigger-eod-summary', async (req, res) => {
       try {
         console.log('📡 Manual EOD summary triggered via API');
