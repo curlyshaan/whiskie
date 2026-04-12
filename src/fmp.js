@@ -516,8 +516,18 @@ class FMPClient {
         this.getKeyMetricsTTM(symbol)
       ]);
 
-      if (!ratiosTTM || !keyMetricsTTM) {
+      if (!ratiosTTM) {
+        console.warn(`⚠️ ${symbol}: ratios-ttm returned null`);
         return null;
+      }
+
+      if (!keyMetricsTTM) {
+        console.warn(`⚠️ ${symbol}: key-metrics-ttm returned null`);
+        return null;
+      }
+
+      if (!profile) {
+        console.warn(`⚠️ ${symbol}: profile returned null (non-critical, using defaults)`);
       }
 
       // BATCH 2: Quarterly data (45-day cache)
@@ -525,6 +535,14 @@ class FMPClient {
         this.getFinancialGrowth(symbol, 5),
         this.getIncomeStatement(symbol, 8)
       ]);
+
+      if (!financialGrowth || financialGrowth.length === 0) {
+        console.warn(`⚠️ ${symbol}: financial-growth returned empty (quarterly growth metrics unavailable)`);
+      }
+
+      if (!incomeStatements || incomeStatements.length === 0) {
+        console.warn(`⚠️ ${symbol}: income-statement returned empty (quarterly metrics unavailable)`);
+      }
 
       // Extract growth rates from financial-growth endpoint (true YoY)
       const latestGrowth = financialGrowth[0] || {};
@@ -585,6 +603,20 @@ class FMPClient {
         // TTM Cash Flow
         freeCashflowPerShare: ratiosTTM.freeCashFlowPerShareTTM || 0,
         freeCashflow: freeCashflow,
+        freeCashFlowYield: keyMetricsTTM?.freeCashFlowYieldTTM || 0,
+        operatingCashFlowPerShare: ratiosTTM.operatingCashFlowPerShareTTM || 0,
+
+        // Quality metrics
+        incomeQuality: keyMetricsTTM?.incomeQualityTTM || 0,
+        cashConversionCycle: keyMetricsTTM?.cashConversionCycleTTM || 0,
+
+        // Efficiency metrics
+        assetTurnover: ratiosTTM.assetTurnoverTTM || 0,
+        inventoryTurnover: ratiosTTM.inventoryTurnoverTTM || 0,
+
+        // Shareholder returns
+        dividendYield: ratiosTTM.dividendYieldTTM || 0,
+        dividendPayoutRatio: ratiosTTM.dividendPayoutRatioTTM || 0,
 
         // Quarterly metrics for inflection detection
         revenueGrowthQ: revenueGrowthQ,
