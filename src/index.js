@@ -559,9 +559,11 @@ class WhiskieBot {
                           marketCapTier = 'Small';
                         }
                       }
+                    } else {
+                      console.log(`\n⚠️  FMP returned null/empty for ${symbol}`);
                     }
                   } catch (fmpError) {
-                    console.log(`\n⚠️  Could not fetch profile for ${symbol}, using nulls`);
+                    console.log(`\n⚠️  FMP API error for ${symbol}:`, fmpError.message);
                   }
 
                   await db.query(
