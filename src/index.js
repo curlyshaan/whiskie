@@ -613,6 +613,18 @@ class WhiskieBot {
       }
     });
 
+    app.post('/api/clear-stock-universe', async (req, res) => {
+      try {
+        console.log('📡 Clearing stock_universe table');
+        const result = await db.query(`DELETE FROM stock_universe`);
+        console.log(`✅ Cleared ${result.rowCount} rows from stock_universe`);
+        res.json({ success: true, message: `Cleared ${result.rowCount} rows from stock_universe table` });
+      } catch (error) {
+        console.error('❌ Clear failed:', error);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     app.post('/api/update-etb-status', async (req, res) => {
       try {
         console.log('📡 Manual ETB status update triggered via API');
