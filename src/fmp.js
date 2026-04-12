@@ -17,7 +17,7 @@ import axios from 'axios';
 
 class FMPClient {
   constructor() {
-    this.BASE_URL = 'https://financialmodelingprep.com/api/v3';
+    this.BASE_URL = 'https://financialmodelingprep.com/stable';
 
     // Single paid API key
     this.apiKey = process.env.FMP_API_KEY_1 || '4WeyS0aP8qcZE7MncNLbUfUYeP3d3Y6z';
