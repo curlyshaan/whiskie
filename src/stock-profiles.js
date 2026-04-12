@@ -140,8 +140,8 @@ export async function buildStockProfile(symbol) {
     console.log('  📈 Fetching historical data...');
     const historicalData = await yahooFinance.getHistoricalData(
       symbol,
-      new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      new Date().toISOString().split('T')[0]
+      new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
+      new Date()
     );
 
     console.log('  📰 Fetching recent news...');
