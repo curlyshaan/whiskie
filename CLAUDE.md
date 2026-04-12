@@ -106,10 +106,8 @@ EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET
 
 **FMP (Financial Modeling Prep)**:
 - Single paid API key with 300 calls/minute (unlimited daily)
-- **Tiered cache strategy** (optimized for data volatility):
-  - **1-day cache (TTM tier)**: TTM ratios, technical indicators (price-dependent data)
-  - **45-day cache (QUARTERLY tier)**: Quarterly statements, growth rates (updates at earnings)
-  - **90-day cache (ANNUAL tier)**: Company profiles, sector data (rarely changes)
+- **No caching** - FMP is fast enough without cache layer
+- **CRITICAL**: Always use `/stable` endpoint (not `/api/v3`)
 - Key endpoints:
   - `/stable/ratios-ttm` - Current P/E, PEG, margins, ROE (TTM)
   - `/stable/key-metrics-ttm` - ROIC, Graham number, EV ratios (TTM)
@@ -118,7 +116,7 @@ EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET
   - `/stable/technical-indicators/ema` - 50/200 EMA
   - `/stable/technical-indicators/rsi` - RSI(14)
   - `/stable/earning-calendar` - Upcoming earnings dates
-- Cache managed by `fmp-cache.js` with automatic tier-based expiration
+- Rate limiting: 500ms delay between calls in batch operations
 - API key: `FMP_API_KEY_1`
 
 **Yahoo Finance**:
@@ -173,9 +171,21 @@ EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET
 - `src/pre-ranking.js` - Phase 1 screening
 - `src/opus-screener.js` - Phases 2, 3, 4 orchestration
 - `src/stock-profiles.js` - Stock profile management
-- `src/fundamental-screener.js` - Value screening
+- `src/fundamental-screener.js` - Sector-adjusted fundamental screening (see below)
 - `src/quality-screener.js` - Quality stock identification
 - `src/overvalued-screener.js` - Short candidate screening
+- `src/etf-manager.js` - ETF tracking and watchlist (separate from stock screening)
+
+**Fundamental Screener - Sector-Adjusted Scoring**:
+- Screens 407-stock curated universe (not FMP's entire database)
+- Uses **sector-specific thresholds** from `src/sector-config.js`
+- Each sector has different ideal/high thresholds for P/E, PEG, ROE, margins, etc.
+- Example: P/E of 20 is good for Tech (ideal < 25), acceptable for Utilities (high < 20), poor for Financials (high < 18)
+- 6 long pathways: deepValue, highGrowth, inflection, cashMachine, qarp, turnaround
+- 3 short pathways: overvalued, deteriorating, overextended
+- Scoring thresholds: LONG_THRESHOLD = 35, SHORT_THRESHOLD = 60
+- **Tech deep value ≠ Finance deep value** - dynamic scoring per sector
+- ETFs automatically filtered out (no fundamental ratios) but available for Opus recommendations
 
 ### Trade Management
 - `src/trade-approval.js` - Approval queue management

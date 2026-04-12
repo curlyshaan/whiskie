@@ -27,11 +27,21 @@ class FundamentalScreener {
   constructor() {
     this.MIN_DOLLAR_VOLUME = 5_000_000;    // $5M daily dollar volume minimum
     this.MIN_PRICE = 5;                     // No penny stocks
-    this.MIN_MARKET_CAP = 500_000_000;      // $500M market cap minimum
+
+    // Pathway-specific market cap minimums (quality strategies need scale)
+    this.MARKET_CAP_REQUIREMENTS = {
+      deepValue: 2_000_000_000,    // $2B - quality value vs value traps
+      cashMachine: 2_000_000_000,  // $2B - 8% FCF yield at $2B = opportunity, at $500M = distress
+      qarp: 2_000_000_000,         // $2B - quality verification (prefer $10B+)
+      highGrowth: 500_000_000,     // $500M - growth emerges small
+      inflection: 500_000_000,     // $500M - catch early momentum
+      turnaround: 500_000_000      // $500M - distress acceptable, upside compensates
+    };
+
     this.MIN_SHORT_MARKET_CAP = 2_000_000_000; // $2B minimum for shorts
     this.MIN_SHORT_DOLLAR_VOLUME = 20_000_000; // $20M daily volume for shorts
     this.LONG_THRESHOLD = 35;               // Pass if ANY pathway ≥35
-    this.SHORT_THRESHOLD = 60;              // Must score ≥60 with all 3 criteria
+    this.SHORT_THRESHOLD = 50;              // Lowered from 60 - was too restrictive
     this.MAX_SHORT_FLOAT = 0.20;            // Max 20% short float (meme stock risk)
     this.debugCounter = 0;                  // Track stocks for debug logging
   }
@@ -147,13 +157,13 @@ class FundamentalScreener {
       if (!fundamentals) return null;
 
       const marketCap = fundamentals.marketCap || 0;
-      if (marketCap < this.MIN_MARKET_CAP) return null;
 
       const sector = normalizeSectorName(fundamentals.sector);
       const sectorConfig = getSectorConfig(sector);
       const metrics = this.extractMetrics(fundamentals, price, dollarVolume);
 
-      const longResult = this.scoreLong(metrics, sector, sectorConfig);
+      // Score long pathways (each pathway checks its own market cap requirement)
+      const longResult = this.scoreLong(metrics, sector, sectorConfig, marketCap);
       const shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
 
       // Debug: log first 10 stocks regardless of pass/fail
@@ -217,17 +227,17 @@ class FundamentalScreener {
   }
 
   // ─────────────────────────────────────────────
-  // LONG SCORING - 4 independent pathways
+  // LONG SCORING - 6 independent pathways
   // ─────────────────────────────────────────────
 
-  scoreLong(metrics, sector, sectorConfig) {
+  scoreLong(metrics, sector, sectorConfig, marketCap) {
     const pathways = {
-      deepValue:   this.scoreDeepValue(metrics, sectorConfig),
-      highGrowth:  this.scoreHighGrowth(metrics, sectorConfig),
-      inflection:  this.scoreInflection(metrics, sectorConfig),
-      cashMachine: this.scoreCashMachine(metrics),
-      qarp:        this.scoreQARP(metrics),
-      turnaround:  this.scoreTurnaround(metrics),
+      deepValue:   this.scoreDeepValue(metrics, sectorConfig, marketCap),
+      highGrowth:  this.scoreHighGrowth(metrics, sectorConfig, marketCap),
+      inflection:  this.scoreInflection(metrics, sectorConfig, marketCap),
+      cashMachine: this.scoreCashMachine(metrics, marketCap),
+      qarp:        this.scoreQARP(metrics, marketCap),
+      turnaround:  this.scoreTurnaround(metrics, marketCap),
     };
 
     const best = Object.entries(pathways)
@@ -252,7 +262,10 @@ class FundamentalScreener {
     return { score: result.score, pathway, reasons: result.reasons };
   }
 
-  scoreDeepValue(metrics, sectorConfig) {
+  scoreDeepValue(metrics, sectorConfig, marketCap) {
+    // Market cap requirement: $2B minimum (quality value vs value traps)
+    if (marketCap < this.MARKET_CAP_REQUIREMENTS.deepValue) return { score: 0, reasons: [] };
+
     let score = 0;
     const reasons = [];
 
@@ -291,7 +304,10 @@ class FundamentalScreener {
     return { score, reasons };
   }
 
-  scoreHighGrowth(metrics, sectorConfig) {
+  scoreHighGrowth(metrics, sectorConfig, marketCap) {
+    // Market cap requirement: $500M minimum (growth emerges small)
+    if (marketCap < this.MARKET_CAP_REQUIREMENTS.highGrowth) return { score: 0, reasons: [] };
+
     let score = 0;
     const reasons = [];
 
@@ -328,7 +344,10 @@ class FundamentalScreener {
     return { score, reasons };
   }
 
-  scoreInflection(metrics, sectorConfig) {
+  scoreInflection(metrics, sectorConfig, marketCap) {
+    // Market cap requirement: $500M minimum (catch early momentum)
+    if (marketCap < this.MARKET_CAP_REQUIREMENTS.inflection) return { score: 0, reasons: [] };
+
     let score = 0;
     const reasons = [];
 
@@ -365,7 +384,10 @@ class FundamentalScreener {
     return { score, reasons };
   }
 
-  scoreCashMachine(metrics) {
+  scoreCashMachine(metrics, marketCap) {
+    // Market cap requirement: $2B minimum (8% FCF yield at $500M = distress signal)
+    if (marketCap < this.MARKET_CAP_REQUIREMENTS.cashMachine) return { score: 0, reasons: [] };
+
     let score = 0;
     const reasons = [];
 
@@ -399,7 +421,10 @@ class FundamentalScreener {
     return { score, reasons };
   }
 
-  scoreQARP(metrics) {
+  scoreQARP(metrics, marketCap) {
+    // Market cap requirement: $2B minimum (quality verification)
+    if (marketCap < this.MARKET_CAP_REQUIREMENTS.qarp) return { score: 0, reasons: [] };
+
     let score = 0;
     const reasons = [];
 
@@ -439,7 +464,10 @@ class FundamentalScreener {
     return { score, reasons };
   }
 
-  scoreTurnaround(metrics) {
+  scoreTurnaround(metrics, marketCap) {
+    // Market cap requirement: $500M minimum (distress acceptable, upside compensates)
+    if (marketCap < this.MARKET_CAP_REQUIREMENTS.turnaround) return { score: 0, reasons: [] };
+
     let score = 0;
     const reasons = [];
 
