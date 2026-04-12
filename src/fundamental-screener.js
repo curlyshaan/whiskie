@@ -592,6 +592,8 @@ class FundamentalScreener {
     const candidates = new Set();
 
     try {
+      // LONG PATHWAYS
+
       // Deep Value pathway: Low P/E, Low P/B
       console.log('   Screening: Deep Value...');
       const deepValue = await fmp.screenCompanies({
@@ -643,7 +645,9 @@ class FundamentalScreener {
       cashMachine.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${cashMachine.length} cash machine candidates`);
 
-      // Overvalued pathway: High P/E, High P/B (for shorts)
+      // SHORT PATHWAYS
+
+      // 1. Overvalued pathway: High P/E, High P/B (existing)
       console.log('   Screening: Overvalued (shorts)...');
       const overvalued = await fmp.screenCompanies({
         marketCapMoreThan: this.MIN_SHORT_MARKET_CAP,
@@ -656,8 +660,36 @@ class FundamentalScreener {
       overvalued.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${overvalued.length} overvalued candidates`);
 
+      // 2. Deteriorating Quality: Declining margins, high debt, negative cash flow
+      console.log('   Screening: Deteriorating Quality (shorts)...');
+      const deteriorating = await fmp.screenCompanies({
+        marketCapMoreThan: this.MIN_SHORT_MARKET_CAP,
+        volumeMoreThan: 500000,
+        priceMoreThan: this.MIN_PRICE,
+        operatingMarginLowerThan: 0.05,
+        debtToEquityMoreThan: 2.0,
+        limit: 100
+      });
+      deteriorating.forEach(s => candidates.add(s.symbol));
+      console.log(`   Found ${deteriorating.length} deteriorating quality candidates`);
+
+      // 3. Overextended Momentum: High valuations with slowing growth
+      console.log('   Screening: Overextended Momentum (shorts)...');
+      const overextended = await fmp.screenCompanies({
+        marketCapMoreThan: this.MIN_SHORT_MARKET_CAP,
+        volumeMoreThan: 1000000,
+        priceMoreThan: this.MIN_PRICE,
+        priceToEarningsRatioMoreThan: 50,
+        priceToSalesRatioMoreThan: 15,
+        betaMoreThan: 1.5,
+        limit: 100
+      });
+      overextended.forEach(s => candidates.add(s.symbol));
+      console.log(`   Found ${overextended.length} overextended momentum candidates`);
+
       const uniqueCandidates = Array.from(candidates);
       console.log(`\n   ✅ Total unique candidates from screener: ${uniqueCandidates.length}`);
+      console.log(`   📊 Breakdown: ${deepValue.length + garp.length + highGrowth.length + cashMachine.length} longs, ${overvalued.length + deteriorating.length + overextended.length} shorts`);
 
       // Map to our stock format with asset class
       return uniqueCandidates.map(symbol => {
