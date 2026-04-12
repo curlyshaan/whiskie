@@ -129,8 +129,8 @@ class RiskManager {
     }
 
     // Warn if too many positions
-    if (portfolio.positions.length >= 12) {
-      warnings.push('Portfolio already has 12 positions (max recommended)');
+    if (portfolio.positions.length >= 14) {
+      warnings.push('Portfolio already has 14 positions (max recommended)');
     }
 
     // Warn if concentration risk

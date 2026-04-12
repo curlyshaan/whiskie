@@ -210,6 +210,8 @@ class FundamentalScreener {
       highGrowth:  this.scoreHighGrowth(metrics, sectorConfig),
       inflection:  this.scoreInflection(metrics, sectorConfig),
       cashMachine: this.scoreCashMachine(metrics),
+      qarp:        this.scoreQARP(metrics),
+      turnaround:  this.scoreTurnaround(metrics),
     };
 
     const best = Object.entries(pathways)
@@ -363,6 +365,92 @@ class FundamentalScreener {
     if (metrics.roic > 0.20) {
       score += 15;
       reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}%`);
+    }
+
+    return { score, reasons };
+  }
+
+  scoreQARP(metrics) {
+    let score = 0;
+    const reasons = [];
+
+    // Quality at Reasonable Price - high ROIC/ROE compounders at fair valuations
+    if (metrics.roic > 0.15) {
+      score += 25;
+      reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}% (quality compounder)`);
+    }
+
+    if (metrics.roe > 0.20) {
+      score += 25;
+      reasons.push(`ROE ${(metrics.roe * 100).toFixed(1)}% (high returns)`);
+    }
+
+    // P/E 15-25 = reasonable, not cheap
+    if (metrics.peRatio >= 15 && metrics.peRatio <= 25) {
+      score += 20;
+      reasons.push(`P/E ${metrics.peRatio.toFixed(1)} (reasonable valuation)`);
+    } else if (metrics.peRatio > 25 && metrics.peRatio <= 30) {
+      score += 10;
+    }
+
+    // Consistent earnings growth (proxy: positive earnings growth)
+    if (metrics.earningsGrowth > 0.10) {
+      score += 20;
+      reasons.push(`${(metrics.earningsGrowth * 100).toFixed(0)}% earnings growth (consistent)`);
+    } else if (metrics.earningsGrowth > 0) {
+      score += 10;
+    }
+
+    // Bonus: low debt
+    if (metrics.debtToEquity < 0.5) {
+      score += 10;
+      reasons.push('Low debt');
+    }
+
+    return { score, reasons };
+  }
+
+  scoreTurnaround(metrics) {
+    let score = 0;
+    const reasons = [];
+
+    // Turnaround situations - improving metrics but poor TTM numbers
+    // Debt reduction
+    if (metrics.debtToEquity > 0 && metrics.debtToEquity < 1.0) {
+      // Check if debt is declining (proxy: current debt is reasonable)
+      score += 15;
+      reasons.push(`Debt/Equity ${metrics.debtToEquity.toFixed(2)} (manageable)`);
+    }
+
+    // Margin expansion
+    const marginExpansion = metrics.operatingMargin - metrics.operatingMarginPrev;
+    if (marginExpansion > 0.03) {
+      score += 30;
+      reasons.push(`Margin expanding: +${(marginExpansion * 100).toFixed(1)}pp (turnaround signal)`);
+    } else if (marginExpansion > 0.01) {
+      score += 15;
+      reasons.push('Margins improving');
+    }
+
+    // Revenue stabilization (after decline, now flat or growing)
+    if (metrics.revenueGrowth >= 0 && metrics.revenueGrowth < 0.10) {
+      score += 20;
+      reasons.push('Revenue stabilizing (turnaround phase)');
+    } else if (metrics.revenueGrowth >= 0.10) {
+      score += 25;
+      reasons.push(`Revenue growing ${(metrics.revenueGrowth * 100).toFixed(0)}% (turnaround accelerating)`);
+    }
+
+    // FCF turning positive
+    if (metrics.freeCashflow > 0 && metrics.fcfGrowth > 0.20) {
+      score += 25;
+      reasons.push('FCF turning positive (turnaround confirmation)');
+    }
+
+    // Still cheap despite improvements
+    if (metrics.peRatio > 0 && metrics.peRatio < 20) {
+      score += 15;
+      reasons.push(`P/E ${metrics.peRatio.toFixed(1)} (undervalued turnaround)`);
     }
 
     return { score, reasons };

@@ -5,6 +5,10 @@ import tradier from './tradier.js';
 import riskManager from './risk-manager.js';
 import analysisEngine from './analysis.js';
 import email from './email.js';
+import circuitBreaker from './circuit-breaker.js';
+import earningsGuard from './earnings-guard.js';
+import correlationAnalysis from './correlation-analysis-enhanced.js';
+import exitLiquidity from './exit-liquidity.js';
 
 /**
  * Trade Execution Service
@@ -18,6 +22,16 @@ class TradeExecutor {
    */
   async processApprovedTrades() {
     try {
+      // Check circuit breaker first
+      const portfolio = await db.getPortfolioSummary();
+      const portfolioValue = portfolio?.totalValue || 0;
+
+      const cbStatus = await circuitBreaker.checkCircuitBreaker(portfolioValue);
+      if (cbStatus.tripped) {
+        console.log(`🚨 Circuit breaker active: ${cbStatus.reason} — no trades executed`);
+        return;
+      }
+
       // Get all approved trades
       const result = await db.query(
         `SELECT * FROM trade_approvals
@@ -56,6 +70,19 @@ class TradeExecutor {
     console.log(`\n   💼 Executing ${approval.action} ${approval.quantity} ${approval.symbol}...`);
 
     try {
+      // Check earnings blackout period
+      const earningsCheck = await earningsGuard.isEarningsBlackout(approval.symbol);
+      if (earningsCheck.blocked) {
+        console.log(`   ⚠️ ${earningsCheck.reason}`);
+        await db.query(
+          `UPDATE trade_approvals
+           SET status = 'expired', rejection_reason = $1
+           WHERE id = $2`,
+          [earningsCheck.reason, approval.id]
+        );
+        return;
+      }
+
       // Get current price
       const quote = await tradier.getQuote(approval.symbol);
       const currentPrice = quote.last || quote.close;

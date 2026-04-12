@@ -28,6 +28,13 @@ import tradeApproval from './trade-approval.js';
 import fmpCache from './fmp-cache.js';
 import opusScreener from './opus-screener.js';
 import tradeExecutor from './trade-executor.js';
+import circuitBreaker from './circuit-breaker.js';
+import earningsGuard from './earnings-guard.js';
+import portfolioRiskMetrics from './portfolio-risk-metrics.js';
+import learningFeedback from './learning-feedback.js';
+import orderReconciliation from './order-reconciliation.js';
+import macroRegime from './macro-regime.js';
+import corporateActions from './corporate-actions.js';
 import { runPreMarketScan } from './pre-market-scanner.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
 import * as db from './db.js';
@@ -270,16 +277,56 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
+      // Schedule order reconciliation - hourly during market hours
+      cron.schedule('0 * 9-16 * * 1-5', async () => {
+        try {
+          await orderReconciliation.reconcilePositions();
+        } catch (error) {
+          console.error('❌ Error reconciling positions:', error);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule macro regime detection - daily at 8:00 AM
+      cron.schedule('0 8 * * 1-5', async () => {
+        try {
+          const regime = await macroRegime.detectRegime();
+          console.log(`📊 Macro regime: ${regime.name} - ${regime.description}`);
+        } catch (error) {
+          console.error('❌ Error detecting macro regime:', error);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule corporate actions check - daily at 7:00 AM
+      cron.schedule('0 7 * * 1-5', async () => {
+        try {
+          await corporateActions.checkCorporateActions();
+        } catch (error) {
+          console.error('❌ Error checking corporate actions:', error);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
       console.log('\n✅ Whiskie Bot is running');
       console.log('📅 Analysis schedule (Mon-Fri):');
+      console.log('   • 7:00 AM ET - Corporate actions check');
+      console.log('   • 8:00 AM ET - Macro regime detection');
+      console.log('   • 9:00 AM ET - Pre-market gap scan');
       console.log('   • 10:00 AM ET - Morning analysis + trim/tax/trailing checks');
       console.log('   • 2:00 PM ET - Afternoon analysis + trim/tax/trailing checks');
-      console.log('📊 Daily summary: 4:30 PM ET');
+      console.log('   • 6:00 PM ET - Daily summary + portfolio risk metrics');
+      console.log('   • Every 5 min (9am-4pm) - Process approved trades');
+      console.log('   • Hourly (9am-4pm) - Order reconciliation');
+      console.log('   • Hourly - Expire old trade approvals');
       console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
       console.log('📅 Weekly screening: Saturday 3:00 PM ET');
-      console.log('   → Full fundamental screening (all stocks)');
+      console.log('   → Full fundamental screening (all stocks, 6 pathways)');
       console.log('   → Opus quality + overvalued screening');
-      console.log('   → Weekly portfolio review');
+      console.log('   → Weekly portfolio review with learning feedback');
       console.log('📅 Biweekly deep research: Saturday 10:00 AM ET (even weeks)');
       console.log('💡 Press Ctrl+C to stop\n');
 
@@ -926,7 +973,7 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       // This ensures we don't miss opportunities on stable days
       const shouldRunFullAnalysis =
         health.issues.some(i => i.severity === 'high') ||
-        portfolio.positions.length < 10 ||
+        portfolio.positions.length < 12 ||
         cashPercent > 0.25 ||
         riskManager.isDefensiveMode(portfolio) ||
         health.opportunities.length > 0;
@@ -1499,7 +1546,7 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
       console.log('═══════════════════════════════════════');
       console.log('📈 PHASE 2: LONG ANALYSIS');
       console.log('═══════════════════════════════════════');
-      console.log(`Analyzing ${candidates.longs.length} long candidates with 50k token thinking budget`);
+      console.log(`Analyzing ${candidates.longs.length} long candidates with 35k token thinking budget`);
       console.log('⏳ This will take 3-5 minutes...');
       console.log('');
 
@@ -1562,11 +1609,15 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
         });
       }
 
+      // Get learning insights from weekly reviews
+      const learningInsights = await learningFeedback.getRecentInsights(30);
+      const learningContext = learningInsights || '';
+
       const phase2Question = `You are managing a $100k portfolio. You are in PHASE 2: LONG ANALYSIS.
 
 **Deep Analysis Approach:**
 Take your time with each stock. Don't rush through the analysis. For stocks with existing profiles, reference the profile and focus on what's changed (price action, news, catalysts). For stocks without profiles or with stale profiles (>14 days old), do a more comprehensive analysis. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
-
+${learningContext}
 **Input:** ${candidates.longs.length} long candidates from Phase 1
 
 **Long Candidates:**
@@ -1642,7 +1693,7 @@ ${historyContext}`;
         news,
         {},
         phase2Question,
-        50000  // 50k token thinking budget for long analysis
+        35000  // 35k token thinking budget for long analysis
       );
       const phase2Duration = ((Date.now() - phase2Start) / 1000).toFixed(1);
 
@@ -1660,7 +1711,7 @@ ${historyContext}`;
       console.log('═══════════════════════════════════════');
       console.log('📉 PHASE 3: SHORT ANALYSIS');
       console.log('═══════════════════════════════════════');
-      console.log(`Analyzing ${candidates.shorts.length} short candidates with 50k token thinking budget`);
+      console.log(`Analyzing ${candidates.shorts.length} short candidates with 35k token thinking budget`);
       console.log('⏳ This will take 3-5 minutes...');
       console.log('');
 
@@ -1709,7 +1760,7 @@ ${historyContext}`;
 
 **Deep Analysis Approach:**
 Take your time with each stock. Don't rush through the analysis. For stocks with existing profiles, reference the profile and focus on what's changed (price action, news, catalysts). For stocks without profiles or with stale profiles (>14 days old), do a more comprehensive analysis. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
-
+${learningContext}
 **Input:** ${candidates.shorts.length} short candidates from Phase 1
 
 **Short Candidates:**
@@ -1792,7 +1843,7 @@ ${historyContext}`;
         news,
         {},
         phase3Question,
-        50000  // 50k token thinking budget for short analysis
+        35000  // 35k token thinking budget for short analysis
       );
       const phase3Duration = ((Date.now() - phase3Start) / 1000).toFixed(1);
 
@@ -1818,7 +1869,7 @@ ${historyContext}`;
         type: 'phase2-long-analysis',
         symbol: null,
         recommendation: phase2Analysis.analysis,
-        reasoning: `Phase 2: Deep long analysis of ${candidates.longs.length} candidates (50k token thinking budget)`,
+        reasoning: `Phase 2: Deep long analysis of ${candidates.longs.length} candidates (35k token thinking budget)`,
         model: 'opus',
         confidence: 'high',
         inputTokens: phase2Analysis.usage?.input_tokens,
@@ -1831,7 +1882,7 @@ ${historyContext}`;
         type: 'phase3-short-analysis',
         symbol: null,
         recommendation: phase3Analysis.analysis,
-        reasoning: `Phase 3: Deep short analysis of ${candidates.shorts.length} candidates (50k token thinking budget)`,
+        reasoning: `Phase 3: Deep short analysis of ${candidates.shorts.length} candidates (35k token thinking budget)`,
         model: 'opus',
         confidence: 'high',
         inputTokens: phase3Analysis.usage?.input_tokens,
@@ -1848,7 +1899,7 @@ ${historyContext}`;
       console.log('═══════════════════════════════════════');
       console.log('🎯 PHASE 4: PORTFOLIO CONSTRUCTION');
       console.log('═══════════════════════════════════════');
-      console.log('Combining long and short insights with 20k token thinking budget');
+      console.log('Combining long and short insights with 45k token thinking budget');
       console.log('⏳ This will take 1-2 minutes...');
       console.log('');
 
@@ -1885,7 +1936,7 @@ ${phase3Analysis.analysis}
 ${marketRegimeContext}
 ${assetClassContext}
 
-**Your Task:** Construct final portfolio with 10-12 positions total.
+**Your Task:** Construct final portfolio with 12-14 positions total.
 
 **Portfolio Constraints:**
 - Total positions: 10-12 (combined longs + shorts)
@@ -1953,7 +2004,7 @@ ${historyContext}`;
         news,
         {},
         phase4Question,
-        20000  // 20k token thinking budget for portfolio construction
+        45000  // 45k token thinking budget for portfolio construction
       );
       const phase4Duration = ((Date.now() - phase4Start) / 1000).toFixed(1);
       const totalDuration = ((Date.now() - phase1Start) / 1000).toFixed(1);
@@ -1966,9 +2017,9 @@ ${historyContext}`;
       console.log('✅ 4-PHASE OPUS ANALYSIS COMPLETE');
       console.log('═══════════════════════════════════════');
       console.log('Phase 1 Duration:', phase1Duration, 'seconds (pre-ranking)');
-      console.log('Phase 2 Duration:', phase2Duration, 'seconds (long analysis, 50k tokens)');
-      console.log('Phase 3 Duration:', phase3Duration, 'seconds (short analysis, 50k tokens)');
-      console.log('Phase 4 Duration:', phase4Duration, 'seconds (portfolio construction, 20k tokens)');
+      console.log('Phase 2 Duration:', phase2Duration, 'seconds (long analysis, 35k tokens)');
+      console.log('Phase 3 Duration:', phase3Duration, 'seconds (short analysis, 35k tokens)');
+      console.log('Phase 4 Duration:', phase4Duration, 'seconds (portfolio construction, 45k tokens)');
       console.log('Total Duration:', totalDuration, 'seconds');
       console.log('');
       console.log('📊 PHASE-BY-PHASE TOKEN USAGE:');
@@ -2670,6 +2721,9 @@ ${historyContext}`;
 
       const portfolio = await analysisEngine.getPortfolioState();
 
+      // Calculate portfolio risk metrics
+      const riskMetrics = await portfolioRiskMetrics.calculateRiskMetrics(portfolio.totalValue);
+
       // Calculate top performers
       const performers = portfolio.positions
         .map(p => ({
@@ -2692,6 +2746,7 @@ ${historyContext}`;
         trades: [], // TODO: Get today's trades
         topPerformers: performers,
         alerts,
+        riskMetrics, // Add risk metrics
         aiRecommendation: 'Portfolio analysis complete. Check dashboard for details.'
       });
 

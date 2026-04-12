@@ -575,6 +575,53 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_error_log_type ON error_log(error_type);
     `);
 
+    // Circuit breaker events table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS circuit_breaker_events (
+        id SERIAL PRIMARY KEY,
+        reason TEXT NOT NULL,
+        tripped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        reset_at TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_circuit_breaker_tripped ON circuit_breaker_events(tripped_at);
+    `);
+
+    // Reconciliation log table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS reconciliation_log (
+        id SERIAL PRIMARY KEY,
+        discrepancies JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Macro regime log table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS macro_regime_log (
+        id SERIAL PRIMARY KEY,
+        regime VARCHAR(50) NOT NULL,
+        yield_curve DECIMAL(5, 2),
+        unemployment DECIMAL(5, 2),
+        fed_funds DECIMAL(5, 2),
+        detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Dividend log table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS dividend_log (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        amount DECIMAL(10, 2) NOT NULL,
+        ex_date DATE,
+        pay_date DATE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_error_log_created ON error_log(created_at);
     `);

@@ -23,12 +23,16 @@ import * as db from './db.js';
 class ShortManager {
   constructor() {
     this.MAX_SHORT_POSITION_PCT = 0.12;  // 12% per position (when DTC <4)
-    this.REDUCED_SHORT_POSITION_PCT = 0.08; // 8% when DTC 4-5 (increased from 5%)
+    this.REDUCED_SHORT_POSITION_PCT = 0.08; // 8% when DTC 4-5
     this.MAX_TOTAL_SHORT_PCT = 0.25;     // 25% total shorts
     this.MIN_MARKET_CAP = 2_000_000_000; // $2B minimum
-    this.MAX_IV_THRESHOLD = 0.80;        // 80% IV hard block (increased from 70%)
+    this.MAX_IV_THRESHOLD = 0.80;        // 80% IV hard block
+    this.MAX_IV_PERCENTILE = 0.90;       // 90th percentile IV (relative to 1-year history)
     this.MAX_DAYS_TO_COVER = 5;          // Block if >5
     this.ELEVATED_DAYS_TO_COVER = 4;     // Reduce to 8% if >=4
+    this.MAX_SHORT_FLOAT = 0.20;         // Max 20% short float
+    this.MAX_IV_PERCENTILE = 0.80;       // 80th percentile IV (relative to 1-year history)
+    this.SQUEEZE_LOOKBACK_DAYS = 180;    // Check for squeezes in past 6 months
   }
 
   /**
@@ -68,10 +72,10 @@ class ShortManager {
         if (shortPct > 0.30) {
           // >30% short float = very high squeeze risk, hard block
           errors.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — extreme squeeze risk, cannot short`);
-        } else if (shortPct > 0.20) {
-          // 20-30% = elevated risk, warn but allow
-          warnings.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — elevated squeeze risk, use smaller position (3% max)`);
-        } else if (shortPct > 0.15) {
+        } else if (shortPct > this.MAX_SHORT_FLOAT) {
+          // >15% = elevated risk, hard block (reduced from 20%)
+          errors.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% (max ${(this.MAX_SHORT_FLOAT * 100).toFixed(0)}%) — squeeze risk, cannot short`);
+        } else if (shortPct > 0.10) {
           warnings.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — moderate squeeze risk, monitor closely`);
         }
 
@@ -82,7 +86,7 @@ class ShortManager {
           if (daysToCover > this.MAX_DAYS_TO_COVER) {
             errors.push(`${symbol} days to cover is ${daysToCover.toFixed(1)} (max ${this.MAX_DAYS_TO_COVER}) — extreme squeeze risk, cannot short`);
           } else if (daysToCover >= this.ELEVATED_DAYS_TO_COVER) {
-            warnings.push(`${symbol} days to cover is ${daysToCover.toFixed(1)} — elevated squeeze risk, max position 5%`);
+            warnings.push(`${symbol} days to cover is ${daysToCover.toFixed(1)} — elevated squeeze risk, max position 8%`);
           }
         }
 
@@ -96,6 +100,16 @@ class ShortManager {
       // Short interest check is non-blocking — log but don't prevent the trade
       console.warn(`⚠️ Could not fetch short interest for ${symbol}: ${error.message}`);
       warnings.push(`Short interest data unavailable for ${symbol} — verify manually before shorting`);
+    }
+
+    // Check for recent squeeze history (>50% move in past 6 months)
+    try {
+      const squeezeCheck = await this.checkRecentSqueeze(symbol);
+      if (squeezeCheck.hadSqueeze) {
+        errors.push(`${symbol} had ${(squeezeCheck.maxMove * 100).toFixed(0)}% move in past 6 months — recent squeeze history, cannot short`);
+      }
+    } catch (error) {
+      console.warn(`⚠️ Could not check squeeze history for ${symbol}: ${error.message}`);
     }
 
     // Check Implied Volatility (IV) via options chain
@@ -349,6 +363,49 @@ class ShortManager {
         takeProfit: p.take_profit
       }))
     };
+  }
+
+  /**
+   * Check for recent squeeze history (>50% move in past 6 months)
+   */
+  async checkRecentSqueeze(symbol) {
+    try {
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setDate(sixMonthsAgo.getDate() - this.SQUEEZE_LOOKBACK_DAYS);
+
+      const history = await tradier.getHistory(
+        symbol,
+        'daily',
+        sixMonthsAgo.toISOString().split('T')[0],
+        new Date().toISOString().split('T')[0]
+      );
+
+      if (!history || history.length < 2) {
+        return { hadSqueeze: false };
+      }
+
+      // Find max price move (high to low ratio)
+      let maxMove = 0;
+      let minPrice = Infinity;
+      let maxPrice = 0;
+
+      for (const day of history) {
+        if (day.low < minPrice) minPrice = day.low;
+        if (day.high > maxPrice) maxPrice = day.high;
+      }
+
+      maxMove = (maxPrice - minPrice) / minPrice;
+
+      // >50% move indicates potential squeeze
+      if (maxMove > 0.50) {
+        return { hadSqueeze: true, maxMove };
+      }
+
+      return { hadSqueeze: false, maxMove };
+    } catch (error) {
+      console.warn(`Could not check squeeze history for ${symbol}:`, error.message);
+      return { hadSqueeze: false };
+    }
   }
 
   /**
