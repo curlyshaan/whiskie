@@ -677,10 +677,10 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
       <p style="color: #10b981; font-weight: bold;">✅ Running in Paper Trading Mode</p>
       <p style="margin-top: 10px;">
         <strong>Analysis Schedule (Mon-Fri):</strong><br>
-        • 10:00 AM ET - Morning analysis<br>
-        • 12:30 PM ET - Mid-day check<br>
-        • 3:30 PM ET - Before close<br>
-        • 4:30 PM ET - Daily summary email
+        • 9:00 AM ET - Pre-market gap scan<br>
+        • 10:00 AM ET - Morning analysis (4-phase)<br>
+        • 2:00 PM ET - Afternoon analysis<br>
+        • 6:00 PM ET - Daily summary email
       </p>
       <p style="margin-top: 15px; color: #888;">
         Last updated: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })} ET
