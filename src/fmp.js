@@ -554,12 +554,10 @@ class FMPClient {
    */
   async getFundamentals(symbol) {
     try {
-      // BATCH 1: Real-time valuation (1-day cache)
-      const [profile, ratiosTTM, keyMetricsTTM] = await Promise.all([
-        this.getProfile(symbol),
-        this.getRatiosTTM(symbol),
-        this.getKeyMetricsTTM(symbol)
-      ]);
+      // Sequential calls to respect 400ms rate limiting (no parallel calls)
+      const profile = await this.getProfile(symbol);
+      const ratiosTTM = await this.getRatiosTTM(symbol);
+      const keyMetricsTTM = await this.getKeyMetricsTTM(symbol);
 
       if (!ratiosTTM) {
         // Silently return null - likely an ETF or non-equity security
@@ -575,13 +573,11 @@ class FMPClient {
         console.warn(`⚠️ ${symbol}: profile returned null (non-critical, using defaults)`);
       }
 
-      // BATCH 2: Quarterly data (45-day cache)
-      const [financialGrowth, incomeStatements, cashFlowStatements, balanceSheets] = await Promise.all([
-        this.getFinancialGrowth(symbol, 5),
-        this.getIncomeStatement(symbol, 8),
-        this.getCashFlowStatement(symbol, 4),
-        this.getBalanceSheet(symbol, 4)
-      ]);
+      // Sequential calls for quarterly data (no parallel calls)
+      const financialGrowth = await this.getFinancialGrowth(symbol, 5);
+      const incomeStatements = await this.getIncomeStatement(symbol, 8);
+      const cashFlowStatements = await this.getCashFlowStatement(symbol, 4);
+      const balanceSheets = await this.getBalanceSheet(symbol, 4);
 
       if (!financialGrowth || financialGrowth.length === 0) {
         console.warn(`⚠️ ${symbol}: financial-growth returned empty (quarterly growth metrics unavailable)`);
