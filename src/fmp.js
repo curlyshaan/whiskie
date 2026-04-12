@@ -27,9 +27,10 @@ class FMPClient {
     this.RATE_LIMIT_PER_MINUTE = 300;
     this.lastResetDate = new Date().toDateString();
 
-    // Rate limiting: 250ms between calls = 240 calls/min (safely under 300/min)
+    // Rate limiting: 350ms between calls = 171 calls/min (safely under 300/min)
+    // With 6 API calls per stock in getFundamentals, this prevents rate limit errors
     this.lastCallTime = 0;
-    this.MIN_CALL_INTERVAL = 250; // milliseconds
+    this.MIN_CALL_INTERVAL = 350; // milliseconds
   }
 
   /**
@@ -63,7 +64,7 @@ class FMPClient {
    * Make API request with automatic rate limiting
    */
   async request(endpoint, params = {}) {
-    // Rate limiting: ensure 250ms between calls
+    // Rate limiting: ensure 350ms between calls
     const now = Date.now();
     const timeSinceLastCall = now - this.lastCallTime;
     if (timeSinceLastCall < this.MIN_CALL_INTERVAL) {

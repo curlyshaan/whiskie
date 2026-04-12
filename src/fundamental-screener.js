@@ -99,9 +99,6 @@ class FundamentalScreener {
             console.log(`   Progress: ${processed}/${allStocks.length} | Longs: ${longCandidates.length} | Shorts: ${shortCandidates.length}`);
           }
 
-          // 500ms delay - stays under 300 FMP calls/min
-          await new Promise(resolve => setTimeout(resolve, 500));
-
         } catch (error) {
           errors++;
           if (errors <= 5) {
