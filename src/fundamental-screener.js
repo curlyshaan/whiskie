@@ -234,6 +234,18 @@ class FundamentalScreener {
 
     const [pathway, result] = best;
 
+    // Debug: log ALL pathway scores for first stock
+    this.debugCounter++;
+    if (this.debugCounter === 1) {
+      console.log(`\n   🔍 DETAILED SCORING DEBUG (First Stock):`);
+      console.log(`   Metrics: PE=${metrics.peRatio}, PEG=${metrics.pegRatio}, ROE=${metrics.roe}, ROIC=${metrics.roic}`);
+      console.log(`   Metrics: RevGrowth=${metrics.revenueGrowth}, FCF=${metrics.freeCashflow}, MarketCap=${metrics.marketCap}`);
+      Object.entries(pathways).forEach(([name, result]) => {
+        console.log(`   ${name}: score=${result.score}, reasons=${result.reasons.join('; ')}`);
+      });
+      console.log(`   Best: ${pathway} with score ${result.score} (threshold: ${this.LONG_THRESHOLD})\n`);
+    }
+
     if (result.score < this.LONG_THRESHOLD) return null;
 
     return { score: result.score, pathway, reasons: result.reasons };
