@@ -24,10 +24,9 @@ export async function runWeeklyPortfolioReview() {
 
     // Get watchlists
     const mainWatchlist = await db.getWatchlist();
-    const qualityWatchlist = await db.query('SELECT * FROM quality_watchlist WHERE status = $1', ['active']);
-    const overvaluedWatchlist = await db.query('SELECT * FROM overvalued_watchlist WHERE status = $1', ['active']);
+    const saturdayWatchlist = await db.query('SELECT * FROM saturday_watchlist WHERE status = $1', ['active']);
 
-    console.log(`👀 Watchlist stocks: ${mainWatchlist.length + qualityWatchlist.rows.length + overvaluedWatchlist.rows.length}`);
+    console.log(`👀 Watchlist stocks: ${mainWatchlist.length + saturdayWatchlist.rows.length}`);
 
     // Get this week's trades
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
@@ -65,8 +64,7 @@ export async function runWeeklyPortfolioReview() {
       trades.rows,
       snapshots.rows,
       mainWatchlist,
-      qualityWatchlist.rows,
-      overvaluedWatchlist.rows
+      saturdayWatchlist.rows
     );
 
     console.log('🤔 Running Opus weekly review (20k token thinking budget)...');
@@ -114,7 +112,7 @@ export async function runWeeklyPortfolioReview() {
   }
 }
 
-function buildReviewPrompt(positions, quotes, profiles, trades, snapshots, mainWatchlist, qualityWatchlist, overvaluedWatchlist) {
+function buildReviewPrompt(positions, quotes, profiles, trades, snapshots, mainWatchlist, saturdayWatchlist) {
   // Calculate P&L for each position
   const positionDetails = positions.map(pos => {
     const quote = quotes[pos.symbol];
@@ -171,8 +169,8 @@ ${trades.map(t => `- ${t.action.toUpperCase()} ${t.quantity} ${t.symbol} @ $${t.
 
 **WATCHLISTS**
 - Main watchlist: ${mainWatchlist.map(w => w.symbol).join(', ')}
-- Quality watchlist: ${qualityWatchlist.map(w => w.symbol).join(', ')}
-- Overvalued watchlist: ${overvaluedWatchlist.map(w => w.symbol).join(', ')}
+- Saturday watchlist (long): ${saturdayWatchlist.filter(w => w.intent === 'LONG').map(w => `${w.symbol} (${w.pathway})`).join(', ')}
+- Saturday watchlist (short): ${saturdayWatchlist.filter(w => w.intent === 'SHORT').map(w => `${w.symbol} (${w.pathway})`).join(', ')}
 
 **YOUR TASK: WEEKLY REFLECTION**
 

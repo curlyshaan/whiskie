@@ -104,8 +104,7 @@ class FundamentalScreener {
       await this.logCacheStats(allStocks.length);
 
       if (part === 'sunday' || part === 'full') {
-        await this.updateQualityWatchlist(sortedLongs);
-        await this.updateOvervaluedWatchlist(sortedShorts);
+        await this.updateSaturdayWatchlist(sortedLongs, sortedShorts);
       }
 
       return { longs: sortedLongs, shorts: sortedShorts };
@@ -731,59 +730,49 @@ class FundamentalScreener {
   }
 
   /**
-   * Update quality watchlist with long candidates
+   * Update saturday_watchlist with both long and short candidates
+   * Replaces old quality_watchlist and overvalued_watchlist
    */
-  async updateQualityWatchlist(candidates) {
+  async updateSaturdayWatchlist(longCandidates, shortCandidates) {
     try {
-      await db.query(`UPDATE quality_watchlist SET status = 'expired' WHERE status = 'active'`);
+      // Expire old entries
+      await db.query(`UPDATE saturday_watchlist SET status = 'expired' WHERE status = 'active'`);
 
-      for (const c of candidates) {
+      // Insert long candidates
+      for (const c of longCandidates) {
         await db.query(
-          `INSERT INTO quality_watchlist
-           (symbol, asset_class, sector, score, pathway, metrics, reasons, price, status, added_date)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', NOW())
-           ON CONFLICT (symbol) DO UPDATE SET
-             score = $4, pathway = $5, metrics = $6, reasons = $7,
+          `INSERT INTO saturday_watchlist
+           (symbol, intent, pathway, asset_class, sector, score, metrics, reasons, price, status, added_date)
+           VALUES ($1, 'LONG', $2, $3, $4, $5, $6, $7, $8, 'active', NOW())
+           ON CONFLICT (symbol, pathway) DO UPDATE SET
+             intent = 'LONG', score = $5, metrics = $6, reasons = $7,
              price = $8, status = 'active', added_date = NOW()`,
           [
-            c.symbol, c.assetClass, c.sector, c.longScore,
-            c.longPathway, JSON.stringify(c.metrics),
-            c.longReasons.join(', '), parseFloat(c.price)
+            c.symbol, c.longPathway, c.assetClass, c.sector, c.longScore,
+            JSON.stringify(c.metrics), c.longReasons.join(', '), parseFloat(c.price)
           ]
         );
       }
-      console.log(`   ✅ Quality watchlist updated: ${candidates.length} long candidates`);
-    } catch (error) {
-      console.error('Error updating quality watchlist:', error);
-      throw error;
-    }
-  }
 
-  /**
-   * Update overvalued watchlist with short candidates
-   */
-  async updateOvervaluedWatchlist(candidates) {
-    try {
-      await db.query(`UPDATE overvalued_watchlist SET status = 'expired' WHERE status = 'active'`);
-
-      for (const c of candidates) {
+      // Insert short candidates
+      for (const c of shortCandidates) {
         await db.query(
-          `INSERT INTO overvalued_watchlist
-           (symbol, asset_class, sector, overvalued_score, metrics, reasons, current_price, status, added_date)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW())
-           ON CONFLICT (symbol) DO UPDATE SET
-             overvalued_score = $4, metrics = $5, reasons = $6,
-             current_price = $7, status = 'active', added_date = NOW()`,
+          `INSERT INTO saturday_watchlist
+           (symbol, intent, pathway, asset_class, sector, score, metrics, reasons, price, status, added_date)
+           VALUES ($1, 'SHORT', $2, $3, $4, $5, $6, $7, $8, 'active', NOW())
+           ON CONFLICT (symbol, pathway) DO UPDATE SET
+             intent = 'SHORT', score = $5, metrics = $6, reasons = $7,
+             price = $8, status = 'active', added_date = NOW()`,
           [
-            c.symbol, c.assetClass, c.sector, c.shortScore,
-            JSON.stringify(c.metrics), c.shortReasons.join(', '),
-            parseFloat(c.price)
+            c.symbol, c.shortPathway || 'overvalued', c.assetClass, c.sector, c.shortScore,
+            JSON.stringify(c.metrics), c.shortReasons.join(', '), parseFloat(c.price)
           ]
         );
       }
-      console.log(`   ✅ Overvalued watchlist updated: ${candidates.length} short candidates`);
+
+      console.log(`   ✅ Saturday watchlist updated: ${longCandidates.length} longs, ${shortCandidates.length} shorts`);
     } catch (error) {
-      console.error('Error updating overvalued watchlist:', error);
+      console.error('Error updating saturday watchlist:', error);
       throw error;
     }
   }

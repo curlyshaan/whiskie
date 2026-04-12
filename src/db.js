@@ -375,6 +375,44 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_quality_watchlist_status ON quality_watchlist(status);
     `);
 
+    // Saturday watchlist - unified table for all Saturday screening results (long + short)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS saturday_watchlist (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        intent VARCHAR(10) NOT NULL,
+        pathway VARCHAR(30) NOT NULL,
+        asset_class VARCHAR(50),
+        sector VARCHAR(100),
+        score INTEGER,
+        metrics JSONB,
+        reasons TEXT,
+        price DECIMAL(10, 2),
+        status VARCHAR(20) DEFAULT 'active',
+        added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_reviewed TIMESTAMP,
+        position_entered BOOLEAN DEFAULT FALSE,
+        position_entry_date TIMESTAMP,
+        UNIQUE(symbol, pathway)
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_symbol ON saturday_watchlist(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_intent ON saturday_watchlist(intent);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_pathway ON saturday_watchlist(pathway);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_status ON saturday_watchlist(status);
+    `);
+
     // Add pathway and sector columns to quality_watchlist if they don't exist
     await client.query(`
       ALTER TABLE quality_watchlist

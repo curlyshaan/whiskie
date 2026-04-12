@@ -58,22 +58,22 @@ class QualityScreener {
    * Opus decides: spread limits, entry timing, position sizing
    */
   async checkQualityDips() {
-    console.log('\n💎 Checking quality watchlist for dip opportunities...');
+    console.log('\n💎 Checking saturday watchlist for dip opportunities...');
 
-    // Get active watchlist stocks
+    // Get active long candidates from saturday watchlist
     const result = await db.query(
-      `SELECT symbol, quality_score, metrics, reasons, target_entry_price, current_price
-       FROM quality_watchlist
-       WHERE status = 'active' AND position_entered = FALSE`
+      `SELECT symbol, intent, pathway, score, metrics, reasons, price
+       FROM saturday_watchlist
+       WHERE status = 'active' AND intent = 'LONG' AND position_entered = FALSE`
     );
 
     const watchlist = result.rows;
     if (watchlist.length === 0) {
-      console.log('   No active quality stocks on watchlist');
+      console.log('   No active long candidates on saturday watchlist');
       return [];
     }
 
-    console.log(`   Monitoring ${watchlist.length} quality stocks...`);
+    console.log(`   Monitoring ${watchlist.length} long candidates...`);
 
     const opportunities = [];
 
@@ -84,41 +84,42 @@ class QualityScreener {
 
         // Update current price
         await db.query(
-          `UPDATE quality_watchlist
-           SET current_price = $1, last_price_check = CURRENT_TIMESTAMP
-           WHERE symbol = $2`,
-          [marketData.price, stock.symbol]
+          `UPDATE saturday_watchlist
+           SET price = $1, last_reviewed = CURRENT_TIMESTAMP
+           WHERE symbol = $2 AND pathway = $3`,
+          [marketData.price, stock.symbol, stock.pathway]
         );
 
         // Package data for Opus analysis
         opportunities.push({
           symbol: stock.symbol,
-          qualityScore: stock.quality_score,
+          pathway: stock.pathway,
+          score: stock.score,
           savedReasons: stock.reasons,
-          targetEntry: stock.target_entry_price,
+          targetEntry: stock.price,
           ...marketData
         });
 
-        console.log(`   📊 ${stock.symbol}: $${marketData.price} (${marketData.dipFromHigh}% from high, spread: ${marketData.spread}%)`);
+        console.log(`   📊 ${stock.symbol} (${stock.pathway}): $${marketData.price} (${marketData.dipFromHigh}% from high, spread: ${marketData.spread}%)`);
 
       } catch (error) {
         console.warn(`   ⚠️ Error checking ${stock.symbol}:`, error.message);
       }
     }
 
-    console.log(`   ✅ Prepared ${opportunities.length} quality stocks for Opus analysis`);
+    console.log(`   ✅ Prepared ${opportunities.length} long candidates for Opus analysis`);
     return opportunities;
   }
 
   /**
    * Mark position as entered (called after Opus executes trade)
    */
-  async markPositionEntered(symbol) {
+  async markPositionEntered(symbol, pathway) {
     await db.query(
-      `UPDATE quality_watchlist
+      `UPDATE saturday_watchlist
        SET position_entered = TRUE, position_entry_date = CURRENT_TIMESTAMP
-       WHERE symbol = $1`,
-      [symbol]
+       WHERE symbol = $1 AND pathway = $2`,
+      [symbol, pathway]
     );
   }
 }

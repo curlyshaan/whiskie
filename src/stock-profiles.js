@@ -397,22 +397,19 @@ export async function runBiweeklyDeepResearch() {
   try {
     // Get stocks from ALL watchlists
     const mainWatchlist = await db.getWatchlist();
-    const qualityWatchlist = await db.query('SELECT DISTINCT symbol FROM quality_watchlist WHERE status = $1', ['active']);
-    const overvaluedWatchlist = await db.query('SELECT DISTINCT symbol FROM overvalued_watchlist WHERE status = $1', ['active']);
+    const saturdayWatchlist = await db.query('SELECT DISTINCT symbol FROM saturday_watchlist WHERE status = $1', ['active']);
 
     // Combine all watchlists and deduplicate
     const allSymbols = new Set([
       ...mainWatchlist.map(w => w.symbol),
-      ...qualityWatchlist.rows.map(w => w.symbol),
-      ...overvaluedWatchlist.rows.map(w => w.symbol)
+      ...saturdayWatchlist.rows.map(w => w.symbol)
     ]);
 
     const watchlistSymbols = Array.from(allSymbols);
 
     console.log(`📋 Found ${watchlistSymbols.length} unique stocks across all watchlists:`);
     console.log(`   - Main watchlist: ${mainWatchlist.length}`);
-    console.log(`   - Quality watchlist: ${qualityWatchlist.rows.length}`);
-    console.log(`   - Overvalued watchlist: ${overvaluedWatchlist.rows.length}`);
+    console.log(`   - Saturday watchlist: ${saturdayWatchlist.rows.length}`);
 
     if (watchlistSymbols.length === 0) {
       console.log('ℹ️  No stocks in any watchlist, skipping deep research');

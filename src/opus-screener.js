@@ -103,9 +103,8 @@ class OpusScreener {
 
       console.log(`   ✅ Opus identified ${qualityStocks.length} quality stocks and ${overvaluedStocks.length} overvalued stocks`);
 
-      // Update watchlists
-      await this.updateQualityWatchlist(qualityStocks);
-      await this.updateOvervaluedWatchlist(overvaluedStocks);
+      // Update saturday watchlist with both long and short candidates
+      await this.updateSaturdayWatchlist(qualityStocks, overvaluedStocks);
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
       console.log(`   ✅ Opus screening complete (${duration}s)`);
@@ -243,21 +242,26 @@ Analyze the data and return your recommendations in the JSON format above.`;
   }
 
   /**
-   * Update quality watchlist in database
+   * Update saturday watchlist with both quality and overvalued stocks
    */
-  async updateQualityWatchlist(stocks) {
+  async updateSaturdayWatchlist(qualityStocks, overvaluedStocks) {
     try {
-      // Clear existing quality watchlist
-      await db.query(`DELETE FROM quality_watchlist WHERE status = 'active'`);
+      // Expire old entries
+      await db.query(`UPDATE saturday_watchlist SET status = 'expired' WHERE status = 'active'`);
 
-      // Insert new quality stocks
-      for (const stock of stocks) {
+      // Insert quality stocks (long candidates)
+      for (const stock of qualityStocks) {
         await db.query(
-          `INSERT INTO quality_watchlist
-           (symbol, quality_score, metrics, reasons, target_entry_price, status, added_date)
-           VALUES ($1, $2, $3, $4, $5, 'active', NOW())`,
+          `INSERT INTO saturday_watchlist
+           (symbol, intent, pathway, asset_class, sector, score, metrics, reasons, price, status, added_date)
+           VALUES ($1, 'LONG', 'quality', $2, $3, $4, $5, $6, $7, 'active', NOW())
+           ON CONFLICT (symbol, pathway) DO UPDATE SET
+             intent = 'LONG', score = $4, metrics = $5, reasons = $6,
+             price = $7, status = 'active', added_date = NOW()`,
           [
             stock.symbol,
+            stock.assetClass || null,
+            stock.sector || null,
             stock.score,
             JSON.stringify(stock.keyMetrics),
             stock.reasons,
@@ -266,29 +270,19 @@ Analyze the data and return your recommendations in the JSON format above.`;
         );
       }
 
-      console.log(`   ✅ Quality watchlist updated with ${stocks.length} stocks`);
-    } catch (error) {
-      console.error('Error updating quality watchlist:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Update overvalued watchlist in database
-   */
-  async updateOvervaluedWatchlist(stocks) {
-    try {
-      // Clear existing overvalued watchlist
-      await db.query(`DELETE FROM overvalued_watchlist WHERE status = 'active'`);
-
-      // Insert new overvalued stocks
-      for (const stock of stocks) {
+      // Insert overvalued stocks (short candidates)
+      for (const stock of overvaluedStocks) {
         await db.query(
-          `INSERT INTO overvalued_watchlist
-           (symbol, overvalued_score, metrics, reasons, target_entry_price, status, added_date)
-           VALUES ($1, $2, $3, $4, $5, 'active', NOW())`,
+          `INSERT INTO saturday_watchlist
+           (symbol, intent, pathway, asset_class, sector, score, metrics, reasons, price, status, added_date)
+           VALUES ($1, 'SHORT', 'overvalued', $2, $3, $4, $5, $6, $7, 'active', NOW())
+           ON CONFLICT (symbol, pathway) DO UPDATE SET
+             intent = 'SHORT', score = $4, metrics = $5, reasons = $6,
+             price = $7, status = 'active', added_date = NOW()`,
           [
             stock.symbol,
+            stock.assetClass || null,
+            stock.sector || null,
             stock.score,
             JSON.stringify(stock.keyMetrics),
             stock.reasons,
@@ -297,9 +291,9 @@ Analyze the data and return your recommendations in the JSON format above.`;
         );
       }
 
-      console.log(`   ✅ Overvalued watchlist updated with ${stocks.length} stocks`);
+      console.log(`   ✅ Saturday watchlist updated: ${qualityStocks.length} quality stocks, ${overvaluedStocks.length} overvalued stocks`);
     } catch (error) {
-      console.error('Error updating overvalued watchlist:', error);
+      console.error('Error updating saturday watchlist:', error);
       throw error;
     }
   }
