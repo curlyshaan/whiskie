@@ -106,10 +106,10 @@ EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET
 
 **FMP (Financial Modeling Prep)**:
 - Single paid API key with 300 calls/minute (unlimited daily)
-- Tiered cache strategy:
-  - **1-day cache**: TTM ratios, technical indicators (price-dependent data)
-  - **45-day cache**: Quarterly statements (updates at earnings)
-  - **90-day cache**: Annual context data
+- **Tiered cache strategy** (optimized for data volatility):
+  - **1-day cache (TTM tier)**: TTM ratios, technical indicators (price-dependent data)
+  - **45-day cache (QUARTERLY tier)**: Quarterly statements, growth rates (updates at earnings)
+  - **90-day cache (ANNUAL tier)**: Company profiles, sector data (rarely changes)
 - Key endpoints:
   - `/stable/ratios-ttm` - Current P/E, PEG, margins, ROE (TTM)
   - `/stable/key-metrics-ttm` - ROIC, Graham number, EV ratios (TTM)
@@ -118,7 +118,7 @@ EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET
   - `/stable/technical-indicators/ema` - 50/200 EMA
   - `/stable/technical-indicators/rsi` - RSI(14)
   - `/stable/earning-calendar` - Upcoming earnings dates
-- Cache managed by `fmp-cache.js`
+- Cache managed by `fmp-cache.js` with automatic tier-based expiration
 - API key: `FMP_API_KEY_1`
 
 **Yahoo Finance**:
