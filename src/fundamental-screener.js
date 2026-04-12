@@ -645,6 +645,33 @@ class FundamentalScreener {
       cashMachine.forEach(s => candidates.add(s.symbol));
       console.log(`   Found ${cashMachine.length} cash machine candidates`);
 
+      // Inflection pathway: Q-over-Q acceleration, margin expansion
+      console.log('   Screening: Inflection...');
+      const inflection = await fmp.screenCompanies({
+        marketCapMoreThan: this.MIN_MARKET_CAP,
+        volumeMoreThan: 500000,
+        priceMoreThan: this.MIN_PRICE,
+        revenueGrowthQuarterlyYoyMoreThan: 0.15,
+        operatingMarginMoreThan: 0.05,
+        limit: 100
+      });
+      inflection.forEach(s => candidates.add(s.symbol));
+      console.log(`   Found ${inflection.length} inflection candidates`);
+
+      // Turnaround pathway: Margin expansion, revenue stabilization, manageable debt
+      console.log('   Screening: Turnaround...');
+      const turnaround = await fmp.screenCompanies({
+        marketCapMoreThan: this.MIN_MARKET_CAP,
+        volumeMoreThan: 500000,
+        priceMoreThan: this.MIN_PRICE,
+        priceToEarningsRatioLowerThan: 20,
+        debtToEquityLowerThan: 1.0,
+        operatingMarginMoreThan: 0.01,
+        limit: 100
+      });
+      turnaround.forEach(s => candidates.add(s.symbol));
+      console.log(`   Found ${turnaround.length} turnaround candidates`);
+
       // SHORT PATHWAYS
 
       // 1. Overvalued pathway: High P/E, High P/B (existing)
@@ -689,7 +716,7 @@ class FundamentalScreener {
 
       const uniqueCandidates = Array.from(candidates);
       console.log(`\n   ✅ Total unique candidates from screener: ${uniqueCandidates.length}`);
-      console.log(`   📊 Breakdown: ${deepValue.length + garp.length + highGrowth.length + cashMachine.length} longs, ${overvalued.length + deteriorating.length + overextended.length} shorts`);
+      console.log(`   📊 Breakdown: ${deepValue.length + garp.length + highGrowth.length + cashMachine.length + inflection.length + turnaround.length} longs, ${overvalued.length + deteriorating.length + overextended.length} shorts`);
 
       // Map to our stock format with asset class
       return uniqueCandidates.map(symbol => {
