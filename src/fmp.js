@@ -596,6 +596,7 @@ class FMPClient {
         // TTM Profitability
         operatingMargin: ratiosTTM.operatingProfitMarginTTM || 0,
         netMargin: ratiosTTM.netProfitMarginTTM || 0,
+        profitMargin: ratiosTTM.netProfitMarginTTM || 0, // Alias for screener compatibility
         grossMargin: ratiosTTM.grossProfitMarginTTM || 0,
         roe: keyMetricsTTM?.returnOnEquityTTM || 0,
         roic: keyMetricsTTM?.returnOnInvestedCapitalTTM || 0,
