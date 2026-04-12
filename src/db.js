@@ -531,7 +531,7 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_error_log_created ON error_log(created_at);
     `);
 
-    // Performance metrics table (already exists, just ensure it has the right structure)
+    // Performance metrics table (ensure it has the right structure)
     await client.query(`
       CREATE TABLE IF NOT EXISTS performance_metrics (
         id SERIAL PRIMARY KEY,
@@ -540,6 +540,12 @@ export async function initDatabase() {
         metadata JSONB,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    // Add created_at column if it doesn't exist (for existing tables)
+    await client.query(`
+      ALTER TABLE performance_metrics
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
     `);
 
     await client.query(`
