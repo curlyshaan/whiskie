@@ -257,30 +257,6 @@ class FMPCache {
   }
 
   /**
-   * Get technical indicators with 1-day caching (TTM tier)
-   * Technical indicators are price-dependent and change daily
-   */
-  async getTechnicalIndicators(symbol) {
-    try {
-      // Check cache first (1-day TTM tier)
-      const cached = await this.getCached(symbol, 'TECHNICAL');
-      if (cached) return cached;
-
-      // Fetch from FMP
-      const data = await fmp.getTechnicalIndicators(symbol);
-      if (!data) return null;
-
-      // Cache with 1-day expiration (same as TTM tier)
-      await this.cache(symbol, data, 'TTM');
-
-      return data;
-    } catch (error) {
-      console.error(`Error fetching technical indicators for ${symbol}:`, error.message);
-      return null;
-    }
-  }
-
-  /**
    * Warm cache for all stocks in universe with tiered caching
    * Run this during off-peak hours to pre-populate cache
    */
