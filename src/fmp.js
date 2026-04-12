@@ -687,6 +687,7 @@ class FMPClient {
         // Price data
         price: profile?.price || 0,
         beta: profile?.beta || 0,
+        avgVolume: profile?.avgVolume || 0,
 
         // Quarterly statements for trend analysis
         incomeStatements: incomeStatements.slice(0, 4) // Last 4 quarters
