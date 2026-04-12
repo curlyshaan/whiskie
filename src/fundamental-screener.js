@@ -224,6 +224,13 @@ class FundamentalScreener {
       .sort((a, b) => b[1].score - a[1].score)[0];
 
     const [pathway, result] = best;
+
+    // Universal boost: rising volume = institutional accumulation
+    if (metrics.volumeTrend === 'rising') {
+      result.score += 10;
+      result.reasons.push(`Volume rising ${metrics.volumeChange.toFixed(0)}% (accumulation)`);
+    }
+
     if (result.score < this.LONG_THRESHOLD) return null;
 
     return { score: result.score, pathway, reasons: result.reasons };
