@@ -1483,7 +1483,7 @@ function generateCronStatusHTML(executions, days) {
         }
       } catch (error) {
         btn.textContent = '❌ Error';
-        alert(`Error starting ${jobName}: ` + error.message);
+        alert('Error starting ' + jobName + ': ' + error.message);
         setTimeout(() => {
           btn.textContent = originalText;
           btn.disabled = false;
