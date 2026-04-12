@@ -374,6 +374,37 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_quality_watchlist_status ON quality_watchlist(status);
     `);
 
+    // Add pathway and sector columns to quality_watchlist if they don't exist
+    await client.query(`
+      ALTER TABLE quality_watchlist
+      ADD COLUMN IF NOT EXISTS pathway VARCHAR(20);
+    `);
+
+    await client.query(`
+      ALTER TABLE quality_watchlist
+      ADD COLUMN IF NOT EXISTS sector VARCHAR(100);
+    `);
+
+    // Rename quality_score to score for consistency
+    await client.query(`
+      ALTER TABLE quality_watchlist
+      ADD COLUMN IF NOT EXISTS score INTEGER;
+    `);
+
+    await client.query(`
+      UPDATE quality_watchlist SET score = quality_score WHERE score IS NULL;
+    `);
+
+    // Add price column (renamed from current_price)
+    await client.query(`
+      ALTER TABLE quality_watchlist
+      ADD COLUMN IF NOT EXISTS price DECIMAL(10, 2);
+    `);
+
+    await client.query(`
+      UPDATE quality_watchlist SET price = current_price WHERE price IS NULL;
+    `);
+
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_stock_universe_shortable ON stock_universe(shortable);
     `);

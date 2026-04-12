@@ -5,35 +5,47 @@ import assetClassData from './asset-class-data.js';
 import { getSectorConfig, normalizeSectorName } from './sector-config.js';
 
 /**
- * Fundamental Screener
- * Weekly value screening to identify undervalued stocks with strong fundamentals
- * Uses sector-specific scoring for accurate valuation assessment
+ * Combined Fundamental Screener
+ * Single pass over all 407 stocks - identifies BOTH long and short candidates
  *
- * Runs: Saturday 3pm (weekly automated scan)
- * Output: Value Watchlist (top 15 stocks)
+ * LONG PATHWAYS (pass ANY one, threshold ≥35):
+ *   1. Deep Value     - low P/E, low PEG, high FCF
+ *   2. High Growth    - >30% revenue growth (ignore valuation)
+ *   3. Inflection     - Q-over-Q acceleration, margin expansion
+ *   4. Cash Machine   - FCF yield >8%, growing FCF
+ *
+ * SHORT CRITERIA (must hit ALL three):
+ *   1. Extreme valuation (PEG >3 AND P/E >50, sector-adjusted)
+ *   2. Deteriorating fundamentals (deceleration OR margin compression)
+ *   3. Short safety check (meme stock filter - short float, market cap, liquidity)
+ *
+ * Runs: Saturday 3pm ET
+ * Output: quality_watchlist (longs) + overvalued_watchlist (shorts)
  */
 
 class FundamentalScreener {
   constructor() {
-    this.MIN_DAILY_VOLUME = 5_000_000; // $5M absolute (not surge-based)
-    this.VALUE_WATCHLIST_SIZE = 15;
+    this.MIN_DOLLAR_VOLUME = 5_000_000;    // $5M daily dollar volume minimum
+    this.MIN_PRICE = 5;                     // No penny stocks
+    this.MIN_MARKET_CAP = 500_000_000;      // $500M market cap minimum
+    this.MIN_SHORT_MARKET_CAP = 2_000_000_000; // $2B minimum for shorts
+    this.MIN_SHORT_DOLLAR_VOLUME = 20_000_000; // $20M daily volume for shorts
+    this.LONG_THRESHOLD = 35;               // Pass if ANY pathway ≥35
+    this.SHORT_THRESHOLD = 60;              // Must score ≥60 with all 3 criteria
+    this.MAX_SHORT_FLOAT = 0.20;            // Max 20% short float (meme stock risk)
   }
 
   /**
-   * Run weekly fundamental screening (split across Saturday/Sunday)
-   * Saturday: First half of stocks
-   * Sunday: Second half of stocks
-   * Returns top 15 value candidates
+   * Main entry point - single pass over all stocks
+   * Identifies both long and short candidates simultaneously
    */
   async runWeeklyScreen(part = 'full') {
-    console.log(`\n💎 Running weekly fundamental screening (${part})...`);
+    console.log(`\n💎 Running combined fundamental screening (${part})...`);
     const startTime = Date.now();
 
     try {
-      // Get all stocks from asset classes
       let allStocks = this.getAllStocks();
 
-      // Split stocks for Saturday/Sunday to stay under 750 API calls/day
       if (part === 'saturday') {
         allStocks = allStocks.slice(0, Math.ceil(allStocks.length / 2));
         console.log(`   Screening first half: ${allStocks.length} stocks...`);
@@ -44,26 +56,30 @@ class FundamentalScreener {
         console.log(`   Screening ${allStocks.length} stocks...`);
       }
 
-      const scoredStocks = [];
+      const longCandidates = [];
+      const shortCandidates = [];
       let processed = 0;
+      let filtered = 0;
       let errors = 0;
 
-      // Screen each stock
       for (const stock of allStocks) {
         try {
-          const score = await this.scoreStock(stock);
-          if (score) {
-            scoredStocks.push(score);
+          const result = await this.screenStock(stock);
+
+          if (result === null) {
+            filtered++;
+          } else {
+            if (result.longScore !== null) longCandidates.push(result);
+            if (result.shortScore !== null) shortCandidates.push(result);
           }
+
           processed++;
 
-          // Progress update every 50 stocks
           if (processed % 50 === 0) {
-            console.log(`   Progress: ${processed}/${allStocks.length} stocks screened...`);
+            console.log(`   Progress: ${processed}/${allStocks.length} | Longs: ${longCandidates.length} | Shorts: ${shortCandidates.length}`);
           }
 
-          // Rate limiting: 300 calls/min = 5 calls/sec = 200ms per call minimum
-          // Each stock makes ~3-5 FMP calls, so use 500ms delay to stay under limit
+          // 500ms delay - stays under 300 FMP calls/min
           await new Promise(resolve => setTimeout(resolve, 500));
 
         } catch (error) {
@@ -74,51 +90,392 @@ class FundamentalScreener {
         }
       }
 
-      // Sort by score and take top 15
-      const topCandidates = scoredStocks
-        .sort((a, b) => b.score - a.score)
-        .slice(0, this.VALUE_WATCHLIST_SIZE);
-
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`   ✅ Screening complete (${duration}s)`);
-      console.log(`   Processed: ${processed} stocks`);
-      console.log(`   Errors: ${errors} stocks`);
-      console.log(`   Candidates found: ${scoredStocks.length}`);
-      console.log(`   Top ${this.VALUE_WATCHLIST_SIZE} selected for Value Watchlist`);
+      console.log(`\n   ✅ Screening complete (${duration}s)`);
+      console.log(`   Processed: ${processed} | Filtered out: ${filtered} | Errors: ${errors}`);
+      console.log(`   Long candidates: ${longCandidates.length}`);
+      console.log(`   Short candidates: ${shortCandidates.length}`);
 
-      // Show FMP API usage stats
-      const fmpStats = (await import('./fmp.js')).default.getUsageStats();
-      console.log(`\n   📊 FMP API Usage:`);
-      console.log(`      Total calls this session: ${fmpStats.calls}`);
-      console.log(`      Rate limit: 300 calls/minute (no daily limit)`);
+      // Sort by score
+      const sortedLongs = longCandidates.sort((a, b) => b.longScore - a.longScore);
+      const sortedShorts = shortCandidates.sort((a, b) => b.shortScore - a.shortScore);
 
-      // Show cache statistics with tier breakdown
-      const cacheStats = await fmpCache.getCacheStats();
-      console.log(`\n   💾 FMP Cache Stats (Tiered):`);
-      console.log(`      TTM (1-day): ${cacheStats.TTM.valid} valid, ${cacheStats.TTM.expired} expired`);
-      console.log(`      Quarterly (45-day): ${cacheStats.QUARTERLY.valid} valid, ${cacheStats.QUARTERLY.expired} expired`);
-      console.log(`      Annual (90-day): ${cacheStats.ANNUAL.valid} valid, ${cacheStats.ANNUAL.expired} expired`);
+      await this.logCacheStats(allStocks.length);
 
-      const totalValid = cacheStats.TTM.valid + cacheStats.QUARTERLY.valid + cacheStats.ANNUAL.valid;
-      const cacheHitRate = allStocks.length > 0 ? ((totalValid / (allStocks.length * 3)) * 100).toFixed(1) : 0;
-      console.log(`      Overall cache hit rate: ${cacheHitRate}%`);
-
-      // Update Value Watchlist in database (only on Sunday or full run)
       if (part === 'sunday' || part === 'full') {
-        await this.updateValueWatchlist(topCandidates);
+        await this.updateQualityWatchlist(sortedLongs);
+        await this.updateOvervaluedWatchlist(sortedShorts);
       }
 
-      return topCandidates;
+      return { longs: sortedLongs, shorts: sortedShorts };
 
     } catch (error) {
       console.error('❌ Error in fundamental screening:', error);
-
-      // Send email alert for API errors
       const emailModule = await import('./email.js');
       await emailModule.default.sendErrorAlert(error, 'Fundamental screening failed');
-
       throw error;
     }
+  }
+
+  /**
+   * Screen a single stock for both long and short criteria
+   */
+  async screenStock(stock) {
+    try {
+      const quote = await tradier.getQuote(stock.symbol);
+      if (!quote) return null;
+
+      const price = quote.last || quote.close || 0;
+      const volume = quote.average_volume || 0;
+      const dollarVolume = volume * price;
+
+      // Basic quality filters
+      if (price < this.MIN_PRICE) return null;
+      if (dollarVolume < this.MIN_DOLLAR_VOLUME) return null;
+
+      const fundamentals = await fmpCache.getFundamentals(stock.symbol);
+      if (!fundamentals) return null;
+
+      const marketCap = fundamentals.marketCap || 0;
+      if (marketCap < this.MIN_MARKET_CAP) return null;
+
+      const sector = normalizeSectorName(fundamentals.sector);
+      const sectorConfig = getSectorConfig(sector);
+      const metrics = this.extractMetrics(fundamentals, price, dollarVolume);
+
+      const longResult = this.scoreLong(metrics, sector, sectorConfig);
+      const shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
+
+      if (longResult === null && shortResult === null) return null;
+
+      return {
+        symbol: stock.symbol,
+        assetClass: stock.assetClass,
+        sector,
+        price: price.toFixed(2),
+        marketCap,
+        dollarVolume,
+        longScore: longResult?.score || null,
+        longPathway: longResult?.pathway || null,
+        longReasons: longResult?.reasons || [],
+        shortScore: shortResult?.score || null,
+        shortReasons: shortResult?.reasons || [],
+        metrics
+      };
+
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Extract all fundamental metrics
+   */
+  extractMetrics(fundamentals, price, dollarVolume) {
+    return {
+      peRatio: fundamentals.peRatio || 0,
+      pegRatio: fundamentals.pegRatio || 0,
+      priceToBook: fundamentals.priceToBook || 0,
+      priceToSales: fundamentals.priceToSales || 0,
+      evToEbitda: fundamentals.evToEbitda || 0,
+      revenueGrowth: fundamentals.revenueGrowth || 0,
+      earningsGrowth: fundamentals.earningsGrowth || 0,
+      revenueGrowthQ: fundamentals.revenueGrowthQ || 0,
+      revenueGrowthPrevQ: fundamentals.revenueGrowthPrevQ || 0,
+      operatingMargin: fundamentals.operatingMargin || 0,
+      operatingMarginPrev: fundamentals.operatingMarginPrev || 0,
+      profitMargin: fundamentals.profitMargin || 0,
+      roe: fundamentals.roe || 0,
+      roic: fundamentals.roic || 0,
+      freeCashflowPerShare: fundamentals.freeCashflowPerShare || 0,
+      freeCashflow: fundamentals.freeCashflow || 0,
+      fcfGrowth: fundamentals.fcfGrowth || 0,
+      fcfYield: fundamentals.freeCashflow && fundamentals.marketCap
+        ? (fundamentals.freeCashflow / fundamentals.marketCap) : 0,
+      debtToEquity: fundamentals.debtToEquity || 0,
+      shortFloat: fundamentals.shortFloat || null,
+      price,
+      dollarVolume,
+      marketCap: fundamentals.marketCap || 0,
+    };
+  }
+
+  // ─────────────────────────────────────────────
+  // LONG SCORING - 4 independent pathways
+  // ─────────────────────────────────────────────
+
+  scoreLong(metrics, sector, sectorConfig) {
+    const pathways = {
+      deepValue:   this.scoreDeepValue(metrics, sectorConfig),
+      highGrowth:  this.scoreHighGrowth(metrics, sectorConfig),
+      inflection:  this.scoreInflection(metrics, sectorConfig),
+      cashMachine: this.scoreCashMachine(metrics),
+    };
+
+    const best = Object.entries(pathways)
+      .sort((a, b) => b[1].score - a[1].score)[0];
+
+    const [pathway, result] = best;
+    if (result.score < this.LONG_THRESHOLD) return null;
+
+    return { score: result.score, pathway, reasons: result.reasons };
+  }
+
+  scoreDeepValue(metrics, sectorConfig) {
+    let score = 0;
+    const reasons = [];
+
+    if (metrics.pegRatio > 0 && metrics.pegRatio <= (sectorConfig.pegRange?.ideal || 1.5)) {
+      score += 30;
+      reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (excellent)`);
+    } else if (metrics.pegRatio > 0 && metrics.pegRatio <= (sectorConfig.pegRange?.high || 2.5)) {
+      score += 15;
+      reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (acceptable)`);
+    }
+
+    if (metrics.peRatio > 0 && metrics.peRatio < (sectorConfig.peRange?.low || 15)) {
+      score += 25;
+      reasons.push(`P/E ${metrics.peRatio.toFixed(1)} (low for sector)`);
+    } else if (metrics.peRatio > 0 && metrics.peRatio < (sectorConfig.peRange?.mid || 25)) {
+      score += 12;
+    }
+
+    if (metrics.freeCashflowPerShare > 0) {
+      score += 20;
+      reasons.push('Positive FCF');
+    }
+
+    if (metrics.debtToEquity <= (sectorConfig.debtToEquityMax || 1) * 0.5) {
+      score += 15;
+      reasons.push(`Low debt (D/E: ${metrics.debtToEquity.toFixed(2)})`);
+    } else if (metrics.debtToEquity <= (sectorConfig.debtToEquityMax || 1)) {
+      score += 8;
+    }
+
+    if (metrics.roic > 0.15) {
+      score += 10;
+      reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}%`);
+    }
+
+    return { score, reasons };
+  }
+
+  scoreHighGrowth(metrics, sectorConfig) {
+    let score = 0;
+    const reasons = [];
+
+    // High growth - valuation ignored entirely
+    if (metrics.revenueGrowth >= 0.50) {
+      score += 40;
+      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (exceptional)`);
+    } else if (metrics.revenueGrowth >= 0.30) {
+      score += 30;
+      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (strong)`);
+    } else if (metrics.revenueGrowth >= (sectorConfig.revenueGrowthMin || 0.1) * 1.5) {
+      score += 15;
+      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth`);
+    }
+
+    if (metrics.earningsGrowth >= 0.40) {
+      score += 30;
+      reasons.push(`${(metrics.earningsGrowth * 100).toFixed(0)}% earnings growth`);
+    } else if (metrics.earningsGrowth >= 0.20) {
+      score += 15;
+    }
+
+    if (metrics.operatingMargin > 0) {
+      score += 10;
+      reasons.push(`${(metrics.operatingMargin * 100).toFixed(1)}% op margin`);
+    }
+
+    // Bonus: Q-over-Q acceleration
+    if (metrics.revenueGrowthQ > metrics.revenueGrowthPrevQ && metrics.revenueGrowthQ > 0.20) {
+      score += 20;
+      reasons.push('Growth accelerating Q-over-Q');
+    }
+
+    return { score, reasons };
+  }
+
+  scoreInflection(metrics, sectorConfig) {
+    let score = 0;
+    const reasons = [];
+
+    // This is the "catch the next NVDA" pathway
+    const acceleration = metrics.revenueGrowthQ - metrics.revenueGrowthPrevQ;
+    if (acceleration > 0.10 && metrics.revenueGrowthQ > 0) {
+      score += 35;
+      reasons.push(`Revenue accelerating: ${(metrics.revenueGrowthPrevQ * 100).toFixed(0)}% → ${(metrics.revenueGrowthQ * 100).toFixed(0)}%`);
+    } else if (acceleration > 0.05 && metrics.revenueGrowthQ > 0) {
+      score += 20;
+      reasons.push('Revenue growth picking up');
+    }
+
+    const marginExpansion = metrics.operatingMargin - metrics.operatingMarginPrev;
+    if (marginExpansion > 0.05) {
+      score += 30;
+      reasons.push(`Margin expanding: +${(marginExpansion * 100).toFixed(1)}pp`);
+    } else if (marginExpansion > 0.02) {
+      score += 15;
+      reasons.push('Margins improving');
+    }
+
+    if (metrics.freeCashflow > 0 && metrics.fcfGrowth > 0.50) {
+      score += 20;
+      reasons.push('FCF growing rapidly');
+    }
+
+    // Bonus: still not too expensive despite the inflection
+    if (metrics.pegRatio > 0 && metrics.pegRatio < 3.0) {
+      score += 15;
+      reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (reasonable)`);
+    }
+
+    return { score, reasons };
+  }
+
+  scoreCashMachine(metrics) {
+    let score = 0;
+    const reasons = [];
+
+    if (metrics.fcfYield >= 0.10) {
+      score += 45;
+      reasons.push(`FCF yield ${(metrics.fcfYield * 100).toFixed(1)}% (exceptional)`);
+    } else if (metrics.fcfYield >= 0.08) {
+      score += 35;
+      reasons.push(`FCF yield ${(metrics.fcfYield * 100).toFixed(1)}%`);
+    } else if (metrics.fcfYield >= 0.05) {
+      score += 15;
+    }
+
+    if (metrics.fcfGrowth > 0.20 && metrics.fcfGrowth > metrics.revenueGrowth) {
+      score += 25;
+      reasons.push(`FCF growing ${(metrics.fcfGrowth * 100).toFixed(0)}% (faster than revenue)`);
+    } else if (metrics.fcfGrowth > 0.10) {
+      score += 12;
+    }
+
+    if (metrics.debtToEquity < 0.5) {
+      score += 15;
+      reasons.push('Low debt - FCF accrues to shareholders');
+    }
+
+    if (metrics.roic > 0.20) {
+      score += 15;
+      reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}%`);
+    }
+
+    return { score, reasons };
+  }
+
+  // ─────────────────────────────────────────────
+  // SHORT SCORING - must hit ALL three criteria
+  // ─────────────────────────────────────────────
+
+  scoreShort(metrics, sector, sectorConfig, quote) {
+    const reasons = [];
+
+    // CRITERIA 1: Extreme valuation
+    const valuationScore = this.scoreShortValuation(metrics, sectorConfig, reasons);
+    if (valuationScore < 20) return null;
+
+    // CRITERIA 2: Deteriorating fundamentals
+    const deteriorationScore = this.scoreDeterioration(metrics, reasons);
+    if (deteriorationScore < 20) return null;
+
+    // CRITERIA 3: Meme stock / squeeze safety check
+    const safetyPassed = this.shortSafetyCheck(metrics, reasons);
+    if (!safetyPassed) return null;
+
+    const totalScore = valuationScore + deteriorationScore;
+    if (totalScore < this.SHORT_THRESHOLD) return null;
+
+    return { score: totalScore, reasons };
+  }
+
+  scoreShortValuation(metrics, sectorConfig, reasons) {
+    let score = 0;
+    const highPE = sectorConfig.peRange?.high || 40;
+
+    if (metrics.peRatio > highPE * 1.5) {
+      score += 20;
+      reasons.push(`Extreme P/E: ${metrics.peRatio.toFixed(1)} (1.5x sector ceiling of ${highPE})`);
+    } else if (metrics.peRatio > highPE) {
+      score += 10;
+    }
+
+    if (metrics.pegRatio > 4.0) {
+      score += 20;
+      reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (severely overvalued)`);
+    } else if (metrics.pegRatio > 3.0) {
+      score += 10;
+      reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (overvalued)`);
+    }
+
+    if (metrics.evToEbitda > 40) {
+      score += 10;
+      reasons.push(`EV/EBITDA ${metrics.evToEbitda.toFixed(1)} (stretched)`);
+    }
+
+    return score;
+  }
+
+  scoreDeterioration(metrics, reasons) {
+    let score = 0;
+
+    const deceleration = metrics.revenueGrowthPrevQ - metrics.revenueGrowthQ;
+    if (deceleration > 0.10) {
+      score += 25;
+      reasons.push(`Revenue decelerating: ${(metrics.revenueGrowthPrevQ * 100).toFixed(0)}% → ${(metrics.revenueGrowthQ * 100).toFixed(0)}%`);
+    } else if (deceleration > 0.05) {
+      score += 12;
+      reasons.push('Revenue growth slowing');
+    }
+
+    const marginCompression = metrics.operatingMarginPrev - metrics.operatingMargin;
+    if (marginCompression > 0.05) {
+      score += 25;
+      reasons.push(`Margin compression: -${(marginCompression * 100).toFixed(1)}pp`);
+    } else if (marginCompression > 0.02) {
+      score += 12;
+    }
+
+    if (metrics.fcfGrowth < -0.20) {
+      score += 20;
+      reasons.push(`FCF declining ${(metrics.fcfGrowth * 100).toFixed(0)}%`);
+    }
+
+    if (metrics.earningsGrowth < 0 && metrics.peRatio > 30) {
+      score += 20;
+      reasons.push('Negative earnings growth with high P/E');
+    }
+
+    return score;
+  }
+
+  shortSafetyCheck(metrics, reasons) {
+    // Must be large enough to short safely
+    if (metrics.marketCap < this.MIN_SHORT_MARKET_CAP) {
+      reasons.push(`⚠️ Market cap too small for short ($${(metrics.marketCap / 1e9).toFixed(1)}B < $2B)`);
+      return false;
+    }
+
+    // Must have good liquidity
+    if (metrics.dollarVolume < this.MIN_SHORT_DOLLAR_VOLUME) {
+      reasons.push('⚠️ Insufficient liquidity for short');
+      return false;
+    }
+
+    // Short float check - high short float = squeeze risk (meme stock indicator)
+    if (metrics.shortFloat && metrics.shortFloat > this.MAX_SHORT_FLOAT) {
+      reasons.push(`⚠️ Short float ${(metrics.shortFloat * 100).toFixed(0)}% - squeeze/meme risk`);
+      return false;
+    }
+
+    // Note: IV check happens at execution time in short-manager.js (80% IV cap)
+    // ETB (easy to borrow) check also happens at execution
+
+    return true;
   }
 
   /**
@@ -135,222 +492,117 @@ class FundamentalScreener {
   }
 
   /**
-   * Score individual stock based on fundamentals
-   * Uses sector-specific thresholds and weights
-   * Returns: { symbol, score, metrics, reasons } or null
+   * Update quality watchlist with long candidates
    */
-  async scoreStock(stock) {
+  async updateQualityWatchlist(candidates) {
     try {
-      // Fetch quote for volume check from Tradier
-      const quote = await tradier.getQuote(stock.symbol);
+      await db.query(`UPDATE quality_watchlist SET status = 'expired' WHERE status = 'active'`);
 
-      if (!quote) return null;
-
-      // Volume filter: $5M absolute minimum (not surge-based)
-      const price = quote.last || quote.close || 0;
-      const volume = quote.average_volume || 0;
-      const dollarVolume = volume * price;
-
-      if (dollarVolume < this.MIN_DAILY_VOLUME) {
-        return null; // Filter out low-volume stocks
-      }
-
-      // Fetch fundamental data from FMP (with caching)
-      const fundamentals = await fmpCache.getFundamentals(stock.symbol);
-
-      if (!fundamentals) return null;
-
-      // Get sector-specific configuration
-      const sector = normalizeSectorName(fundamentals.sector);
-      const sectorConfig = getSectorConfig(sector);
-
-      // Extract metrics
-      const revenueGrowth = fundamentals.revenueGrowth || 0;
-      const earningsGrowth = fundamentals.earningsGrowth || 0;
-      const peRatio = fundamentals.peRatio || 0;
-      const pegRatio = fundamentals.pegRatio || 0;
-      const debtToEquity = fundamentals.debtToEquity || 0;
-      const freeCashflow = fundamentals.freeCashflowPerShare || 0;
-      const operatingMargins = fundamentals.operatingMargin || 0;
-
-      // Calculate score using sector-specific weights (0-100)
-      let score = 0;
-      const reasons = [];
-
-      // Revenue growth (sector-weighted)
-      const revenueWeight = sectorConfig.weights.revenueGrowth;
-      if (revenueGrowth >= sectorConfig.revenueGrowthMin * 1.5) {
-        score += revenueWeight;
-        reasons.push(`${(revenueGrowth * 100).toFixed(1)}% revenue growth (strong for ${sector})`);
-      } else if (revenueGrowth >= sectorConfig.revenueGrowthMin) {
-        score += revenueWeight * 0.6;
-        reasons.push(`${(revenueGrowth * 100).toFixed(1)}% revenue growth`);
-      }
-
-      // Earnings growth (sector-weighted)
-      const earningsWeight = sectorConfig.weights.earningsGrowth;
-      if (earningsGrowth >= sectorConfig.earningsGrowthMin * 1.5) {
-        score += earningsWeight;
-        reasons.push(`${(earningsGrowth * 100).toFixed(1)}% earnings growth`);
-      } else if (earningsGrowth >= sectorConfig.earningsGrowthMin) {
-        score += earningsWeight * 0.5;
-      }
-
-      // Valuation - PEG ratio (sector-weighted)
-      const valuationWeight = sectorConfig.weights.valuation;
-      if (pegRatio > 0 && pegRatio <= sectorConfig.pegRange.ideal) {
-        score += valuationWeight;
-        reasons.push(`PEG ${pegRatio.toFixed(2)} (excellent for ${sector})`);
-      } else if (pegRatio > 0 && pegRatio <= sectorConfig.pegRange.high) {
-        score += valuationWeight * 0.5;
-      }
-
-      // Financial health - Debt/Equity (sector-weighted)
-      const healthWeight = sectorConfig.weights.financialHealth;
-      if (debtToEquity <= sectorConfig.debtToEquityMax * 0.5) {
-        score += healthWeight;
-        reasons.push(`Low debt ${(debtToEquity * 100).toFixed(0)}%`);
-      } else if (debtToEquity <= sectorConfig.debtToEquityMax) {
-        score += healthWeight * 0.5;
-      }
-
-      // Cash generation (sector-weighted)
-      const cashWeight = sectorConfig.weights.cashGeneration;
-      if (freeCashflow > 0) {
-        score += cashWeight;
-        reasons.push('Positive free cash flow');
-      }
-
-      // Operating efficiency (sector-weighted)
-      const efficiencyWeight = sectorConfig.weights.operatingEfficiency;
-      if (operatingMargins >= sectorConfig.operatingMarginMin * 1.5) {
-        score += efficiencyWeight;
-        reasons.push(`${(operatingMargins * 100).toFixed(1)}% operating margin`);
-      } else if (operatingMargins >= sectorConfig.operatingMarginMin) {
-        score += efficiencyWeight * 0.5;
-      }
-
-      // Minimum score threshold (40% of max possible)
-      if (score < 40) return null;
-
-      return {
-        symbol: stock.symbol,
-        assetClass: stock.assetClass,
-        sector,
-        score,
-        metrics: {
-          revenueGrowth: (revenueGrowth * 100).toFixed(1) + '%',
-          earningsGrowth: (earningsGrowth * 100).toFixed(1) + '%',
-          peRatio: peRatio.toFixed(2),
-          pegRatio: pegRatio.toFixed(2),
-          debtToEquity: debtToEquity.toFixed(2),
-          freeCashflow: freeCashflow > 0 ? 'Positive' : 'Negative',
-          operatingMargins: (operatingMargins * 100).toFixed(1) + '%',
-          dollarVolume: '$' + (dollarVolume / 1e6).toFixed(1) + 'M'
-        },
-        reasons: reasons.join(', '),
-        price: price.toFixed(2)
-      };
-
-    } catch (error) {
-      // Silently skip stocks with missing data
-      return null;
-    }
-  }
-
-  /**
-   * Update Value Watchlist in database
-   */
-  async updateValueWatchlist(candidates) {
-    try {
-      // Clear existing value watchlist
-      await db.query(
-        `DELETE FROM value_watchlist WHERE status = 'active'`
-      );
-
-      // Insert new candidates
-      for (const candidate of candidates) {
+      for (const c of candidates) {
         await db.query(
-          `INSERT INTO value_watchlist
-           (symbol, asset_class, score, metrics, reasons, price, status, added_date)
-           VALUES ($1, $2, $3, $4, $5, $6, 'active', NOW())`,
+          `INSERT INTO quality_watchlist
+           (symbol, asset_class, sector, score, pathway, metrics, reasons, price, status, added_date)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'active', NOW())
+           ON CONFLICT (symbol) DO UPDATE SET
+             score = $4, pathway = $5, metrics = $6, reasons = $7,
+             price = $8, status = 'active', added_date = NOW()`,
           [
-            candidate.symbol,
-            candidate.assetClass,
-            candidate.score,
-            JSON.stringify(candidate.metrics),
-            candidate.reasons,
-            parseFloat(candidate.price)
+            c.symbol, c.assetClass, c.sector, c.longScore,
+            c.longPathway, JSON.stringify(c.metrics),
+            c.longReasons.join(', '), parseFloat(c.price)
           ]
         );
       }
-
-      console.log(`   ✅ Value Watchlist updated with ${candidates.length} stocks`);
-
+      console.log(`   ✅ Quality watchlist updated: ${candidates.length} long candidates`);
     } catch (error) {
-      console.error('Error updating Value Watchlist:', error);
+      console.error('Error updating quality watchlist:', error);
       throw error;
     }
   }
 
   /**
-   * Get current Value Watchlist
+   * Update overvalued watchlist with short candidates
    */
-  async getValueWatchlist() {
-    const result = await db.query(
-      `SELECT * FROM value_watchlist
-       WHERE status = 'active'
-       ORDER BY score DESC`
-    );
-    return result.rows || [];
-  }
-
-  /**
-   * Check if value watchlist stocks show momentum
-   * Called during daily 10am/2pm analysis
-   */
-  async checkValueMomentum(marketData) {
+  async updateOvervaluedWatchlist(candidates) {
     try {
-      const valueWatchlist = await this.getValueWatchlist();
-      const momentumTriggers = [];
+      await db.query(`UPDATE overvalued_watchlist SET status = 'expired' WHERE status = 'active'`);
 
-      for (const stock of valueWatchlist) {
-        const quote = marketData[stock.symbol];
-        if (!quote) continue;
-
-        const changePercent = quote.change_percentage || 0;
-        const volumeSurge = this.calculateVolumeSurge(quote);
-
-        // Momentum trigger: >5% move + 1.5x volume
-        if (Math.abs(changePercent) >= 5 && volumeSurge >= 1.5) {
-          momentumTriggers.push({
-            symbol: stock.symbol,
-            assetClass: stock.asset_class,
-            score: stock.score,
-            changePercent: changePercent.toFixed(1) + '%',
-            volumeSurge: volumeSurge.toFixed(1) + 'x',
-            trigger: 'VALUE_MOMENTUM_CONFIRMATION'
-          });
-
-          console.log(`   🎯 Value stock ${stock.symbol} showing momentum: ${changePercent.toFixed(1)}% + ${volumeSurge.toFixed(1)}x volume`);
-        }
+      for (const c of candidates) {
+        await db.query(
+          `INSERT INTO overvalued_watchlist
+           (symbol, asset_class, sector, overvalued_score, metrics, reasons, current_price, status, added_date)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NOW())
+           ON CONFLICT (symbol) DO UPDATE SET
+             overvalued_score = $4, metrics = $5, reasons = $6,
+             current_price = $7, status = 'active', added_date = NOW()`,
+          [
+            c.symbol, c.assetClass, c.sector, c.shortScore,
+            JSON.stringify(c.metrics), c.shortReasons.join(', '),
+            parseFloat(c.price)
+          ]
+        );
       }
-
-      return momentumTriggers;
-
+      console.log(`   ✅ Overvalued watchlist updated: ${candidates.length} short candidates`);
     } catch (error) {
-      console.error('Error checking value momentum:', error);
-      return [];
+      console.error('Error updating overvalued watchlist:', error);
+      throw error;
     }
   }
 
   /**
-   * Calculate volume surge ratio
+   * Log cache statistics
    */
-  calculateVolumeSurge(quote) {
-    const currentVolume = quote.volume || 0;
-    const avgVolume = quote.averageDailyVolume10Day || 0;
-    return avgVolume > 0 ? currentVolume / avgVolume : 0;
+  async logCacheStats(stockCount) {
+    try {
+      const fmpStats = (await import('./fmp.js')).default.getUsageStats();
+      console.log(`\n   📊 FMP API Usage: ${fmpStats.calls} calls`);
+
+      const cacheStats = await fmpCache.getCacheStats();
+      console.log(`   💾 Cache Stats:`);
+      console.log(`      TTM (1-day):        ${cacheStats.TTM.valid} valid, ${cacheStats.TTM.expired} expired`);
+      console.log(`      Quarterly (45-day): ${cacheStats.QUARTERLY.valid} valid, ${cacheStats.QUARTERLY.expired} expired`);
+      console.log(`      Annual (90-day):    ${cacheStats.ANNUAL.valid} valid, ${cacheStats.ANNUAL.expired} expired`);
+    } catch (error) {
+      // Non-critical
+    }
+  }
+
+  /**
+   * Check value momentum during daily analysis
+   */
+  async checkValueMomentum(marketData) {
+    try {
+      const result = await db.query(
+        `SELECT * FROM quality_watchlist WHERE status = 'active' ORDER BY score DESC`
+      );
+      const momentumTriggers = [];
+
+      for (const stock of result.rows) {
+        const quote = marketData[stock.symbol];
+        if (!quote) continue;
+
+        const changePercent = quote.change_percentage || 0;
+        const volumeSurge = (quote.average_volume || 0) > 0
+          ? (quote.volume || 0) / (quote.average_volume || 1) : 0;
+
+        if (Math.abs(changePercent) >= 5 && volumeSurge >= 1.5) {
+          momentumTriggers.push({
+            symbol: stock.symbol,
+            score: stock.score,
+            pathway: stock.pathway,
+            changePercent: changePercent.toFixed(1) + '%',
+            volumeSurge: volumeSurge.toFixed(1) + 'x',
+            trigger: 'VALUE_MOMENTUM_CONFIRMATION'
+          });
+          console.log(`   🎯 ${stock.symbol} momentum: ${changePercent.toFixed(1)}% + ${volumeSurge.toFixed(1)}x (${stock.pathway})`);
+        }
+      }
+
+      return momentumTriggers;
+    } catch (error) {
+      console.error('Error checking value momentum:', error);
+      return [];
+    }
   }
 }
 
