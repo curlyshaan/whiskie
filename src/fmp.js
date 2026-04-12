@@ -26,6 +26,10 @@ class FMPClient {
     this.callCount = 0;
     this.RATE_LIMIT_PER_MINUTE = 300;
     this.lastResetDate = new Date().toDateString();
+
+    // Rate limiting: 250ms between calls = 240 calls/min (safely under 300/min)
+    this.lastCallTime = 0;
+    this.MIN_CALL_INTERVAL = 250; // milliseconds
   }
 
   /**
@@ -56,9 +60,18 @@ class FMPClient {
   }
 
   /**
-   * Make API request
+   * Make API request with automatic rate limiting
    */
   async request(endpoint, params = {}) {
+    // Rate limiting: ensure 250ms between calls
+    const now = Date.now();
+    const timeSinceLastCall = now - this.lastCallTime;
+    if (timeSinceLastCall < this.MIN_CALL_INTERVAL) {
+      const delay = this.MIN_CALL_INTERVAL - timeSinceLastCall;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    this.lastCallTime = Date.now();
+
     const apiKey = this.getCurrentKey();
 
     try {
