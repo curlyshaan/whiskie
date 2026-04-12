@@ -2,23 +2,20 @@ import fmpCache from './fmp-cache.js';
 import tradier from './tradier.js';
 import * as db from './db.js';
 import assetClassData from './asset-class-data.js';
+import { getSectorConfig, normalizeSectorName } from './sector-config.js';
 
 /**
  * Fundamental Screener
  * Weekly value screening to identify undervalued stocks with strong fundamentals
+ * Uses sector-specific scoring for accurate valuation assessment
  *
- * Runs: Sunday 9pm (weekly automated scan)
+ * Runs: Saturday 3pm (weekly automated scan)
  * Output: Value Watchlist (top 15 stocks)
- * Deep-dive: Bi-weekly Opus analysis (1st and 3rd Sunday)
  */
 
 class FundamentalScreener {
   constructor() {
     this.MIN_DAILY_VOLUME = 5_000_000; // $5M absolute (not surge-based)
-    this.MIN_REVENUE_GROWTH = 0.15;    // 15% YoY
-    this.MIN_EARNINGS_GROWTH = 0.10;   // 10% YoY
-    this.MAX_PEG_RATIO = 1.5;
-    this.MAX_DEBT_TO_EQUITY = 0.6;
     this.VALUE_WATCHLIST_SIZE = 15;
   }
 
@@ -134,6 +131,7 @@ class FundamentalScreener {
 
   /**
    * Score individual stock based on fundamentals
+   * Uses sector-specific thresholds and weights
    * Returns: { symbol, score, metrics, reasons } or null
    */
   async scoreStock(stock) {
@@ -157,6 +155,10 @@ class FundamentalScreener {
 
       if (!fundamentals) return null;
 
+      // Get sector-specific configuration
+      const sector = normalizeSectorName(fundamentals.sector);
+      const sectorConfig = getSectorConfig(sector);
+
       // Extract metrics
       const revenueGrowth = fundamentals.revenueGrowth || 0;
       const earningsGrowth = fundamentals.earningsGrowth || 0;
@@ -166,63 +168,70 @@ class FundamentalScreener {
       const freeCashflow = fundamentals.freeCashflowPerShare || 0;
       const operatingMargins = fundamentals.operatingMargin || 0;
 
-      // Calculate score (0-100)
+      // Calculate score using sector-specific weights (0-100)
       let score = 0;
       const reasons = [];
 
-      // Revenue growth (0-25 points)
-      if (revenueGrowth >= 0.20) {
-        score += 25;
-        reasons.push(`${(revenueGrowth * 100).toFixed(1)}% revenue growth`);
-      } else if (revenueGrowth >= this.MIN_REVENUE_GROWTH) {
-        score += 15;
+      // Revenue growth (sector-weighted)
+      const revenueWeight = sectorConfig.weights.revenueGrowth;
+      if (revenueGrowth >= sectorConfig.revenueGrowthMin * 1.5) {
+        score += revenueWeight;
+        reasons.push(`${(revenueGrowth * 100).toFixed(1)}% revenue growth (strong for ${sector})`);
+      } else if (revenueGrowth >= sectorConfig.revenueGrowthMin) {
+        score += revenueWeight * 0.6;
         reasons.push(`${(revenueGrowth * 100).toFixed(1)}% revenue growth`);
       }
 
-      // Earnings growth (0-20 points)
-      if (earningsGrowth >= 0.15) {
-        score += 20;
+      // Earnings growth (sector-weighted)
+      const earningsWeight = sectorConfig.weights.earningsGrowth;
+      if (earningsGrowth >= sectorConfig.earningsGrowthMin * 1.5) {
+        score += earningsWeight;
         reasons.push(`${(earningsGrowth * 100).toFixed(1)}% earnings growth`);
-      } else if (earningsGrowth >= this.MIN_EARNINGS_GROWTH) {
-        score += 10;
+      } else if (earningsGrowth >= sectorConfig.earningsGrowthMin) {
+        score += earningsWeight * 0.5;
       }
 
-      // Valuation - PEG ratio (0-20 points)
-      if (pegRatio > 0 && pegRatio <= 1.0) {
-        score += 20;
-        reasons.push(`PEG ${pegRatio.toFixed(2)} (growth at reasonable price)`);
-      } else if (pegRatio > 0 && pegRatio <= this.MAX_PEG_RATIO) {
-        score += 10;
+      // Valuation - PEG ratio (sector-weighted)
+      const valuationWeight = sectorConfig.weights.valuation;
+      if (pegRatio > 0 && pegRatio <= sectorConfig.pegRange.ideal) {
+        score += valuationWeight;
+        reasons.push(`PEG ${pegRatio.toFixed(2)} (excellent for ${sector})`);
+      } else if (pegRatio > 0 && pegRatio <= sectorConfig.pegRange.high) {
+        score += valuationWeight * 0.5;
       }
 
-      // Financial health - Debt/Equity (0-15 points)
-      if (debtToEquity <= 0.3) {
-        score += 15;
+      // Financial health - Debt/Equity (sector-weighted)
+      const healthWeight = sectorConfig.weights.financialHealth;
+      if (debtToEquity <= sectorConfig.debtToEquityMax * 0.5) {
+        score += healthWeight;
         reasons.push(`Low debt ${(debtToEquity * 100).toFixed(0)}%`);
-      } else if (debtToEquity <= this.MAX_DEBT_TO_EQUITY) {
-        score += 8;
+      } else if (debtToEquity <= sectorConfig.debtToEquityMax) {
+        score += healthWeight * 0.5;
       }
 
-      // Cash generation (0-10 points)
+      // Cash generation (sector-weighted)
+      const cashWeight = sectorConfig.weights.cashGeneration;
       if (freeCashflow > 0) {
-        score += 10;
+        score += cashWeight;
         reasons.push('Positive free cash flow');
       }
 
-      // Operating efficiency (0-10 points)
-      if (operatingMargins >= 0.20) {
-        score += 10;
+      // Operating efficiency (sector-weighted)
+      const efficiencyWeight = sectorConfig.weights.operatingEfficiency;
+      if (operatingMargins >= sectorConfig.operatingMarginMin * 1.5) {
+        score += efficiencyWeight;
         reasons.push(`${(operatingMargins * 100).toFixed(1)}% operating margin`);
-      } else if (operatingMargins >= 0.10) {
-        score += 5;
+      } else if (operatingMargins >= sectorConfig.operatingMarginMin) {
+        score += efficiencyWeight * 0.5;
       }
 
-      // Minimum score threshold
+      // Minimum score threshold (40% of max possible)
       if (score < 40) return null;
 
       return {
         symbol: stock.symbol,
         assetClass: stock.assetClass,
+        sector,
         score,
         metrics: {
           revenueGrowth: (revenueGrowth * 100).toFixed(1) + '%',

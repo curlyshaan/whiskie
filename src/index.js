@@ -226,16 +226,15 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule biweekly deep stock research - Saturday 10:00 AM ET (every 2 weeks)
-      // Runs on even-numbered weeks (week 2, 4, 6, etc. of the year)
-      cron.schedule('0 10 * * 6', async () => {
+      // Schedule biweekly deep stock research - Sunday 10:00 AM ET (every 2 weeks)
+      cron.schedule('0 10 * * 0', async () => {
         const weekNumber = Math.ceil((new Date().getTime() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000));
         if (weekNumber % 2 === 0) {
           const scheduledTime = new Date();
           const jobId = await db.logCronJobStart('Biweekly Deep Research', 'weekly', scheduledTime);
 
           try {
-            console.log('\n⏰ Saturday 10:00 AM - Biweekly deep stock research');
+            console.log('\n⏰ Sunday 10:00 AM - Biweekly deep stock research');
             await stockProfiles.runBiweeklyDeepResearch();
             console.log('✅ Biweekly research complete');
             await db.logCronJobComplete(jobId, true);
@@ -379,15 +378,75 @@ class WhiskieBot {
           }
         })();
 
-        res.json({
-          success: true,
-          message: 'Saturday screening started. This will take 10-15 minutes. Check logs for progress.'
-        });
+        res.json({ success: true, message: 'Saturday screening started. This will take 10-15 minutes. Check logs for progress.' });
       } catch (error) {
-        res.status(500).json({
-          success: false,
-          error: error.message
-        });
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-daily-analysis', async (req, res) => {
+      try {
+        console.log('📡 Manual daily analysis triggered via API');
+        (async () => {
+          try {
+            await this.runDailyAnalysis();
+          } catch (error) {
+            console.error('❌ Error in manual daily analysis:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Daily analysis started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-deep-research', async (req, res) => {
+      try {
+        console.log('📡 Manual deep research triggered via API');
+        (async () => {
+          try {
+            const stockProfiles = await import('./stock-profiles.js');
+            await stockProfiles.runBiweeklyDeepResearch();
+            console.log('✅ Deep research complete');
+          } catch (error) {
+            console.error('❌ Error in manual deep research:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Deep research started. This will take 20-30 minutes. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-premarket-scan', async (req, res) => {
+      try {
+        console.log('📡 Manual pre-market scan triggered via API');
+        (async () => {
+          try {
+            await this.runPreMarketScan();
+          } catch (error) {
+            console.error('❌ Error in manual pre-market scan:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Pre-market scan started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-eod-summary', async (req, res) => {
+      try {
+        console.log('📡 Manual EOD summary triggered via API');
+        (async () => {
+          try {
+            await this.sendDailySummary();
+          } catch (error) {
+            console.error('❌ Error in manual EOD summary:', error);
+          }
+        })();
+        res.json({ success: true, message: 'EOD summary started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
       }
     });
 

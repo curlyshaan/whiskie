@@ -1233,11 +1233,12 @@ function generateCronStatusHTML(executions, days) {
 
   // Define expected jobs
   const expectedJobs = [
-    { name: 'Pre-Market Scan', type: 'daily', schedule: '9:00 AM ET Mon-Fri' },
-    { name: 'Morning Analysis', type: 'daily', schedule: '10:00 AM ET Mon-Fri' },
-    { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri' },
-    { name: 'Daily Summary', type: 'daily', schedule: '4:30 PM ET Mon-Fri' },
-    { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET' }
+    { name: 'Pre-Market Scan', type: 'daily', schedule: '9:00 AM ET Mon-Fri', endpoint: '/api/trigger-premarket-scan' },
+    { name: 'Morning Analysis', type: 'daily', schedule: '10:00 AM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
+    { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
+    { name: 'Daily Summary', type: 'daily', schedule: '4:30 PM ET Mon-Fri', endpoint: '/api/trigger-eod-summary' },
+    { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET', endpoint: '/api/trigger-saturday-screening' },
+    { name: 'Biweekly Deep Research', type: 'weekly', schedule: 'Sunday 10:00 AM ET (even weeks)', endpoint: '/api/trigger-deep-research' }
   ];
 
   return `
@@ -1365,7 +1366,6 @@ function generateCronStatusHTML(executions, days) {
     <p class="subtitle">Scheduled job execution history (last ${days} days)</p>
 
     <a href="/" class="back-btn">← Back to Dashboard</a>
-    <button class="btn-run-now" onclick="runSaturdayScreening()">🚀 Run Now</button>
 
     <div class="section">
       <div class="section-title">📋 Expected Jobs</div>
@@ -1377,6 +1377,7 @@ function generateCronStatusHTML(executions, days) {
             <th>Schedule</th>
             <th>Last Run</th>
             <th>Status</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -1392,6 +1393,12 @@ function generateCronStatusHTML(executions, days) {
                 <td>${job.schedule}</td>
                 <td>${lastRunTime}</td>
                 <td><span class="status-badge status-${status}">${status.toUpperCase()}</span></td>
+                <td>
+                  <button class="btn-run-now" style="margin: 0; padding: 8px 16px; font-size: 0.85rem;"
+                          onclick="runJob('${job.endpoint}', '${job.name}', this)">
+                    ▶️ Run Now
+                  </button>
+                </td>
               </tr>
             `;
           }).join('')}
@@ -1441,15 +1448,14 @@ function generateCronStatusHTML(executions, days) {
   </div>
 
   <script>
-    async function runSaturdayScreening() {
-      const btn = document.querySelector('.btn-run-now');
+    async function runJob(endpoint, jobName, btn) {
       const originalText = btn.textContent;
 
       try {
         btn.disabled = true;
-        btn.textContent = '⏳ Running...';
+        btn.textContent = '⏳ Starting...';
 
-        const response = await fetch('/api/trigger-saturday-screening', {
+        const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' }
         });
@@ -1458,16 +1464,26 @@ function generateCronStatusHTML(executions, days) {
 
         if (data.success) {
           btn.textContent = '✅ Started!';
+          // Show message below the button
+          const tr = btn.closest('tr');
+          const existingMsg = tr.querySelector('.run-msg');
+          if (existingMsg) existingMsg.remove();
+          const msg = document.createElement('div');
+          msg.className = 'run-msg';
+          msg.style = 'color: #10b981; font-size: 0.8rem; margin-top: 4px;';
+          msg.textContent = data.message;
+          btn.parentElement.appendChild(msg);
+
           setTimeout(() => {
             btn.textContent = originalText;
             btn.disabled = false;
-          }, 3000);
+          }, 5000);
         } else {
-          throw new Error(data.message || 'Failed to start screening');
+          throw new Error(data.error || 'Failed to start job');
         }
       } catch (error) {
         btn.textContent = '❌ Error';
-        alert('Error: ' + error.message);
+        alert(`Error starting ${jobName}: ` + error.message);
         setTimeout(() => {
           btn.textContent = originalText;
           btn.disabled = false;
