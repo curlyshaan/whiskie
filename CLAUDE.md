@@ -105,16 +105,26 @@ EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET
 ### Data Source Strategy
 
 **FMP (Financial Modeling Prep)**:
-- 3-key rotation system for 750 calls/day (250 per key)
-- 90-day cache to minimize API calls
-- Used for: fundamentals, financials, company profiles, earnings
-- Keys: `FMP_API_KEY_1`, `FMP_API_KEY_2`, `FMP_API_KEY_3`
+- Single paid API key with 300 calls/minute (unlimited daily)
+- Tiered cache strategy:
+  - **1-day cache**: TTM ratios, technical indicators (price-dependent data)
+  - **45-day cache**: Quarterly statements (updates at earnings)
+  - **90-day cache**: Annual context data
+- Key endpoints:
+  - `/stable/ratios-ttm` - Current P/E, PEG, margins, ROE (TTM)
+  - `/stable/key-metrics-ttm` - ROIC, Graham number, EV ratios (TTM)
+  - `/stable/financial-growth?period=quarter` - True YoY growth rates
+  - `/stable/income-statement?period=quarter` - Quarterly financials
+  - `/stable/technical-indicators/ema` - 50/200 EMA
+  - `/stable/technical-indicators/rsi` - RSI(14)
+  - `/stable/earning-calendar` - Upcoming earnings dates
 - Cache managed by `fmp-cache.js`
+- API key: `FMP_API_KEY_1`
 
 **Yahoo Finance**:
-- Free historical data and short interest
-- Fallback for price data
-- No rate limits
+- Short interest data (FMP doesn't provide this)
+- Fallback for historical data
+- Rate-limited, use sparingly
 
 **Tradier**:
 - Real-time quotes and order execution

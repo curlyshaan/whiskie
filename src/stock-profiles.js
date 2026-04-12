@@ -114,7 +114,7 @@ export async function buildStockProfile(symbol) {
   try {
     // Fetch comprehensive data from multiple sources
     console.log('  📊 Fetching fundamentals from FMP...');
-    const fundamentals = await fmp.getCompanyFundamentals(symbol);
+    const fundamentals = await fmp.getFundamentals(symbol);
 
     console.log('  📈 Fetching historical data...');
     const historicalData = await yahooFinance.getHistoricalData(

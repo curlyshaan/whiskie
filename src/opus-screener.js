@@ -35,11 +35,9 @@ class OpusScreener {
       const allStocks = this.getAllStocks();
       console.log(`   Analyzing ${allStocks.length} stocks with Opus...`);
 
-      // Fetch fundamental data using hybrid approach (Python yfinance + FMP free + cache)
-      console.log('   📊 Fetching fundamental data (hybrid: Python yfinance + FMP free)...');
+      // Fetch fundamental data using FMP paid API
+      console.log('   📊 Fetching fundamental data from FMP...');
       const fundamentalsData = {};
-      const insiderData = {};
-      let yahooCount = 0;
       let fmpCount = 0;
       let cachedCount = 0;
 
@@ -50,28 +48,19 @@ class OpusScreener {
         if (data) {
           cachedCount++;
         } else {
-          // Fetch from Python yfinance service
-          data = await yahooPython.getFundamentals(stock.symbol);
+          // Fetch from FMP paid API
+          data = await fmpCache.getFundamentals(stock.symbol);
           if (data) {
-            yahooCount++;
-            // Cache for 30 days
-            await fmpCache.cacheFundamentals(stock.symbol, data, 30);
+            fmpCount++;
           }
         }
 
         if (data) {
           fundamentalsData[stock.symbol] = data;
         }
-
-        // Fetch insider trading from FMP free (only free smart money signal)
-        const insider = await advancedFMPScreener.getInsiderTrading(stock.symbol);
-        if (insider && insider.length > 0) {
-          insiderData[stock.symbol] = insider;
-          fmpCount++;
-        }
       }
 
-      console.log(`   ✅ Loaded ${Object.keys(fundamentalsData).length} stocks (${cachedCount} cached, ${yahooCount} from Yahoo, ${fmpCount} with insider data)`);
+      console.log(`   ✅ Loaded ${Object.keys(fundamentalsData).length} stocks (${cachedCount} cached, ${fmpCount} from FMP)`);
 
       // Get current market prices
       console.log('   📈 Fetching current market prices...');

@@ -1237,9 +1237,7 @@ function generateCronStatusHTML(executions, days) {
     { name: 'Morning Analysis', type: 'daily', schedule: '10:00 AM ET Mon-Fri' },
     { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri' },
     { name: 'Daily Summary', type: 'daily', schedule: '4:30 PM ET Mon-Fri' },
-    { name: 'FMP Screening Part 1', type: 'weekly', schedule: 'Saturday 12:30 PM ET' },
-    { name: 'FMP Screening Part 2', type: 'weekly', schedule: 'Sunday 12:30 PM ET' },
-    { name: 'Weekly Review', type: 'weekly', schedule: 'Sunday 12:30 PM ET' }
+    { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET' }
   ];
 
   return `
@@ -1342,6 +1340,23 @@ function generateCronStatusHTML(executions, days) {
       font-size: 0.85rem;
       margin-top: 5px;
     }
+    .btn-run-now {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 600;
+      margin-left: 15px;
+      display: inline-block;
+    }
+    .btn-run-now:hover { opacity: 0.9; }
+    .btn-run-now:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
   </style>
 </head>
 <body>
@@ -1350,6 +1365,7 @@ function generateCronStatusHTML(executions, days) {
     <p class="subtitle">Scheduled job execution history (last ${days} days)</p>
 
     <a href="/" class="back-btn">← Back to Dashboard</a>
+    <button class="btn-run-now" onclick="runSaturdayScreening()">🚀 Run Now</button>
 
     <div class="section">
       <div class="section-title">📋 Expected Jobs</div>
@@ -1423,6 +1439,42 @@ function generateCronStatusHTML(executions, days) {
       }
     </div>
   </div>
+
+  <script>
+    async function runSaturdayScreening() {
+      const btn = document.querySelector('.btn-run-now');
+      const originalText = btn.textContent;
+
+      try {
+        btn.disabled = true;
+        btn.textContent = '⏳ Running...';
+
+        const response = await fetch('/api/trigger-saturday-screening', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          btn.textContent = '✅ Started!';
+          setTimeout(() => {
+            btn.textContent = originalText;
+            btn.disabled = false;
+          }, 3000);
+        } else {
+          throw new Error(data.message || 'Failed to start screening');
+        }
+      } catch (error) {
+        btn.textContent = '❌ Error';
+        alert('Error: ' + error.message);
+        setTimeout(() => {
+          btn.textContent = originalText;
+          btn.disabled = false;
+        }, 3000);
+      }
+    }
+  </script>
 </body>
 </html>
   `;

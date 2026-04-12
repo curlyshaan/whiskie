@@ -115,47 +115,131 @@ class FMPClient {
   }
 
   /**
-   * Get income statement (revenue, earnings)
+   * Get TTM (Trailing Twelve Months) ratios - current valuation metrics
+   * Includes real-time P/E, PEG, P/B based on current price
    */
-  async getIncomeStatement(symbol) {
-    const data = await this.request(`/income-statement`, { symbol, limit: 4 });
+  async getRatiosTTM(symbol) {
+    const data = await this.request(`/ratios-ttm`, { symbol });
+    return data[0] || null;
+  }
+
+  /**
+   * Get TTM key metrics - ROIC, Graham number, EV ratios
+   */
+  async getKeyMetricsTTM(symbol) {
+    const data = await this.request(`/key-metrics-ttm`, { symbol });
+    return data[0] || null;
+  }
+
+  /**
+   * Get income statement (revenue, earnings)
+   * Use period=quarter for quarterly data
+   */
+  async getIncomeStatement(symbol, limit = 8) {
+    const data = await this.request(`/income-statement`, {
+      symbol,
+      period: 'quarter',
+      limit
+    });
+    return data || [];
+  }
+
+  /**
+   * Get financial growth rates (true YoY growth)
+   * Returns revenueGrowth, netIncomeGrowth, epsGrowth, etc.
+   */
+  async getFinancialGrowth(symbol, limit = 5) {
+    const data = await this.request(`/financial-growth`, {
+      symbol,
+      period: 'quarter',
+      limit
+    });
+    return data || [];
+  }
+
+  /**
+   * Get technical indicators using dedicated technical-indicators endpoint
+   * Includes: 200 EMA, 50 EMA, RSI(14)
+   */
+  async getTechnicalIndicators(symbol) {
+    try {
+      const [ema200Data, ema50Data, rsiData] = await Promise.all([
+        this.request(`/technical-indicators/ema`, {
+          symbol, periodLength: 200, timeframe: '1day'
+        }),
+        this.request(`/technical-indicators/ema`, {
+          symbol, periodLength: 50, timeframe: '1day'
+        }),
+        this.request(`/technical-indicators/rsi`, {
+          symbol, periodLength: 14, timeframe: '1day'
+        })
+      ]);
+
+      const currentPrice = ema200Data?.[0]?.close || 0;
+      const ema200 = ema200Data?.[0]?.ema || 0;
+      const ema50 = ema50Data?.[0]?.ema || 0;
+      const rsi = rsiData?.[0]?.rsi || 0;
+
+      return {
+        price: currentPrice,
+        ema50,
+        ema200,
+        rsi,
+        aboveEma50: currentPrice > ema50,
+        aboveEma200: currentPrice > ema200,
+        ema50Distance: ema50 > 0 ? ((currentPrice - ema50) / ema50 * 100) : 0,
+        ema200Distance: ema200 > 0 ? ((currentPrice - ema200) / ema200 * 100) : 0,
+        // RSI interpretation
+        rsiBand: rsi > 70 ? 'overbought' : rsi < 30 ? 'oversold' : 'neutral'
+      };
+    } catch (error) {
+      console.error(`Error fetching technical indicators for ${symbol}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Get earnings calendar (upcoming earnings dates)
+   * Returns all upcoming earnings by default
+   */
+  async getEarningsCalendar() {
+    const data = await this.request(`/earnings-calendar`, {});
+    return data || [];
+  }
+
+  /**
+   * Get earnings surprises (beat/miss history)
+   */
+  async getEarningsSurprises(symbol, limit = 8) {
+    const data = await this.request(`/earnings-surprises`, { symbol, limit });
     return data || [];
   }
 
   /**
    * Get comprehensive fundamental data for screening
-   * Returns all data needed for fundamental analysis
+   * Uses TTM ratios (current valuation) + quarterly growth rates
    */
   async getFundamentals(symbol) {
     try {
-      // Fetch all data in parallel
-      const [profile, keyMetrics, ratios, incomeStatements] = await Promise.all([
+      // BATCH 1: Real-time valuation (1-day cache)
+      const [profile, ratiosTTM, keyMetricsTTM] = await Promise.all([
         this.getProfile(symbol),
-        this.getKeyMetrics(symbol),
-        this.getFinancialRatios(symbol),
-        this.getIncomeStatement(symbol)
+        this.getRatiosTTM(symbol),
+        this.getKeyMetricsTTM(symbol)
       ]);
 
-      if (!profile || !keyMetrics) {
+      if (!profile || !ratiosTTM) {
         return null;
       }
 
-      // Calculate growth rates from income statements
-      let revenueGrowth = 0;
-      let earningsGrowth = 0;
+      // BATCH 2: Quarterly data (45-day cache)
+      const [financialGrowth, incomeStatements] = await Promise.all([
+        this.getFinancialGrowth(symbol, 5),
+        this.getIncomeStatement(symbol, 8)
+      ]);
 
-      if (incomeStatements.length >= 2) {
-        const latest = incomeStatements[0];
-        const previous = incomeStatements[1];
-
-        if (latest.revenue && previous.revenue && previous.revenue > 0) {
-          revenueGrowth = (latest.revenue - previous.revenue) / previous.revenue;
-        }
-
-        if (latest.netIncome && previous.netIncome && previous.netIncome > 0) {
-          earningsGrowth = (latest.netIncome - previous.netIncome) / previous.netIncome;
-        }
-      }
+      // Extract growth rates from financial-growth endpoint (true YoY)
+      const latestGrowth = financialGrowth[0] || {};
 
       return {
         symbol,
@@ -163,36 +247,119 @@ class FMPClient {
         sector: profile.sector || 'Unknown',
         industry: profile.industry || 'Unknown',
 
-        // Valuation metrics
-        peRatio: keyMetrics.peRatio || 0,
-        pegRatio: keyMetrics.pegRatio || 0,
-        priceToBook: keyMetrics.pbRatio || 0,
+        // TTM Valuation (current price × TTM earnings)
+        peRatio: ratiosTTM.priceToEarningsRatioTTM || 0,
+        pegRatio: ratiosTTM.priceToEarningsGrowthRatioTTM || 0,
+        priceToBook: ratiosTTM.priceToBookRatioTTM || 0,
+        priceToSales: ratiosTTM.priceToSalesRatioTTM || 0,
+        evToEbitda: keyMetricsTTM?.enterpriseValueOverEBITDATTM || 0,
+        grahamNumber: keyMetricsTTM?.grahamNumberTTM || 0,
+        earningsYield: keyMetricsTTM?.earningsYieldTTM || 0,
 
-        // Growth metrics
-        revenueGrowth,
-        earningsGrowth,
+        // Growth rates (true YoY from financial-growth)
+        revenueGrowth: latestGrowth.revenueGrowth || 0,
+        earningsGrowth: latestGrowth.netIncomeGrowth || 0,
+        epsGrowth: latestGrowth.epsGrowth || 0,
+        grossProfitGrowth: latestGrowth.grossProfitGrowth || 0,
+        fcfGrowth: latestGrowth.freeCashFlowGrowth || 0,
 
-        // Financial health
-        debtToEquity: keyMetrics.debtToEquity || 0,
-        currentRatio: keyMetrics.currentRatio || 0,
+        // Growth trend (last 3 quarters for acceleration/deceleration)
+        revenueGrowthTrend: financialGrowth.slice(0, 3).map(q => q.revenueGrowth).filter(Boolean),
 
-        // Profitability
-        operatingMargin: ratios?.operatingProfitMargin || 0,
-        netMargin: ratios?.netProfitMargin || 0,
-        roe: ratios?.returnOnEquity || 0,
+        // TTM Financial Health
+        debtToEquity: ratiosTTM.debtToEquityRatioTTM || 0,
+        currentRatio: ratiosTTM.currentRatioTTM || 0,
+        interestCoverage: ratiosTTM.interestCoverageTTM || 0,
 
-        // Cash flow
-        freeCashflowPerShare: keyMetrics.freeCashFlowPerShare || 0,
+        // TTM Profitability
+        operatingMargin: ratiosTTM.operatingProfitMarginTTM || 0,
+        netMargin: ratiosTTM.netProfitMarginTTM || 0,
+        grossMargin: ratiosTTM.grossProfitMarginTTM || 0,
+        roe: ratiosTTM.returnOnEquityTTM || 0,
+        roic: keyMetricsTTM?.roicTTM || 0,
+
+        // TTM Cash Flow
+        freeCashflowPerShare: ratiosTTM.freeCashFlowPerShareTTM || 0,
 
         // Price data
         price: profile.price || 0,
-        beta: profile.beta || 0
+        beta: profile.beta || 0,
+
+        // Quarterly statements for trend analysis
+        incomeStatements: incomeStatements.slice(0, 4) // Last 4 quarters
       };
 
     } catch (error) {
       console.error(`Error fetching fundamentals for ${symbol}:`, error.message);
       return null;
     }
+  }
+
+  /**
+   * Get deep analysis bundle for Opus screening (Phases 2-3)
+   * Fetches comprehensive data for 15-20 finalists
+   */
+  async getDeepAnalysisBundle(symbol) {
+    try {
+      // BATCH 1: Valuation and quality
+      const [ratiosTTM, keyMetricsTTM, financialGrowth, profile] = await Promise.all([
+        this.getRatiosTTM(symbol),
+        this.getKeyMetricsTTM(symbol),
+        this.getFinancialGrowth(symbol, 5),
+        this.getProfile(symbol)
+      ]);
+
+      // BATCH 2: Context and signals
+      const [incomeStatements, technicals] = await Promise.all([
+        this.getIncomeStatement(symbol, 8),
+        this.getTechnicalIndicators(symbol)
+      ]);
+
+      if (!ratiosTTM || !profile) {
+        return null;
+      }
+
+      // Calculate pre-computed signals
+      const revenueAccel = this.calcGrowthAcceleration(financialGrowth);
+
+      return {
+        symbol,
+        profile,
+        ratiosTTM,
+        keyMetricsTTM,
+        financialGrowth,
+        incomeStatements,
+        technicals,
+
+        // Pre-computed signals for Opus
+        signals: {
+          isAbove200MA: technicals?.aboveMa200 || false,
+          isAbove50MA: technicals?.aboveMa50 || false,
+          ma200Distance: technicals?.ma200Distance || 0,
+          revenueAccel,
+          latestQuarterRevenue: incomeStatements[0]?.revenue || 0,
+          latestQuarterEarnings: incomeStatements[0]?.netIncome || 0,
+          latestQuarterDate: incomeStatements[0]?.date || 'N/A'
+        }
+      };
+    } catch (error) {
+      console.error(`Error fetching deep analysis bundle for ${symbol}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Calculate growth acceleration/deceleration
+   */
+  calcGrowthAcceleration(financialGrowth) {
+    if (!financialGrowth || financialGrowth.length < 2) return 'unknown';
+
+    const latest = financialGrowth[0]?.revenueGrowth || 0;
+    const previous = financialGrowth[1]?.revenueGrowth || 0;
+
+    if (latest > previous) return 'accelerating';
+    if (latest < previous) return 'decelerating';
+    return 'stable';
   }
 
 }
