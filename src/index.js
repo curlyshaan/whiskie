@@ -19,7 +19,6 @@ import vixRegime from './vix-regime.js';
 import sectorRotation from './sector-rotation.js';
 import macroCalendar from './macro-calendar.js';
 import allocationManager from './allocation-manager.js';
-import assetClassData from './asset-class-data.js';
 import preRanking from './pre-ranking.js';
 import fundamentalScreener from './fundamental-screener.js';
 import qualityScreener from './quality-screener.js';
@@ -66,6 +65,22 @@ class WhiskieBot {
     this.apiServerStarted = false;
     this.latestGapReport = null; // Store pre-market gap scan results
     this.isPaperTrading = process.env.NODE_ENV === 'paper';
+    this.sectorCache = new Map(); // Cache sector/industry lookups
+  }
+
+  /**
+   * Get sector for a symbol (replaces assetClassData.getAssetClass)
+   * Returns sector from stock_universe, with caching
+   */
+  async getSector(symbol) {
+    if (this.sectorCache.has(symbol)) {
+      return this.sectorCache.get(symbol);
+    }
+    const info = await db.getStockInfo(symbol);
+    const sector = info?.sector || 'Unknown';
+    this.sectorCache.set(symbol, sector);
+    return sector;
+  }
     console.log(`🤖 Whiskie Bot initialized in ${this.isPaperTrading ? 'PAPER TRADING' : 'LIVE'} mode`);
   }
 
@@ -509,86 +524,7 @@ class WhiskieBot {
     app.post('/api/populate-stock-universe', async (req, res) => {
       try {
         console.log('📡 Manual stock universe population triggered via API');
-        (async () => {
-          try {
-            const assetClassData = await import('./asset-class-data.js');
-            const fmpModule = await import('./fmp.js');
-            const fmpClient = fmpModule.default;
-            let totalProcessed = 0;
-            let totalAdded = 0;
-
-            for (const [assetClass, symbols] of Object.entries(assetClassData.default.ASSET_CLASSES)) {
-              console.log(`📊 Processing ${assetClass} (${symbols.length} stocks)...`);
-              for (const symbol of symbols) {
-                try {
-                  // Fetch company profile from FMP to get sector/industry/market cap
-                  let sector = null;
-                  let subIndustry = null;
-                  let marketCapTier = null;
-                  let lastPrice = null;
-                  let avgDailyVolume = null;
-
-                  try {
-                    const profile = await fmpClient.getProfile(symbol);
-                    if (profile) {
-                      sector = profile.sector || null;
-                      subIndustry = profile.industry || null;
-                      lastPrice = profile.price || null;
-                      avgDailyVolume = profile.averageVolume ? Math.round(profile.averageVolume) : null;
-
-                      // Calculate market cap tier
-                      const marketCap = profile.marketCap;
-                      if (marketCap) {
-                        if (marketCap >= 10_000_000_000) {
-                          marketCapTier = 'Large';
-                        } else if (marketCap >= 2_000_000_000) {
-                          marketCapTier = 'Mid';
-                        } else {
-                          marketCapTier = 'Small';
-                        }
-                      }
-                    } else {
-                      console.log(`\n⚠️  FMP returned null/empty for ${symbol}`);
-                    }
-
-                    // Rate limit: 250ms delay = 240 calls/min (safely under 300/min limit)
-                    await new Promise(resolve => setTimeout(resolve, 250));
-                  } catch (fmpError) {
-                    console.log(`\n⚠️  FMP API error for ${symbol}:`, fmpError.message);
-                  }
-
-                  await db.query(
-                    `INSERT INTO stock_universe (symbol, asset_class, sector, sub_industry, market_cap_tier, last_price, avg_daily_volume, status)
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, 'active')
-                     ON CONFLICT (symbol) DO UPDATE SET
-                       asset_class = $2,
-                       sector = $3,
-                       sub_industry = $4,
-                       market_cap_tier = $5,
-                       last_price = $6,
-                       avg_daily_volume = $7`,
-                    [symbol, assetClass, sector, subIndustry, marketCapTier, lastPrice, avgDailyVolume]
-                  );
-                  totalAdded++;
-                  process.stdout.write('.');
-                } catch (error) {
-                  console.error(`\n❌ Error adding ${symbol}:`, error.message);
-                }
-                totalProcessed++;
-              }
-              console.log('');
-            }
-
-            const uniqueCount = await db.query('SELECT COUNT(DISTINCT symbol) as count FROM stock_universe');
-            console.log(`\n✅ Stock universe population complete!`);
-            console.log(`📈 Total stocks processed: ${totalProcessed}`);
-            console.log(`✅ Successfully added: ${totalAdded}`);
-            console.log(`🎯 Unique stocks in universe: ${uniqueCount.rows[0].count}`);
-          } catch (error) {
-            console.error('❌ Error populating stock universe:', error);
-          }
-        })();
-        res.json({ success: true, message: 'Stock universe population started. Check logs for progress.' });
+        res.json({ success: true, message: 'Use scripts/populate-universe-simple.js to populate stock universe from FMP' });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
@@ -1486,9 +1422,9 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       if (watchlist.length > 0) {
         watchlistContext = '\n\n**WATCHLIST (stocks you are monitoring):**\n';
         watchlist.forEach(item => {
-          const assetClass = assetClassData.getAssetClass(item.symbol);
+          const sector = await this.getSector(item.symbol);
           const atTarget = item.current_price <= item.target_entry_price ? '✅ AT TARGET' : '';
-          watchlistContext += `- ${item.symbol} (${assetClass}): Current $${item.current_price}, Target Entry $${item.target_entry_price} ${atTarget}\n`;
+          watchlistContext += `- ${item.symbol} (${sector}): Current $${item.current_price}, Target Entry $${item.target_entry_price} ${atTarget}\n`;
           watchlistContext += `  Why watching: ${item.why_watching}\n`;
           watchlistContext += `  Why not buying now: ${item.why_not_buying_now}\n\n`;
         });
@@ -2579,7 +2515,7 @@ ${historyContext}`;
     // Group recommendations by asset class
     const recsByAssetClass = {};
     for (const rec of recommendations) {
-      const assetClass = assetClassData.getAssetClass(rec.symbol);
+      const sector = await this.getSector(rec.symbol);
       if (!recsByAssetClass[assetClass]) {
         recsByAssetClass[assetClass] = [];
       }
@@ -2662,7 +2598,7 @@ ${historyContext}`;
               entryPrice: t.entry_price,
               stopLoss: t.stop_loss,
               takeProfit: t.take_profit,
-              assetClass: t.asset_class || assetClassData.getAssetClass(t.symbol),
+              assetClass: t.asset_class || await this.getSector(t.symbol),
               intent: t.intent || 'momentum', // Default to momentum if not specified
               reasoning: t.reasoning || ''
             }));
@@ -2753,7 +2689,7 @@ ${historyContext}`;
         }
 
         // Get asset class for symbol
-        const assetClass = assetClassData.getAssetClass(trade.symbol);
+        const sector = await this.getSector(trade.symbol);
 
         recommendations.push({
           type: trade.type,
@@ -2795,7 +2731,7 @@ ${historyContext}`;
         const symbol = match[1].trim();
         watchlistItems.push({
           symbol: symbol,
-          asset_class: assetClassData.getAssetClass(symbol),
+          asset_class: await this.getSector(symbol),
           current_price: parseFloat(match[3]),
           target_entry_price: parseFloat(match[4]),
           target_exit_price: parseFloat(match[5]),
@@ -2928,7 +2864,7 @@ ${historyContext}`;
       const portfolio = await analysisEngine.getPortfolioState();
 
       // Get asset class for the symbol
-      const assetClass = assetClassData.getAssetClass(symbol);
+      const sector = await this.getSector(symbol);
 
       const trade = {
         action,

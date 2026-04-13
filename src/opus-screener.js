@@ -2,7 +2,6 @@ import fmp from './fmp.js';
 import tradier from './tradier.js';
 import claude from './claude.js';
 import * as db from './db.js';
-import assetClassData from './asset-class-data.js';
 
 /**
  * Opus-Driven Screener for Quality and Overvalued Stocks
@@ -29,8 +28,8 @@ class OpusScreener {
     const startTime = Date.now();
 
     try {
-      // Get all stocks from asset classes
-      const allStocks = this.getAllStocks();
+      // Get all stocks from FMP-based universe
+      const allStocks = await this.getAllStocks();
       console.log(`   Analyzing ${allStocks.length} stocks with Opus...`);
 
       // Fetch fundamental data using FMP paid API
@@ -117,16 +116,19 @@ class OpusScreener {
   }
 
   /**
-   * Get all stocks from asset classes
+   * Get all stocks from FMP-based universe
    */
-  getAllStocks() {
-    const stocks = [];
-    for (const [assetClass, symbols] of Object.entries(assetClassData.ASSET_CLASSES)) {
-      for (const symbol of symbols) {
-        stocks.push({ symbol, assetClass });
-      }
-    }
-    return stocks;
+  async getAllStocks() {
+    const result = await db.query(
+      'SELECT symbol, sector, industry FROM stock_universe WHERE status = $1 ORDER BY market_cap DESC',
+      ['active']
+    );
+
+    return result.rows.map(row => ({
+      symbol: row.symbol,
+      sector: row.sector,
+      industry: row.industry
+    }));
   }
 
   /**
@@ -252,15 +254,15 @@ Analyze the data and return your recommendations in the JSON format above.`;
       for (const stock of qualityStocks) {
         await db.query(
           `INSERT INTO saturday_watchlist
-           (symbol, intent, pathway, asset_class, sector, score, metrics, reasons, price, status, added_date)
+           (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date)
            VALUES ($1, 'LONG', 'quality', $2, $3, $4, $5, $6, $7, 'active', NOW())
            ON CONFLICT (symbol, pathway) DO UPDATE SET
              intent = 'LONG', score = $4, metrics = $5, reasons = $6,
              price = $7, status = 'active', added_date = NOW()`,
           [
             stock.symbol,
-            stock.assetClass || null,
             stock.sector || null,
+            stock.industry || null,
             stock.score,
             JSON.stringify(stock.keyMetrics),
             stock.reasons,
@@ -273,15 +275,15 @@ Analyze the data and return your recommendations in the JSON format above.`;
       for (const stock of overvaluedStocks) {
         await db.query(
           `INSERT INTO saturday_watchlist
-           (symbol, intent, pathway, asset_class, sector, score, metrics, reasons, price, status, added_date)
+           (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date)
            VALUES ($1, 'SHORT', 'overvalued', $2, $3, $4, $5, $6, $7, 'active', NOW())
            ON CONFLICT (symbol, pathway) DO UPDATE SET
              intent = 'SHORT', score = $4, metrics = $5, reasons = $6,
              price = $7, status = 'active', added_date = NOW()`,
           [
             stock.symbol,
-            stock.assetClass || null,
             stock.sector || null,
+            stock.industry || null,
             stock.score,
             JSON.stringify(stock.keyMetrics),
             stock.reasons,

@@ -1,11 +1,10 @@
 import tradier from './tradier.js';
 import * as db from './db.js';
-import assetClassData from './asset-class-data.js';
 import sectorRotation from './sector-rotation.js';
 
 /**
  * Pre-Ranking Algorithm
- * Filters 425+ stocks down to 100-150 candidates before Opus Phase 1
+ * Filters FMP-based universe down to 100-150 candidates before Opus Phase 1
  *
  * Scoring criteria:
  * - Volume surge (2x+ average)
@@ -28,8 +27,8 @@ class PreRanking {
     console.log('\n📊 Pre-ranking stock universe...');
     const startTime = Date.now();
 
-    // Get all stocks from asset classes (no database filter)
-    const allStocks = this.getAllStocks();
+    // Get all stocks from FMP-based universe
+    const allStocks = await this.getAllStocks();
     console.log(`   Total stocks: ${allStocks.length}`);
 
     // Filter stocks with live spread/volume/price checks
@@ -141,16 +140,18 @@ class PreRanking {
   }
 
   /**
-   * Get all stocks from asset classes
+   * Get all stocks from FMP-based universe
    */
-  getAllStocks() {
-    const allStocks = [];
-    for (const [assetClass, symbols] of Object.entries(assetClassData.ASSET_CLASSES)) {
-      for (const symbol of symbols) {
-        allStocks.push({ symbol, assetClass });
-      }
-    }
-    return allStocks;
+  async getAllStocks() {
+    const result = await db.query(
+      'SELECT symbol, sector, industry FROM stock_universe WHERE status = $1 ORDER BY market_cap DESC',
+      ['active']
+    );
+    return result.rows.map(row => ({
+      symbol: row.symbol,
+      sector: row.sector,
+      industry: row.industry
+    }));
   }
 
   /**
@@ -187,7 +188,7 @@ class PreRanking {
     const volumeSurge = avgVolume > 0 ? volume / avgVolume : 0;
 
     // Get sector strength
-    const sectorData = sectorMap[stock.assetClass] || { strength: 0, status: 'NEUTRAL' };
+    const sectorData = sectorMap[stock.sector] || { strength: 0, status: 'NEUTRAL' };
 
     // Calculate momentum score
     let score = 0;

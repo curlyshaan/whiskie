@@ -365,21 +365,38 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
  * Parse Opus research response into structured profile
  */
 function parseResearchIntoProfile(symbol, researchText, fundamentals) {
-  // Extract sections using regex patterns
-  const businessModelMatch = researchText.match(/\*\*BUSINESS_MODEL\*\*\s*\n([\s\S]*?)(?=\n\*\*MOATS\*\*|\n\*\*COMPETITIVE|$)/i);
-  const moatsMatch = researchText.match(/\*\*MOATS\*\*\s*\n([\s\S]*?)(?=\n\*\*COMPETITIVE|$)/i);
-  const competitiveMatch = researchText.match(/\*\*COMPETITIVE_ADVANTAGES\*\*\s*\n([\s\S]*?)(?=\n\*\*FUNDAMENTALS|$)/i);
-  const risksMatch = researchText.match(/\*\*RISKS\*\*\s*\n([\s\S]*?)(?=\n\*\*CATALYSTS|$)/i);
-  const catalystsMatch = researchText.match(/\*\*CATALYSTS\*\*\s*\n([\s\S]*?)$/i);
+  // Try both markdown headers (## SECTION) and bold headers (**SECTION**)
+  const businessModelMatch = researchText.match(/(?:##\s*BUSINESS_MODEL|\*\*BUSINESS_MODEL\*\*)\s*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:MOATS|COMPETITIVE)|$)/i);
+  const moatsMatch = researchText.match(/(?:##\s*MOATS|\*\*MOATS\*\*)\s*\n([\s\S]*?)(?=\n(?:##|\*\*)COMPETITIVE|$)/i);
+  const competitiveMatch = researchText.match(/(?:##\s*COMPETITIVE_ADVANTAGES|\*\*COMPETITIVE_ADVANTAGES\*\*)\s*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:FUNDAMENTALS|RISKS)|$)/i);
+  const risksMatch = researchText.match(/(?:##\s*RISKS|\*\*RISKS\*\*)\s*\n([\s\S]*?)(?=\n(?:##|\*\*)CATALYSTS|$)/i);
+  const catalystsMatch = researchText.match(/(?:##\s*CATALYSTS|\*\*CATALYSTS\*\*)\s*\n([\s\S]*?)$/i);
+
+  // Try to parse catalysts as JSON if it looks like JSON
+  let catalystsData = null;
+  if (catalystsMatch) {
+    const catalystsText = catalystsMatch[1].trim();
+    try {
+      // Check if it looks like JSON
+      if (catalystsText.startsWith('{') || catalystsText.startsWith('[')) {
+        catalystsData = JSON.parse(catalystsText);
+      }
+    } catch (e) {
+      // Not JSON, will store as text
+    }
+  }
 
   return {
     symbol,
     business_model: businessModelMatch ? businessModelMatch[1].trim() : researchText.substring(0, 1000),
     moats: moatsMatch ? moatsMatch[1].trim() : 'See full research',
     competitive_advantages: competitiveMatch ? competitiveMatch[1].trim() : 'See full research',
+    valuation_assessment: 'To be determined', // Will be filled by Opus in future updates
     fundamentals: fundamentals || {},
     risks: risksMatch ? risksMatch[1].trim() : 'See full research',
-    catalysts: catalystsMatch ? catalystsMatch[1].trim() : 'See full research',
+    catalysts: catalystsData,
+    catalysts_raw: catalystsMatch ? catalystsMatch[1].trim() : 'See full research',
+    investment_thesis: businessModelMatch ? businessModelMatch[1].trim().substring(0, 500) : 'See full research',
     profile_version: 1
   };
 }

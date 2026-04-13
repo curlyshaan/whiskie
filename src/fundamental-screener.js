@@ -1,12 +1,11 @@
 import fmp from './fmp.js';
 import tradier from './tradier.js';
 import * as db from './db.js';
-import assetClassData from './asset-class-data.js';
 import { getSectorConfig, normalizeSectorName } from './sector-config.js';
 
 /**
  * Combined Fundamental Screener
- * Single pass over all 407 stocks - identifies BOTH long and short candidates
+ * Single pass over FMP-based universe - identifies BOTH long and short candidates
  *
  * LONG PATHWAYS (pass ANY one, threshold ≥35):
  *   1. Deep Value     - low P/E, low PEG, high FCF
@@ -20,7 +19,7 @@ import { getSectorConfig, normalizeSectorName } from './sector-config.js';
  *   3. Short safety check (meme stock filter - short float, market cap, liquidity)
  *
  * Runs: Saturday 3pm ET
- * Output: quality_watchlist (longs) + overvalued_watchlist (shorts)
+ * Output: saturday_watchlist (longs + shorts)
  */
 
 class FundamentalScreener {
@@ -729,32 +728,23 @@ class FundamentalScreener {
   }
 
   /**
-   * Get all stocks from asset classes
-   */
-  getAllStocks() {
-    const stocks = [];
-    for (const [assetClass, symbols] of Object.entries(assetClassData.ASSET_CLASSES)) {
-      for (const symbol of symbols) {
-        stocks.push({ symbol, assetClass });
-      }
-    }
-    return stocks;
-  }
-
-  /**
    * Get all stocks from universe - screen them directly instead of using FMP screener
    * More accurate and avoids getting 1000+ irrelevant stocks from FMP's entire database
    */
   async getScreenerCandidates() {
-    console.log('\n📊 Screening your 407-stock universe directly...');
+    console.log('\n📊 Loading stocks from FMP-based universe...');
 
-    // Return all stocks from your curated universe
-    const stocks = [];
-    for (const [assetClass, symbols] of Object.entries(assetClassData.ASSET_CLASSES)) {
-      for (const symbol of symbols) {
-        stocks.push({ symbol, assetClass });
-      }
-    }
+    // Query stock_universe table (populated from FMP)
+    const result = await db.query(
+      'SELECT symbol, sector, industry FROM stock_universe WHERE status = $1 ORDER BY market_cap DESC',
+      ['active']
+    );
+
+    const stocks = result.rows.map(row => ({
+      symbol: row.symbol,
+      sector: row.sector,
+      industry: row.industry
+    }));
 
     console.log(`   ✅ Loaded ${stocks.length} stocks from universe`);
     return stocks;
@@ -773,13 +763,13 @@ class FundamentalScreener {
       for (const c of longCandidates) {
         await db.query(
           `INSERT INTO saturday_watchlist
-           (symbol, intent, pathway, asset_class, sector, score, metrics, reasons, price, status, added_date)
+           (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date)
            VALUES ($1, 'LONG', $2, $3, $4, $5, $6, $7, $8, 'active', NOW())
            ON CONFLICT (symbol, pathway) DO UPDATE SET
              intent = 'LONG', score = $5, metrics = $6, reasons = $7,
              price = $8, status = 'active', added_date = NOW()`,
           [
-            c.symbol, c.longPathway, c.assetClass, c.sector, c.longScore,
+            c.symbol, c.longPathway, c.sector, c.industry, c.longScore,
             JSON.stringify(c.metrics), c.longReasons.join(', '), parseFloat(c.price)
           ]
         );
@@ -789,7 +779,7 @@ class FundamentalScreener {
       for (const c of shortCandidates) {
         await db.query(
           `INSERT INTO saturday_watchlist
-           (symbol, intent, pathway, asset_class, sector, score, metrics, reasons, price, status, added_date)
+           (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date)
            VALUES ($1, 'SHORT', $2, $3, $4, $5, $6, $7, $8, 'active', NOW())
            ON CONFLICT (symbol, pathway) DO UPDATE SET
              intent = 'SHORT', score = $5, metrics = $6, reasons = $7,

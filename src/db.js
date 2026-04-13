@@ -1506,4 +1506,21 @@ export async function query(text, params) {
   return pool.query(text, params);
 }
 
+/**
+ * Get sector and industry for a symbol from stock_universe
+ * Returns null if symbol not found
+ */
+export async function getStockInfo(symbol) {
+  try {
+    const result = await pool.query(
+      'SELECT sector, industry FROM stock_universe WHERE symbol = $1',
+      [symbol]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error(`Error fetching stock info for ${symbol}:`, error);
+    return null;
+  }
+}
+
 export default pool;
