@@ -283,7 +283,7 @@ class WhiskieBot {
       });
 
       // Schedule order reconciliation - hourly during market hours
-      cron.schedule('0 * 9-16 * * 1-5', async () => {
+      cron.schedule('0 9-16 * * 1-5', async () => {
         try {
           await orderReconciliation.reconcilePositions();
         } catch (error) {
