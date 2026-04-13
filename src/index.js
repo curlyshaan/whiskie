@@ -2870,7 +2870,7 @@ ${historyContext}`;
         symbol,
         quantity,
         price,
-        assetClass: assetClass
+        assetClass: sector
       };
 
       const validation = await riskManager.validateTrade(trade, portfolio);
