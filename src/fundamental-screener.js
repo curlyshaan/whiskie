@@ -816,7 +816,7 @@ class FundamentalScreener {
   async checkValueMomentum(marketData) {
     try {
       const result = await db.query(
-        `SELECT * FROM quality_watchlist WHERE status = 'active' ORDER BY score DESC`
+        `SELECT * FROM saturday_watchlist WHERE status = 'active' ORDER BY score DESC`
       );
       const momentumTriggers = [];
 

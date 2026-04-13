@@ -2533,10 +2533,10 @@ ${historyContext}`;
     const recsByAssetClass = {};
     for (const rec of recommendations) {
       const sector = await this.getSector(rec.symbol);
-      if (!recsByAssetClass[assetClass]) {
-        recsByAssetClass[assetClass] = [];
+      if (!recsByAssetClass[sector]) {
+        recsByAssetClass[sector] = [];
       }
-      recsByAssetClass[assetClass].push(rec);
+      recsByAssetClass[sector].push(rec);
     }
 
     const adjustedRecs = [];

@@ -7,6 +7,20 @@ import claude from '../src/claude.js';
  * Uses Tavily to fetch recent news and Opus to synthesize catalysts
  */
 
+async function cleanExistingCatalysts() {
+  console.log('\n🧹 Cleaning existing catalyst data...');
+
+  const result = await db.query(`
+    UPDATE stock_profiles
+    SET catalysts = TRIM(LEADING '**' FROM catalysts)
+    WHERE catalysts LIKE '**%'
+    RETURNING symbol
+  `);
+
+  console.log(`   ✅ Cleaned ${result.rowCount} catalyst entries`);
+  return result.rowCount;
+}
+
 async function updateCatalystsForStock(symbol) {
   console.log(`\n📰 Updating catalysts for ${symbol}...`);
 
@@ -59,12 +73,16 @@ Focus on:
 4. Market trends affecting the company
 5. Competitive dynamics
 
-Keep it under 200 words total.`;
+Keep it under 200 words total. Do NOT include any markdown formatting like ** or headers.`;
 
     const messages = [{ role: 'user', content: prompt }];
     const response = await claude.sendMessage(messages, 'claude-opus-4-6-thinking', null, false);
 
-    const catalysts = response.content[0].text.trim();
+    let catalysts = response.content[0].text.trim();
+
+    // Clean any markdown formatting that might slip through
+    catalysts = catalysts.replace(/^\*\*\s*/gm, '');
+    catalysts = catalysts.replace(/\*\*/g, '');
 
     // Update database
     await db.query(
@@ -85,26 +103,40 @@ Keep it under 200 words total.`;
   }
 }
 
-export async function updateAllCatalysts() {
-  console.log('🚀 Starting catalyst update for all profiles...\n');
+export async function updateAllCatalysts(cleanOnly = false) {
+  console.log('🚀 Starting catalyst update...\n');
 
   try {
-    // Get all profiles
+    // Step 1: Clean existing catalysts
+    const cleanedCount = await cleanExistingCatalysts();
+
+    if (cleanOnly) {
+      console.log('\n✅ Cleaning complete. Exiting (cleanOnly mode).');
+      return { cleaned: cleanedCount };
+    }
+
+    // Step 2: Get stocks without catalysts
     const result = await db.query(
-      'SELECT symbol FROM stock_profiles ORDER BY symbol'
+      'SELECT symbol FROM stock_profiles WHERE catalysts IS NULL ORDER BY symbol'
     );
 
     const symbols = result.rows.map(r => r.symbol);
-    console.log(`Found ${symbols.length} profiles to update\n`);
+    console.log(`\n📊 Found ${symbols.length} profiles needing catalysts\n`);
+
+    if (symbols.length === 0) {
+      console.log('✅ All profiles already have catalysts!');
+      return { cleaned: cleanedCount, success: [], skipped: [], errors: [] };
+    }
 
     const results = {
+      cleaned: cleanedCount,
       success: [],
       skipped: [],
       errors: []
     };
 
-    // Process in batches of 10 to avoid rate limits
-    const batchSize = 10;
+    // Process in batches of 5 to avoid rate limits
+    const batchSize = 5;
     for (let i = 0; i < symbols.length; i += batchSize) {
       const batch = symbols.slice(i, i + batchSize);
       console.log(`\n📦 Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(symbols.length / batchSize)}`);
@@ -123,8 +155,8 @@ export async function updateAllCatalysts() {
 
       // Rate limit delay between batches (Tavily + Opus)
       if (i + batchSize < symbols.length) {
-        console.log('\n⏳ Waiting 30 seconds before next batch...');
-        await new Promise(resolve => setTimeout(resolve, 30000));
+        console.log('\n⏳ Waiting 45 seconds before next batch...');
+        await new Promise(resolve => setTimeout(resolve, 45000));
       }
     }
 
@@ -132,6 +164,7 @@ export async function updateAllCatalysts() {
     console.log('\n' + '='.repeat(60));
     console.log('📊 CATALYST UPDATE SUMMARY');
     console.log('='.repeat(60));
+    console.log(`🧹 Cleaned existing: ${results.cleaned}`);
     console.log(`✅ Successfully updated: ${results.success.length}`);
     console.log(`⏭️  Skipped: ${results.skipped.length}`);
     console.log(`❌ Errors: ${results.errors.length}`);
@@ -150,7 +183,8 @@ export async function updateAllCatalysts() {
 
 // Allow running as standalone script
 if (import.meta.url === `file://${process.argv[1]}`) {
-  updateAllCatalysts()
+  const cleanOnly = process.argv.includes('--clean-only');
+  updateAllCatalysts(cleanOnly)
     .then(() => process.exit(0))
     .catch(() => process.exit(1));
 }
