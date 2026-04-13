@@ -804,6 +804,41 @@ export async function getPositions() {
 }
 
 /**
+ * Get portfolio summary (total value, cash, positions value)
+ */
+export async function getPortfolioSummary() {
+  try {
+    const positions = await getPositions();
+
+    // Calculate total positions value
+    let positionsValue = 0;
+    for (const position of positions) {
+      positionsValue += position.quantity * position.current_price;
+    }
+
+    // Get cash from most recent portfolio snapshot, default to initial capital if none
+    const snapshotResult = await pool.query(
+      'SELECT cash FROM portfolio_snapshots ORDER BY snapshot_date DESC LIMIT 1'
+    );
+    const cash = snapshotResult.rows.length > 0
+      ? snapshotResult.rows[0].cash
+      : parseFloat(process.env.INITIAL_CAPITAL || 100000);
+
+    const totalValue = cash + positionsValue;
+
+    return {
+      totalValue,
+      cash,
+      positionsValue,
+      positionCount: positions.length
+    };
+  } catch (error) {
+    console.error('Error fetching portfolio summary:', error);
+    throw error;
+  }
+}
+
+/**
  * Delete position (when fully sold)
  */
 export async function deletePosition(symbol) {

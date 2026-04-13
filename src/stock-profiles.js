@@ -362,41 +362,54 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
 }
 
 /**
- * Parse Opus research response into structured profile
+ * Clean text by removing markdown formatting and limiting length
  */
-function parseResearchIntoProfile(symbol, researchText, fundamentals) {
-  // Try both markdown headers (## SECTION) and bold headers (**SECTION**)
-  const businessModelMatch = researchText.match(/(?:##\s*BUSINESS_MODEL|\*\*BUSINESS_MODEL\*\*)\s*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:MOATS|COMPETITIVE)|$)/i);
-  const moatsMatch = researchText.match(/(?:##\s*MOATS|\*\*MOATS\*\*)\s*\n([\s\S]*?)(?=\n(?:##|\*\*)COMPETITIVE|$)/i);
-  const competitiveMatch = researchText.match(/(?:##\s*COMPETITIVE_ADVANTAGES|\*\*COMPETITIVE_ADVANTAGES\*\*)\s*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:FUNDAMENTALS|RISKS)|$)/i);
-  const risksMatch = researchText.match(/(?:##\s*RISKS|\*\*RISKS\*\*)\s*\n([\s\S]*?)(?=\n(?:##|\*\*)CATALYSTS|$)/i);
-  const catalystsMatch = researchText.match(/(?:##\s*CATALYSTS|\*\*CATALYSTS\*\*)\s*\n([\s\S]*?)$/i);
+function cleanText(text, maxChars = 2000) {
+  if (!text) return '';
 
-  // Try to parse catalysts as JSON if it looks like JSON
-  let catalystsData = null;
-  if (catalystsMatch) {
-    const catalystsText = catalystsMatch[1].trim();
-    try {
-      // Check if it looks like JSON
-      if (catalystsText.startsWith('{') || catalystsText.startsWith('[')) {
-        catalystsData = JSON.parse(catalystsText);
-      }
-    } catch (e) {
-      // Not JSON, will store as text
+  // Remove markdown headers (## or **)
+  let cleaned = text.replace(/^#+\s+/gm, '');
+  cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '$1');
+
+  // Remove bullet point markers but keep the text
+  cleaned = cleaned.replace(/^[\s]*[-*•]\s+/gm, '');
+
+  // Remove extra whitespace
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+  cleaned = cleaned.trim();
+
+  // Limit length
+  if (cleaned.length > maxChars) {
+    cleaned = cleaned.substring(0, maxChars).trim();
+    // Try to end at a sentence
+    const lastPeriod = cleaned.lastIndexOf('.');
+    if (lastPeriod > maxChars * 0.8) {
+      cleaned = cleaned.substring(0, lastPeriod + 1);
     }
   }
 
+  return cleaned;
+}
+
+/**
+ * Parse Opus research response into structured profile
+ */
+function parseResearchIntoProfile(symbol, researchText, fundamentals) {
+  // More flexible regex patterns - handle variations in header formatting
+  const businessModelMatch = researchText.match(/(?:##\s*(?:BUSINESS[_\s]MODEL|Business\s+Model)|\*\*(?:BUSINESS[_\s]MODEL|Business\s+Model)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:MOATS?|Moats?|COMPETITIVE|Competitive)|$)/i);
+  const moatsMatch = researchText.match(/(?:##\s*(?:MOATS?|Moats?)|\*\*(?:MOATS?|Moats?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:COMPETITIVE|Competitive)|$)/i);
+  const competitiveMatch = researchText.match(/(?:##\s*(?:COMPETITIVE[_\s]ADVANTAGES?|Competitive\s+Advantages?)|\*\*(?:COMPETITIVE[_\s]ADVANTAGES?|Competitive\s+Advantages?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
+  const risksMatch = researchText.match(/(?:##\s*(?:RISKS?|Risks?)|\*\*(?:RISKS?|Risks?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:CATALYSTS?|Catalysts?)|$)/i);
+  const catalystsMatch = researchText.match(/(?:##\s*(?:CATALYSTS?|Catalysts?)|\*\*(?:CATALYSTS?|Catalysts?)\*\*)[:\s]*\n([\s\S]*?)$/i);
+
   return {
     symbol,
-    business_model: businessModelMatch ? businessModelMatch[1].trim() : researchText.substring(0, 1000),
-    moats: moatsMatch ? moatsMatch[1].trim() : 'See full research',
-    competitive_advantages: competitiveMatch ? competitiveMatch[1].trim() : 'See full research',
-    valuation_assessment: 'To be determined', // Will be filled by Opus in future updates
+    business_model: cleanText(businessModelMatch ? businessModelMatch[1] : researchText.substring(0, 1000), 2000),
+    moats: cleanText(moatsMatch ? moatsMatch[1] : '', 1500),
+    competitive_advantages: cleanText(competitiveMatch ? competitiveMatch[1] : '', 1500),
     fundamentals: fundamentals || {},
-    risks: risksMatch ? risksMatch[1].trim() : 'See full research',
-    catalysts: catalystsData,
-    catalysts_raw: catalystsMatch ? catalystsMatch[1].trim() : 'See full research',
-    investment_thesis: businessModelMatch ? businessModelMatch[1].trim().substring(0, 500) : 'See full research',
+    risks: cleanText(risksMatch ? risksMatch[1] : '', 2000),
+    catalysts: cleanText(catalystsMatch ? catalystsMatch[1] : '', 1500),
     profile_version: 1
   };
 }

@@ -2687,7 +2687,7 @@ ${historyContext}`;
           }
         }
 
-        // Get asset class for symbol
+        // Get sector for symbol
         const sector = await this.getSector(trade.symbol);
 
         recommendations.push({
@@ -2697,7 +2697,7 @@ ${historyContext}`;
           entryPrice: trade.entryPrice,
           stopLoss: trade.stopLoss,
           takeProfit: trade.takeProfit,
-          assetClass,
+          assetClass: sector,
           reasoning: reasoning || `${trade.type === 'long' ? 'Long' : 'Short'} position in ${trade.symbol}`
         });
       }
