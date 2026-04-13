@@ -271,8 +271,8 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule trade executor to process approved trades every 5 minutes during market hours
-      cron.schedule('*/5 9-16 * * 1-5', async () => {
+      // Schedule trade executor to process approved trades every 45 minutes during market hours
+      cron.schedule('*/45 9-16 * * 1-5', async () => {
         try {
           await tradeExecutor.processApprovedTrades();
         } catch (error) {
@@ -499,6 +499,24 @@ class WhiskieBot {
           }
         })();
         res.json({ success: true, message: 'Weekly portfolio review started. This will take 5-10 minutes. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-catalyst-update', async (req, res) => {
+      try {
+        console.log('📡 Manual catalyst update triggered via API');
+        (async () => {
+          try {
+            const { updateAllCatalysts } = await import('../scripts/update-catalysts.js');
+            await updateAllCatalysts();
+            console.log('✅ Catalyst update complete');
+          } catch (error) {
+            console.error('❌ Error in catalyst update:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Catalyst update started. This will take 30-40 minutes. Check logs for progress.' });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }

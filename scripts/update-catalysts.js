@@ -88,7 +88,7 @@ Keep it under 200 words total.`;
   }
 }
 
-async function main() {
+export async function updateAllCatalysts() {
   console.log('🚀 Starting catalyst update for all profiles...\n');
 
   try {
@@ -143,12 +143,17 @@ async function main() {
       console.log(`\nErrors for: ${results.errors.join(', ')}`);
     }
 
+    return results;
+
   } catch (error) {
     console.error('Fatal error:', error);
-    process.exit(1);
+    throw error;
   }
-
-  process.exit(0);
 }
 
-main();
+// Allow running as standalone script
+if (import.meta.url === `file://${process.argv[1]}`) {
+  updateAllCatalysts()
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
+}
