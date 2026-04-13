@@ -1277,6 +1277,7 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
 
       // PHASE 1: Pre-rank stock universe to 100-150 candidates
       console.log('📊 PHASE 1: Pre-ranking stock universe...');
+      const phase1Start = Date.now();
       const preRankedStocks = await preRanking.rankStocks();
       console.log(`   ✅ Pre-ranked to ${preRankedStocks.longs.length} long + ${preRankedStocks.shorts.length} short candidates`);
       console.log('');
@@ -1538,25 +1539,12 @@ ${historyContext}
 
 ${trendContext}`;
 
-      console.log('📝 PHASE 1: Asking Opus to select long and short candidates from pre-ranked stocks...');
-      console.log('⏳ This will take 1-2 minutes...');
-      console.log('');
-
-      const phase1Start = Date.now();
-      const phase1Analysis = await claude.deepAnalysis(
-        portfolio,
-        marketContext,
-        news,
-        {},
-        phase1Question
-      );
+      // Use pre-ranked stocks directly as candidates (no Opus Phase 1 needed)
       const phase1Duration = ((Date.now() - phase1Start) / 1000).toFixed(1);
+      const candidates = preRankedStocks;
 
       console.log(`✅ Phase 1 complete (${phase1Duration}s)`);
       console.log('');
-
-      // Extract long and short candidates from Phase 1 response
-      const candidates = this.extractLongShortCandidates(phase1Analysis.analysis);
       console.log(`🎯 Phase 1 Results:`);
       console.log(`   Long candidates: ${candidates.longs.length} stocks`);
       console.log(`   Short candidates: ${candidates.shorts.length} stocks`);
