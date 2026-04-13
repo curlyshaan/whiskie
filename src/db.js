@@ -476,10 +476,6 @@ export async function initDatabase() {
       UPDATE quality_watchlist SET price = current_price WHERE price IS NULL;
     `);
 
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_stock_universe_shortable ON stock_universe(shortable);
-    `);
-
     // Trend learning tables
     await client.query(`
       CREATE TABLE IF NOT EXISTS stock_analysis_history (
