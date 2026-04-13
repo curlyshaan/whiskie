@@ -52,26 +52,40 @@ class YahooFinance {
   /**
    * Get short interest data for squeeze risk assessment
    * Returns shortPercentOfFloat (0.0 to 1.0) and daysTocover
+   * Uses exponential backoff retry for rate limit handling
    */
-  async getShortInterest(symbol) {
-    try {
-      const quoteSummary = await yahooFinance.quoteSummary(symbol, {
-        modules: ['defaultKeyStatistics']
-      });
+  async getShortInterest(symbol, retries = 2) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const quoteSummary = await yahooFinance.quoteSummary(symbol, {
+          modules: ['defaultKeyStatistics']
+        });
 
-      const stats = quoteSummary?.defaultKeyStatistics;
-      if (!stats) return null;
+        const stats = quoteSummary?.defaultKeyStatistics;
+        if (!stats) return null;
 
-      return {
-        shortPercentOfFloat: stats.shortPercentOfFloat || 0,
-        sharesShort: stats.sharesShort || 0,
-        shortRatio: stats.shortRatio || 0, // Days to cover
-        sharesOutstanding: stats.sharesOutstanding || 0,
-      };
-    } catch (error) {
-      console.warn(`Could not fetch short interest for ${symbol}:`, error.message);
-      return null;
+        return {
+          shortPercentOfFloat: stats.shortPercentOfFloat || 0,
+          sharesShort: stats.sharesShort || 0,
+          shortRatio: stats.shortRatio || 0, // Days to cover
+          sharesOutstanding: stats.sharesOutstanding || 0,
+        };
+      } catch (error) {
+        const isRateLimit = error.message?.includes('Too Many Requests') || error.message?.includes('429');
+
+        // If rate limited and retries remain, wait and retry with exponential backoff
+        if (isRateLimit && attempt < retries) {
+          const delay = 1000 * Math.pow(2, attempt); // 1s, 2s
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        // Log warning but don't throw - return null so analysis can continue
+        console.warn(`Could not fetch short interest for ${symbol}:`, error.message);
+        return null;
+      }
     }
+    return null;
   }
 }
 

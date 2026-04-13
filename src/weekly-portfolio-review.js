@@ -85,7 +85,7 @@ export async function runWeeklyPortfolioReview() {
     // Save review to database
     await db.query(
       `INSERT INTO learning_insights (
-        insight_date, insight_type, insight_text, confidence_level, created_at
+        insight_date, insight_type, insight_text, confidence, created_at
       ) VALUES ($1, $2, $3, $4, NOW())`,
       [
         new Date().toISOString().split('T')[0],
