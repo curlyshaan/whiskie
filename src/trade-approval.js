@@ -35,6 +35,7 @@ class TradeApprovalManager {
         stop_loss DECIMAL(10, 2),
         take_profit DECIMAL(10, 2),
         order_type VARCHAR(20),
+        pathway VARCHAR(50),
         intent VARCHAR(50),
         reasoning TEXT,
         status VARCHAR(20) DEFAULT 'pending',
@@ -45,6 +46,12 @@ class TradeApprovalManager {
         executed_at TIMESTAMP,
         rejection_reason TEXT
       )
+    `);
+
+    // Add pathway column if it doesn't exist (for existing databases)
+    await db.query(`
+      ALTER TABLE trade_approvals
+      ADD COLUMN IF NOT EXISTS pathway VARCHAR(50)
     `);
 
     console.log('✅ Trade approval table initialized');
@@ -63,6 +70,7 @@ class TradeApprovalManager {
       stopLoss,
       takeProfit,
       orderType = 'limit',
+      pathway,
       intent,
       reasoning
     } = trade;
@@ -75,11 +83,11 @@ class TradeApprovalManager {
     const result = await db.query(
       `INSERT INTO trade_approvals
        (symbol, action, quantity, entry_price, stop_loss, take_profit,
-        order_type, intent, reasoning, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        order_type, pathway, intent, reasoning, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id`,
       [symbol, action, quantity, entryPrice, stopLoss, takeProfit,
-       orderType, intent, reasoning, expiresAt]
+       orderType, pathway, intent, reasoning, expiresAt]
     );
 
     const approvalId = result.rows[0].id;

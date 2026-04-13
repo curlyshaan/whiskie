@@ -1285,7 +1285,10 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       console.log('📊 Fetching market context...');
       const portfolioSymbols = portfolio.positions.map(p => p.symbol);
       const marketIndices = ['SPY', 'QQQ', 'DIA', 'IWM', 'VIX', 'TLT', 'GLD', 'USO'];
-      const candidateSymbols = [...preRankedStocks.longs, ...preRankedStocks.shorts];
+      const candidateSymbols = [
+        ...preRankedStocks.longs.map(c => c.symbol),
+        ...preRankedStocks.shorts.map(c => c.symbol)
+      ];
       const phase1Symbols = [...new Set([...portfolioSymbols, ...marketIndices, ...candidateSymbols])];
 
       const phase1Quotes = await tradier.getQuotes(phase1Symbols.join(','));
@@ -1306,69 +1309,31 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       console.log(`✅ Fetched ${Object.keys(marketContext).length} market quotes`);
       console.log('');
 
-      // Check value watchlist for momentum triggers
-      console.log('💎 Checking value watchlist for momentum...');
-      const valueMomentumTriggers = await fundamentalScreener.checkValueMomentum(marketContext);
-      if (valueMomentumTriggers.length > 0) {
-        console.log(`   🎯 ${valueMomentumTriggers.length} value stocks showing momentum!`);
-        valueMomentumTriggers.forEach(trigger => {
-          console.log(`      ${trigger.symbol}: ${trigger.changePercent} + ${trigger.volumeSurge}`);
-        });
-      } else {
-        console.log(`   No value stocks showing momentum yet`);
-      }
-      console.log('');
-
-      // Check quality watchlist for dip opportunities
-      console.log('💎 Checking quality watchlist for dips...');
-      const qualityDipOpportunities = await qualityScreener.checkQualityDips();
-      if (qualityDipOpportunities.length > 0) {
-        console.log(`   🎯 ${qualityDipOpportunities.length} quality stocks ready for Opus analysis!`);
-        qualityDipOpportunities.forEach(opp => {
-          console.log(`      ${opp.symbol}: $${opp.price} (${opp.dipFromHigh}% from high, spread: ${opp.spread}%)`);
-        });
-      } else {
-        console.log(`   No quality dip opportunities at this time`);
-      }
-      console.log('');
-
-      // Build intent mapping for Opus (so it knows which stocks came from which source)
+      // Build intent mapping for Opus (pathway from saturday_watchlist)
       const intentMap = {};
+      const pathwayMap = {};
 
-      // Momentum candidates from pre-ranking
-      preRankedStocks.longs.forEach(symbol => {
-        intentMap[symbol] = 'momentum';
+      // Pathway-to-intent mapping
+      const PATHWAY_TO_INTENT = {
+        'deepValue': 'value_dip',
+        'cashMachine': 'value_dip',
+        'qarp': 'value_dip',
+        'highGrowth': 'growth',
+        'inflection': 'growth_momentum',
+        'turnaround': 'turnaround',
+        'overvalued': 'short_overvalued'
+      };
+
+      // Map pre-ranked candidates with pathway info from saturday_watchlist
+      preRankedStocks.longs.forEach(candidate => {
+        const pathway = candidate.pathway;
+        pathwayMap[candidate.symbol] = pathway;
+        intentMap[candidate.symbol] = pathway ? PATHWAY_TO_INTENT[pathway] || 'momentum' : 'momentum';
       });
-      preRankedStocks.shorts.forEach(symbol => {
-        intentMap[symbol] = 'momentum_short';
-      });
-
-      // Value watchlist momentum triggers
-      valueMomentumTriggers.forEach(trigger => {
-        intentMap[trigger.symbol] = 'value_momentum';
-      });
-
-      // Quality watchlist dip opportunities
-      qualityDipOpportunities.forEach(opp => {
-        intentMap[opp.symbol] = 'quality_dip';
-      });
-
-      // Overvalued watchlist breakdown opportunities
-      console.log('📉 Checking overvalued watchlist for breakdowns...');
-      const overvaluedBreakdowns = await overvaluedScreener.checkOvervaluedBreakdowns();
-      if (overvaluedBreakdowns.length > 0) {
-        console.log(`   🎯 ${overvaluedBreakdowns.length} overvalued stocks ready for Opus analysis!`);
-        overvaluedBreakdowns.forEach(opp => {
-          console.log(`      ${opp.symbol}: $${opp.price} (${opp.change}% today, spread: ${opp.spread}%)`);
-        });
-      } else {
-        console.log(`   No overvalued breakdown opportunities at this time`);
-      }
-      console.log('');
-
-      // Overvalued watchlist breakdown triggers
-      overvaluedBreakdowns.forEach(opp => {
-        intentMap[opp.symbol] = 'overvalued_short';
+      preRankedStocks.shorts.forEach(candidate => {
+        const pathway = candidate.pathway;
+        pathwayMap[candidate.symbol] = pathway;
+        intentMap[candidate.symbol] = pathway ? PATHWAY_TO_INTENT[pathway] || 'momentum_short' : 'momentum_short';
       });
 
       // Refresh portfolio prices with phase 1 data
@@ -2016,11 +1981,11 @@ ${historyContext}`;
 **CRITICAL OUTPUT FORMAT REQUIREMENT:**
 You MUST output trades in this EXACT format for the parser to work:
 
-EXECUTE_BUY: AVGO | 26 | 373.96 | 355.00 | 420.00
-EXECUTE_BUY: TSM | 26 | 377.12 | 360.00 | 415.00
+EXECUTE_BUY: AVGO | 26 | 373.96 | 355.00 | 420.00 | deepValue | value_dip
+EXECUTE_BUY: TSM | 26 | 377.12 | 360.00 | 415.00 | highGrowth | growth
 
-EXECUTE_SHORT: NET | 45 | 177.72 | 186.60 | 151.06
-EXECUTE_SHORT: NOW | 95 | 84.23 | 88.44 | 71.60
+EXECUTE_SHORT: NET | 45 | 177.72 | 186.60 | 151.06 | overvalued | short_overvalued
+EXECUTE_SHORT: NOW | 95 | 84.23 | 88.44 | 71.60 | null | momentum_short
 
 **CRITICAL STOP-LOSS RULES:**
 - LONGS: Stop BELOW entry (e.g., entry $100, stop $95)
@@ -2028,13 +1993,30 @@ EXECUTE_SHORT: NOW | 95 | 84.23 | 88.44 | 71.60
 
 IMPORTANT: Each trade MUST start with "EXECUTE_BUY:" or "EXECUTE_SHORT:" on the SAME line as the trade data.
 DO NOT use table format. DO NOT add "shares" or "$" symbols. DO NOT add column headers.
-Format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET (each trade on its own line)
+Format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
+- PATHWAY: Original Saturday screening pathway (deepValue, highGrowth, etc.) or "null" if intraday discovery
+- INTENT: Current trade intent based on setup (value_dip, growth, momentum, short_overvalued, etc.)
 
 **PHASE 2 LONG ANALYSIS RESULTS:**
 ${phase2Analysis.analysis}
 
 **PHASE 3 SHORT ANALYSIS RESULTS:**
 ${phase3Analysis.analysis}
+
+**CANDIDATE PATHWAY CONTEXT:**
+The following stocks came from Saturday's fundamental screening with specific pathways:
+${Object.entries(pathwayMap).filter(([_, pathway]) => pathway).map(([symbol, pathway]) =>
+  `- ${symbol}: ${pathway} (intent: ${intentMap[symbol]})`
+).join('\n') || 'No pathway-tagged stocks in this batch'}
+
+Pathway meanings:
+- deepValue/cashMachine/qarp → Value plays, consider for dip-buying
+- highGrowth/inflection → Growth plays, momentum-driven
+- turnaround → Special situation, higher risk
+- overvalued → Short candidate, overextended valuation
+- null → Intraday momentum discovery (not from Saturday screening)
+
+When constructing trades, preserve the pathway context and assign appropriate intent based on current setup.
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
@@ -2090,15 +2072,16 @@ ${assetClassContext}
 
 **FINAL EXECUTION COMMANDS:**
 
-EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET
-EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET
+EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
+EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 [one EXECUTE_BUY line per long position]
 
-EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET
-EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET
+EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
+EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 [one EXECUTE_SHORT line per short position]
 
 Remember: Each trade MUST have "EXECUTE_BUY:" or "EXECUTE_SHORT:" prefix on the SAME line as the trade data.
+Include PATHWAY (from Saturday screening or "null") and INTENT (current trade rationale).
 
 **RATIONALE:**
 [2-3 sentences explaining portfolio construction logic, market regime consideration, and key risk/reward thesis]
@@ -2298,6 +2281,7 @@ ${historyContext}`;
               stopLoss: rec.stopLoss,
               takeProfit: rec.takeProfit,
               orderType: 'limit',
+              pathway: rec.pathway || null,
               intent: rec.intent || 'momentum',
               reasoning: detailedReasoning
             }, true);  // skipEmail = true for batch
@@ -2629,8 +2613,8 @@ ${historyContext}`;
       // Find all trade markers first to extract reasoning between them
       const allTradeMatches = [];
 
-      // Parse EXECUTE_BUY
-      const buyPattern = /EXECUTE_BUY:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/gi;
+      // Parse EXECUTE_BUY (with optional pathway and intent)
+      const buyPattern = /EXECUTE_BUY:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)(?:\s*\|\s*([a-zA-Z_]+)\s*\|\s*([a-zA-Z_]+))?/gi;
       let match;
       while ((match = buyPattern.exec(analysisText)) !== null) {
         allTradeMatches.push({
@@ -2640,13 +2624,15 @@ ${historyContext}`;
           entryPrice: parseFloat(match[3]),
           stopLoss: parseFloat(match[4]),
           takeProfit: parseFloat(match[5]),
+          pathway: match[6] && match[6] !== 'null' ? match[6] : null,
+          intent: match[7] || 'momentum',
           index: match.index,
           endIndex: match.index + match[0].length
         });
       }
 
-      // Parse EXECUTE_SHORT
-      const shortPattern = /EXECUTE_SHORT:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/gi;
+      // Parse EXECUTE_SHORT (with optional pathway and intent)
+      const shortPattern = /EXECUTE_SHORT:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)(?:\s*\|\s*([a-zA-Z_]+)\s*\|\s*([a-zA-Z_]+))?/gi;
       while ((match = shortPattern.exec(analysisText)) !== null) {
         allTradeMatches.push({
           type: 'short',
@@ -2655,6 +2641,8 @@ ${historyContext}`;
           entryPrice: parseFloat(match[3]),
           stopLoss: parseFloat(match[4]),
           takeProfit: parseFloat(match[5]),
+          pathway: match[6] && match[6] !== 'null' ? match[6] : null,
+          intent: match[7] || 'momentum_short',
           index: match.index,
           endIndex: match.index + match[0].length
         });
@@ -2716,6 +2704,8 @@ ${historyContext}`;
           stopLoss: trade.stopLoss,
           takeProfit: trade.takeProfit,
           assetClass: sector,
+          pathway: trade.pathway || null,
+          intent: trade.intent || (trade.type === 'long' ? 'momentum' : 'momentum_short'),
           reasoning: reasoning || `${trade.type === 'long' ? 'Long' : 'Short'} position in ${trade.symbol}`
         });
       }

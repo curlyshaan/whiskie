@@ -27,9 +27,21 @@ class PreRanking {
     console.log('\n📊 Pre-ranking stock universe...');
     const startTime = Date.now();
 
+    // Get saturday_watchlist stocks (with pathway tags)
+    const watchlistStocks = await this.getWatchlistStocks();
+    console.log(`   Saturday watchlist: ${watchlistStocks.length} stocks`);
+
     // Get all stocks from FMP-based universe
     const allStocks = await this.getAllStocks();
     console.log(`   Total stocks: ${allStocks.length}`);
+
+    // Merge watchlist stocks with universe stocks (watchlist takes priority)
+    const watchlistSymbols = new Set(watchlistStocks.map(s => s.symbol));
+    const mergedStocks = [
+      ...watchlistStocks,
+      ...allStocks.filter(s => !watchlistSymbols.has(s.symbol))
+    ];
+    console.log(`   Merged candidates: ${mergedStocks.length} (${watchlistStocks.length} from watchlist, ${mergedStocks.length - watchlistStocks.length} from universe)`);
 
     // Filter stocks with live spread/volume/price checks
     console.log(`   🔍 Starting live filtering with spread/volume/price checks...`);
@@ -37,7 +49,7 @@ class PreRanking {
     const failedStocks = { volume: [], spread: [], price: [], noQuote: [] };
     let processed = 0;
 
-    for (const stock of allStocks) {
+    for (const stock of mergedStocks) {
       try {
         const quote = await tradier.getQuote(stock.symbol);
         if (!quote) {
@@ -79,14 +91,18 @@ class PreRanking {
             industry: stock.industry,
             price,
             avgVolume,
-            spread
+            spread,
+            pathway: stock.pathway || null,  // Preserve pathway from watchlist
+            watchlistScore: stock.score || null,
+            source: stock.source
           });
-          console.log(`   ✅ ${stock.symbol}: PASSED (vol: $${(dollarVolume/1e6).toFixed(1)}M, spread: ${(spread*100).toFixed(2)}%, price: $${price.toFixed(2)})`);
+          const pathwayTag = stock.pathway ? ` [${stock.pathway}]` : '';
+          console.log(`   ✅ ${stock.symbol}${pathwayTag}: PASSED (vol: $${(dollarVolume/1e6).toFixed(1)}M, spread: ${(spread*100).toFixed(2)}%, price: $${price.toFixed(2)})`);
         }
 
         processed++;
         if (processed % 50 === 0) {
-          console.log(`   📊 Progress: ${processed}/${allStocks.length} processed, ${filteredStocks.length} passed so far`);
+          console.log(`   📊 Progress: ${processed}/${mergedStocks.length} processed, ${filteredStocks.length} passed so far`);
         }
       } catch (error) {
         console.warn(`   ⚠️ Error filtering ${stock.symbol}:`, error.message);
@@ -134,10 +150,41 @@ class PreRanking {
     console.log(`   Short candidates: ${shortCandidates.length}`);
 
     return {
-      longs: longCandidates.map(s => s.symbol),
-      shorts: shortCandidates.map(s => s.symbol),
+      longs: longCandidates.map(s => ({
+        symbol: s.symbol,
+        pathway: s.pathway || null,
+        score: s.score
+      })),
+      shorts: shortCandidates.map(s => ({
+        symbol: s.symbol,
+        pathway: s.pathway || null,
+        score: s.score
+      })),
       scored: scoredStocks.length
     };
+  }
+
+  /**
+   * Get saturday_watchlist stocks with pathway tags
+   */
+  async getWatchlistStocks() {
+    const result = await db.query(
+      `SELECT symbol, intent, pathway, sector, industry, score, price
+       FROM saturday_watchlist
+       WHERE status = $1
+       ORDER BY score DESC`,
+      ['active']
+    );
+    return result.rows.map(row => ({
+      symbol: row.symbol,
+      intent: row.intent,
+      pathway: row.pathway,
+      sector: row.sector,
+      industry: row.industry,
+      score: row.score,
+      price: parseFloat(row.price),
+      source: 'watchlist'
+    }));
   }
 
   /**
@@ -151,7 +198,8 @@ class PreRanking {
     return result.rows.map(row => ({
       symbol: row.symbol,
       sector: row.sector,
-      industry: row.industry
+      industry: row.industry,
+      source: 'universe'
     }));
   }
 
@@ -271,7 +319,9 @@ class PreRanking {
       reasons: reasons.join(', '),
       price,
       change,
-      volumeSurge: volumeSurge.toFixed(1)
+      volumeSurge: volumeSurge.toFixed(1),
+      pathway: stock.pathway || null,  // Preserve pathway from watchlist
+      watchlistScore: stock.watchlistScore || null
     };
   }
 }
