@@ -1496,19 +1496,10 @@ ${watchlistContext}
 **Pre-Ranked Candidates (algorithmic filter based on volume surge, momentum, sector strength):**
 
 **Long Candidates (${preRankedStocks.longs.length} stocks):**
-${preRankedStocks.longs.join(', ')}
+${preRankedStocks.longs.map(c => c.symbol).join(', ')}
 
 **Short Candidates (${preRankedStocks.shorts.length} stocks):**
-${preRankedStocks.shorts.join(', ')}
-
-**Value Watchlist Momentum Triggers (${valueMomentumTriggers.length} stocks):**
-${valueMomentumTriggers.length > 0 ? valueMomentumTriggers.map(t => `${t.symbol} (${t.changePercent}, ${t.volumeSurge})`).join(', ') : 'None'}
-
-**Quality Watchlist Dip Opportunities (${qualityDipOpportunities.length} stocks):**
-${qualityDipOpportunities.length > 0 ? qualityDipOpportunities.map(o => `${o.symbol} ($${o.price}, ${o.dipFromHigh}% from high)`).join(', ') : 'None'}
-
-**Overvalued Watchlist Breakdown Opportunities (${overvaluedBreakdowns.length} stocks):**
-${overvaluedBreakdowns.length > 0 ? overvaluedBreakdowns.map(o => `${o.symbol} ($${o.price}, ${o.change}% today, short data: ${o.shortData ? `${(o.shortData.shortFloat * 100).toFixed(1)}% float, ${o.shortData.daysToCover.toFixed(1)} DTC` : 'N/A'})`).join(', ') : 'None'}
+${preRankedStocks.shorts.map(c => c.symbol).join(', ')}
 
 **Your Task for Phase 1:**
 1. Review the pre-ranked candidates above
