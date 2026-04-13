@@ -785,7 +785,7 @@ class FundamentalScreener {
              intent = 'SHORT', score = $5, metrics = $6, reasons = $7,
              price = $8, status = 'active', added_date = NOW()`,
           [
-            c.symbol, c.shortPathway || 'overvalued', c.assetClass, c.sector, c.shortScore,
+            c.symbol, c.shortPathway || 'overvalued', c.sector, c.industry, c.shortScore,
             JSON.stringify(c.metrics), c.shortReasons.join(', '), parseFloat(c.price)
           ]
         );
