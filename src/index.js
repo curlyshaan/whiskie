@@ -66,6 +66,7 @@ class WhiskieBot {
     this.latestGapReport = null; // Store pre-market gap scan results
     this.isPaperTrading = process.env.NODE_ENV === 'paper';
     this.sectorCache = new Map(); // Cache sector/industry lookups
+    console.log(`🤖 Whiskie Bot initialized in ${this.isPaperTrading ? 'PAPER TRADING' : 'LIVE'} mode`);
   }
 
   /**
@@ -80,8 +81,6 @@ class WhiskieBot {
     const sector = info?.sector || 'Unknown';
     this.sectorCache.set(symbol, sector);
     return sector;
-  }
-    console.log(`🤖 Whiskie Bot initialized in ${this.isPaperTrading ? 'PAPER TRADING' : 'LIVE'} mode`);
   }
 
   /**
