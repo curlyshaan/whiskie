@@ -701,7 +701,16 @@ class FundamentalScreener {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - 30);
 
-      const historicalData = await yahooFinance.getHistoricalData(symbol, startDate, endDate);
+      // Format dates for Tradier API (YYYY-MM-DD)
+      const formatDate = (date) => date.toISOString().split('T')[0];
+
+      const historicalData = await tradier.getHistory(
+        symbol,
+        'daily',
+        formatDate(startDate),
+        formatDate(endDate)
+      );
+
       if (!historicalData || historicalData.length < 15) {
         return { trend: 'unknown', change: 0 };
       }

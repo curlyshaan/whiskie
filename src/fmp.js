@@ -359,6 +359,82 @@ class FMPClient {
   }
 
   /**
+   * Get SMA (Simple Moving Average) for a symbol
+   * @param {string} symbol - Stock symbol
+   * @param {number} period - Period length (e.g., 50, 200)
+   * @param {string} timeframe - Timeframe (1day, 4hour, etc.)
+   * @returns {Array} Array of {date, open, high, low, close, volume, sma}
+   */
+  async getSMA(symbol, period = 200, timeframe = '1day') {
+    return this.getTechnicalIndicator(symbol, 'sma', period, timeframe);
+  }
+
+  /**
+   * Get EMA (Exponential Moving Average) for a symbol
+   * @param {string} symbol - Stock symbol
+   * @param {number} period - Period length (e.g., 50, 200)
+   * @param {string} timeframe - Timeframe (1day, 4hour, etc.)
+   * @returns {Array} Array of {date, open, high, low, close, volume, ema}
+   */
+  async getEMA(symbol, period = 200, timeframe = '1day') {
+    return this.getTechnicalIndicator(symbol, 'ema', period, timeframe);
+  }
+
+  /**
+   * Get RSI (Relative Strength Index) for a symbol
+   * @param {string} symbol - Stock symbol
+   * @param {number} period - Period length (typically 14)
+   * @param {string} timeframe - Timeframe (1day, 4hour, etc.)
+   * @returns {Array} Array of {date, open, high, low, close, volume, rsi}
+   */
+  async getRSI(symbol, period = 14, timeframe = '1day') {
+    return this.getTechnicalIndicator(symbol, 'rsi', period, timeframe);
+  }
+
+  /**
+   * Get MACD (Moving Average Convergence Divergence) for a symbol
+   * @param {string} symbol - Stock symbol
+   * @param {string} timeframe - Timeframe (1day, 4hour, etc.)
+   * @returns {Array} Array of {date, open, high, low, close, volume, macd}
+   */
+  async getMACD(symbol, timeframe = '1day') {
+    return this.getTechnicalIndicator(symbol, 'macd', 12, timeframe);
+  }
+
+  /**
+   * Get ADX (Average Directional Index) for a symbol
+   * @param {string} symbol - Stock symbol
+   * @param {number} period - Period length (typically 14)
+   * @param {string} timeframe - Timeframe (1day, 4hour, etc.)
+   * @returns {Array} Array of {date, open, high, low, close, volume, adx}
+   */
+  async getADX(symbol, period = 14, timeframe = '1day') {
+    return this.getTechnicalIndicator(symbol, 'adx', period, timeframe);
+  }
+
+  /**
+   * Get Williams %R for a symbol
+   * @param {string} symbol - Stock symbol
+   * @param {number} period - Period length (typically 14)
+   * @param {string} timeframe - Timeframe (1day, 4hour, etc.)
+   * @returns {Array} Array of {date, open, high, low, close, volume, williams}
+   */
+  async getWilliams(symbol, period = 14, timeframe = '1day') {
+    return this.getTechnicalIndicator(symbol, 'williams', period, timeframe);
+  }
+
+  /**
+   * Get Standard Deviation for a symbol
+   * @param {string} symbol - Stock symbol
+   * @param {number} period - Period length
+   * @param {string} timeframe - Timeframe (1day, 4hour, etc.)
+   * @returns {Array} Array of {date, open, high, low, close, volume, standardDeviation}
+   */
+  async getStandardDeviation(symbol, period = 20, timeframe = '1day') {
+    return this.getTechnicalIndicator(symbol, 'standardDeviation', period, timeframe);
+  }
+
+  /**
    * Get earnings calendar (upcoming earnings dates)
    * Returns all upcoming earnings by default
    */

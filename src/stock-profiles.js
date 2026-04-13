@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import claude from './claude.js';
 import fmp from './fmp.js';
-import yahooFinance from './yahoo-finance.js';
+import tradier from './tradier.js';
 import tavily from './tavily.js';
 
 /**
@@ -189,10 +189,12 @@ export async function buildStockProfile(symbol) {
     console.log('  📊 Fetching fundamentals from FMP...');
 
     console.log('  📈 Fetching historical data...');
-    const historicalData = await yahooFinance.getHistoricalData(
+    const formatDate = (date) => date.toISOString().split('T')[0];
+    const historicalData = await tradier.getHistory(
       symbol,
-      new Date(Date.now() - 365 * 24 * 60 * 60 * 1000),
-      new Date()
+      'daily',
+      formatDate(new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)),
+      formatDate(new Date())
     );
 
     console.log('  📰 Fetching recent news...');

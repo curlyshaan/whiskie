@@ -2013,6 +2013,15 @@ Pathway meanings:
 
 When constructing trades, preserve the pathway context and assign appropriate intent based on current setup.
 
+**Current Market Prices:**
+All prices below are LIVE quotes - use these exact prices for entry calculations.
+
+Long Candidates:
+${candidates.longs.map(c => `- ${c.symbol}: $${fullMarketData[c.symbol]?.price || 'N/A'} (${fullMarketData[c.symbol]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[c.symbol]?.change_percentage || 0}%)`).join('\n')}
+
+Short Candidates:
+${candidates.shorts.map(c => `- ${c.symbol}: $${fullMarketData[c.symbol]?.price || 'N/A'} (${fullMarketData[c.symbol]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[c.symbol]?.change_percentage || 0}%)`).join('\n')}
+
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
 - Total Value: $${portfolio.totalValue.toLocaleString()}

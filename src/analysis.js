@@ -3,7 +3,7 @@ import claude from './claude.js';
 import tavily from './tavily.js';
 import riskManager from './risk-manager.js';
 import * as db from './db.js';
-import yahooFinance from './yahoo-finance.js';
+import fmp from './fmp.js';
 
 /**
  * Portfolio Analysis Engine
@@ -228,56 +228,52 @@ class AnalysisEngine {
   }
 
   /**
-   * Calculate technical indicators for a stock
+   * Calculate technical indicators for a stock using FMP
    * Includes: SMA50, SMA200, RSI, MACD, ATR, MA slopes, volume confirmation,
    * price distance from 200MA, and an integrated buy/short signal score.
    */
   async getTechnicalIndicators(symbol) {
     try {
-      // Use Yahoo Finance for historical data (unlimited history, free)
-      // Request 400 days to ensure we get at least 260 trading days (accounting for weekends/holidays)
-      const endDate = new Date();
-      const startDate = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
+      // Use FMP for technical indicators (more reliable and consistent)
+      const [sma50Data, sma200Data, rsiData] = await Promise.all([
+        fmp.getSMA(symbol, 50, '1day'),
+        fmp.getSMA(symbol, 200, '1day'),
+        fmp.getRSI(symbol, 14, '1day')
+      ]);
 
-      const history = await yahooFinance.getHistoricalData(symbol, startDate, endDate);
-
-      if (!history || history.length < 60) {
-        console.warn(`Insufficient historical data for ${symbol}: ${history?.length || 0} days`);
+      if (!sma50Data || !sma200Data || !rsiData || sma200Data.length < 10) {
+        console.warn(`Insufficient technical data for ${symbol}`);
         return null;
       }
 
-      const prices = history.map(d => d.close);
-      const highs  = history.map(d => d.high);
-      const lows   = history.map(d => d.low);
-      const volumes = history.map(d => d.volume);
+      // Get latest values
+      const latest = sma200Data[0];
+      const currentPrice = latest.close;
+      const sma50 = sma50Data[0]?.sma || null;
+      const sma200 = latest.sma;
+      const rsi = rsiData[0]?.rsi || null;
 
-      const currentPrice = prices[prices.length - 1];
-      const currentVolume = volumes[volumes.length - 1];
-
-      // --- Moving Averages ---
-      const sma50  = this.calculateSMA(prices, 50);
-      const sma200 = this.calculateSMA(prices, 200);
-
-      // MA slopes: compare current MA to MA value 10 days ago
-      // Positive slope = trending up; negative = trending down
-      const sma50Slope  = sma50  ? this.calculateMASlope(prices, 50,  10) : null;
-      const sma200Slope = sma200 ? this.calculateMASlope(prices, 200, 10) : null;
+      // Calculate MA slopes from FMP data (compare current to 10 days ago)
+      const sma50Slope = sma50Data.length >= 10 ?
+        (sma50Data[0].sma - sma50Data[10].sma) / sma50Data[10].sma : null;
+      const sma200Slope = sma200Data.length >= 10 ?
+        (sma200Data[0].sma - sma200Data[10].sma) / sma200Data[10].sma : null;
 
       // Price distance from 200MA as a percentage
       const distanceFrom200MA = sma200 ? ((currentPrice - sma200) / sma200) * 100 : null;
 
-      // --- Momentum Indicators ---
-      const rsi  = this.calculateRSI(prices, 14);
-      const macd = this.calculateMACD(prices);
+      // Volume analysis from recent data
+      const recentVolumes = sma200Data.slice(0, 20).map(d => d.volume);
+      const avgVolume20 = recentVolumes.reduce((a, b) => a + b, 0) / 20;
+      const currentVolume = latest.volume;
+      const volumeRatio = avgVolume20 > 0 ? currentVolume / avgVolume20 : null;
 
-      // --- Volatility ---
-      const atr14 = this.calculateATR(highs, lows, prices, 14);
-      // ATR as % of price is more useful for position sizing
+      // Calculate ATR from recent data (14-day)
+      const atr14 = this.calculateATRFromData(sma200Data.slice(0, 14));
       const atrPercent = atr14 && currentPrice ? (atr14 / currentPrice) * 100 : null;
 
-      // --- Volume Analysis ---
-      const avgVolume20 = volumes.slice(-20).reduce((a, b) => a + b, 0) / 20;
-      const volumeRatio = avgVolume20 > 0 ? currentVolume / avgVolume20 : null;
+      // MACD calculation (simplified - could use FMP's MACD endpoint if needed)
+      const macd = this.calculateMACDFromData(sma200Data.slice(0, 35));
 
       // --- Integrated Buy / Short Signal ---
       const signal = this.calculateTechnicalSignal({
@@ -299,7 +295,7 @@ class AnalysisEngine {
         sma200,
         sma50Slope: sma50Slope ? parseFloat(sma50Slope.toFixed(4)) : null,
         sma200Slope: sma200Slope ? parseFloat(sma200Slope.toFixed(4)) : null,
-        aboveSMA50: sma50  ? currentPrice > sma50  : null,
+        aboveSMA50: sma50 ? currentPrice > sma50 : null,
         aboveSMA200: sma200 ? currentPrice > sma200 : null,
         distanceFrom200MA: distanceFrom200MA ? parseFloat(distanceFrom200MA.toFixed(2)) : null,
         // Trend summary
@@ -436,6 +432,45 @@ class AnalysisEngine {
     }
 
     return atr;
+  }
+
+  /**
+   * Calculate ATR from FMP data structure
+   * @param {Array} data - Array of {date, open, high, low, close, volume}
+   * @returns {number} ATR value
+   */
+  calculateATRFromData(data, period = 14) {
+    if (!data || data.length < period + 1) return null;
+
+    const trueRanges = [];
+    for (let i = 0; i < data.length - 1; i++) {
+      const current = data[i];
+      const prev = data[i + 1];
+      const hl = current.high - current.low;
+      const hpc = Math.abs(current.high - prev.close);
+      const lpc = Math.abs(current.low - prev.close);
+      trueRanges.push(Math.max(hl, hpc, lpc));
+    }
+
+    // Use Wilder's smoothing
+    let atr = trueRanges.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    for (let i = period; i < trueRanges.length; i++) {
+      atr = (atr * (period - 1) + trueRanges[i]) / period;
+    }
+
+    return atr;
+  }
+
+  /**
+   * Calculate MACD from FMP data structure
+   * @param {Array} data - Array of {date, open, high, low, close, volume}
+   * @returns {Object} MACD object with line, signal, histogram
+   */
+  calculateMACDFromData(data) {
+    if (!data || data.length < 35) return null;
+
+    const prices = data.map(d => d.close).reverse(); // FMP returns newest first
+    return this.calculateMACD(prices);
   }
 
   /**
