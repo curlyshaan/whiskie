@@ -1560,13 +1560,13 @@ ${trendContext}`;
       console.log(`🎯 Phase 1 Results:`);
       console.log(`   Long candidates: ${candidates.longs.length} stocks`);
       console.log(`   Short candidates: ${candidates.shorts.length} stocks`);
-      console.log(`   Longs: ${candidates.longs.join(', ')}`);
-      console.log(`   Shorts: ${candidates.shorts.join(', ')}`);
+      console.log(`   Longs: ${candidates.longs.map(c => c.symbol).join(', ')}`);
+      console.log(`   Shorts: ${candidates.shorts.map(c => c.symbol).join(', ')}`);
       console.log('');
 
       // Fetch prices for all identified stocks (both long and short candidates)
       console.log('📊 Fetching prices for all candidates...');
-      const allCandidates = [...candidates.longs, ...candidates.shorts];
+      const allCandidates = [...candidates.longs.map(c => c.symbol), ...candidates.shorts.map(c => c.symbol)];
       const allSymbols = [...new Set([...portfolioSymbols, ...marketIndices, ...allCandidates])];
       const phase2Quotes = await tradier.getQuotes(allSymbols.join(','));
 
@@ -1616,9 +1616,10 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 
       // Fetch stock profiles for long candidates
       console.log('📚 Fetching stock profiles for long candidates...');
-      const longProfiles = await stockProfiles.getStockProfiles(candidates.longs);
+      const longSymbols = candidates.longs.map(c => c.symbol);
+      const longProfiles = await stockProfiles.getStockProfiles(longSymbols);
       const profileCount = Object.keys(longProfiles).length;
-      const missingProfiles = candidates.longs.filter(s => !longProfiles[s]).length;
+      const missingProfiles = longSymbols.filter(s => !longProfiles[s]).length;
       const staleProfiles = Object.values(longProfiles).filter(p => {
         const daysOld = Math.floor((Date.now() - new Date(p.last_updated).getTime()) / (1000 * 60 * 60 * 24));
         return daysOld > 14;
@@ -1656,7 +1657,8 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 
       // Also fetch recent analysis history for context
       const longStockHistory = {};
-      for (const symbol of candidates.longs) {
+      for (const candidate of candidates.longs) {
+        const symbol = candidate.symbol;
         const history = await trendLearning.getStockAnalysisHistory(symbol, 2);
         if (history.length > 0) {
           longStockHistory[symbol] = history;
@@ -1781,7 +1783,8 @@ ${historyContext}`;
 
       // Fetch stock profiles for short candidates
       console.log('📚 Fetching stock profiles for short candidates...');
-      const shortProfiles = await stockProfiles.getStockProfiles(candidates.shorts);
+      const shortSymbols = candidates.shorts.map(c => c.symbol);
+      const shortProfiles = await stockProfiles.getStockProfiles(shortSymbols);
       console.log(`✅ Found profiles for ${Object.keys(shortProfiles).length} stocks`);
 
       // Build short stock profile context
@@ -1803,7 +1806,8 @@ ${historyContext}`;
 
       // Also fetch recent analysis history for context
       const shortStockHistory = {};
-      for (const symbol of candidates.shorts) {
+      for (const candidate of candidates.shorts) {
+        const symbol = candidate.symbol;
         const history = await trendLearning.getStockAnalysisHistory(symbol, 2);
         if (history.length > 0) {
           shortStockHistory[symbol] = history;
@@ -2128,7 +2132,7 @@ ${historyContext}`;
       console.log('💾 Saving analysis to database...');
 
       // Log the decision with token usage
-      const allAnalyzedStocks = [...candidates.longs, ...candidates.shorts];
+      const allAnalyzedStocks = [...candidates.longs.map(c => c.symbol), ...candidates.shorts.map(c => c.symbol)];
       const analysisId = await db.logAIDecision({
         type: 'deep-analysis',
         symbol: null,
