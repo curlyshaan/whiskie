@@ -172,8 +172,8 @@ class FundamentalScreener {
 
       return {
         symbol: stock.symbol,
-        assetClass: stock.assetClass,
-        sector,
+        sector: stock.sector,
+        industry: stock.industry,
         price: price.toFixed(2),
         marketCap,
         dollarVolume,
