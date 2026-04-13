@@ -66,20 +66,6 @@ class ShortManager {
     // IV filter is effective since meme stocks typically have 100%+ IV
     // Note: Without short interest data, we cannot check squeeze risk
     // This is a known limitation - monitor positions closely
-          }
-        }
-
-        // Log for decision tracking
-        await db.query(
-          `UPDATE stock_universe SET short_float_pct = $1, last_updated = NOW() WHERE symbol = $2`,
-          [shortPct, symbol]
-        ).catch(() => {}); // Non-blocking
-      }
-    } catch (error) {
-      // Short interest check is non-blocking — log but don't prevent the trade
-      console.warn(`⚠️ Could not fetch short interest for ${symbol}: ${error.message}`);
-      warnings.push(`Short interest data unavailable for ${symbol} — verify manually before shorting`);
-    }
 
     // Check for recent squeeze history (>50% move in past 6 months)
     try {
