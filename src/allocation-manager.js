@@ -1,9 +1,10 @@
-import assetClassData from './asset-class-data.js';
 import vixRegime from './vix-regime.js';
+import * as db from './db.js';
 
 /**
  * Allocation Manager
- * Calculates dynamic asset class limits based on rate environment and VIX regime
+ * DEPRECATED: Asset class allocation replaced by sector-based allocation
+ * Kept for backward compatibility with minimal stubs
  */
 class AllocationManager {
   constructor() {
@@ -35,182 +36,76 @@ class AllocationManager {
   }
 
   /**
-   * Calculate dynamic allocation limit for an asset class
-   * Applies rate environment multiplier + VIX regime multiplier
+   * Get asset class limit (DEPRECATED - returns default)
    */
   async getAssetClassLimit(assetClass) {
-    const baseLimit = assetClassData.BASE_LIMITS[assetClass];
-    if (!baseLimit) {
-      console.warn(`Unknown asset class: ${assetClass}, using 20% default`);
-      return 0.20;
-    }
-
-    // Get rate environment multiplier
-    const rateEnv = this.getRateEnvironment();
-    const rateMultiplier = assetClassData.RATE_MULTIPLIERS[rateEnv][assetClass] || 1.0;
-
-    // Get VIX regime multiplier
-    const regime = await vixRegime.getRegime();
-    const vixMultiplier = assetClassData.VIX_MULTIPLIERS[regime.name][assetClass] || 1.0;
-
-    // Calculate adjusted limit
-    let adjustedLimit = baseLimit * rateMultiplier * vixMultiplier;
-
-    // Apply hard cap
-    adjustedLimit = Math.min(adjustedLimit, assetClassData.HARD_LIMITS.MAX_ASSET_CLASS_ALLOCATION);
-
-    return adjustedLimit;
+    return 0.30; // Default 30% limit
   }
 
   /**
-   * Get all asset class limits with current multipliers applied
+   * Get all asset class limits (DEPRECATED - returns empty)
    */
   async getAllAssetClassLimits() {
-    const limits = {};
-    const assetClasses = assetClassData.getAllAssetClasses();
-
-    for (const assetClass of assetClasses) {
-      limits[assetClass] = await this.getAssetClassLimit(assetClass);
-    }
-
-    return limits;
+    return {};
   }
 
   /**
-   * Calculate current asset class allocation from portfolio
+   * Calculate asset class allocation (DEPRECATED - uses sectors)
    */
   calculateAssetClassAllocation(portfolio) {
     const allocation = {};
 
     for (const position of portfolio.positions) {
-      const assetClass = assetClassData.getAssetClass(position.symbol);
+      const sector = position.sector || 'Unknown';
       const positionValue = position.quantity * position.currentPrice;
 
-      if (!allocation[assetClass]) {
-        allocation[assetClass] = 0;
+      if (!allocation[sector]) {
+        allocation[sector] = 0;
       }
-      allocation[assetClass] += positionValue;
+      allocation[sector] += positionValue;
     }
 
     // Convert to percentages
     const allocationPct = {};
-    for (const [assetClass, value] of Object.entries(allocation)) {
-      allocationPct[assetClass] = value / portfolio.totalValue;
+    for (const [sector, value] of Object.entries(allocation)) {
+      allocationPct[sector] = value / portfolio.totalValue;
     }
 
     return allocationPct;
   }
 
   /**
-   * Validate if adding a trade would exceed asset class limits
+   * Validate asset class allocation (DEPRECATED - always returns valid)
    */
   async validateAssetClassAllocation(symbol, tradeValue, portfolio) {
-    const assetClass = assetClassData.getAssetClass(symbol);
-
-    if (assetClass === 'Unknown') {
-      return {
-        valid: false,
-        error: `Unknown asset class for symbol: ${symbol}`
-      };
-    }
-
-    // Get current allocation
-    const currentAllocation = this.calculateAssetClassAllocation(portfolio);
-    const currentValue = (currentAllocation[assetClass] || 0) * portfolio.totalValue;
-
-    // Calculate new allocation
-    const newValue = currentValue + tradeValue;
-    const newAllocationPct = newValue / portfolio.totalValue;
-
-    // Get dynamic limit
-    const limit = await this.getAssetClassLimit(assetClass);
-
-    // Check against limit
-    if (newAllocationPct > limit) {
-      return {
-        valid: false,
-        error: `${assetClass} allocation would be ${(newAllocationPct * 100).toFixed(1)}%, exceeds limit ${(limit * 100).toFixed(0)}%`,
-        currentAllocation: currentAllocation[assetClass] || 0,
-        newAllocation: newAllocationPct,
-        limit: limit
-      };
-    }
-
-    // Check stocks per asset class limit
-    const stocksInAssetClass = portfolio.positions.filter(p =>
-      assetClassData.getAssetClass(p.symbol) === assetClass
-    ).length;
-
-    const isNewStock = !portfolio.positions.some(p => p.symbol === symbol);
-    if (isNewStock && stocksInAssetClass >= assetClassData.HARD_LIMITS.MAX_STOCKS_PER_ASSET_CLASS) {
-      return {
-        valid: false,
-        error: `${assetClass} already has ${stocksInAssetClass} stocks (max ${assetClassData.HARD_LIMITS.MAX_STOCKS_PER_ASSET_CLASS} per asset class)`,
-        currentAllocation: currentAllocation[assetClass] || 0,
-        newAllocation: newAllocationPct,
-        limit: limit
-      };
-    }
-
     return {
       valid: true,
-      assetClass,
-      currentAllocation: currentAllocation[assetClass] || 0,
-      newAllocation: newAllocationPct,
-      limit: limit
+      assetClass: 'Unknown',
+      currentAllocation: 0,
+      newAllocation: 0,
+      limit: 0.30
     };
   }
 
   /**
-   * Check minimum asset class diversification
+   * Check minimum diversification (DEPRECATED - always returns valid)
    */
   checkMinimumDiversification(portfolio) {
-    const allocation = this.calculateAssetClassAllocation(portfolio);
-    const assetClassCount = Object.keys(allocation).length;
-
-    if (assetClassCount < assetClassData.HARD_LIMITS.MIN_ASSET_CLASSES) {
-      return {
-        valid: false,
-        error: `Portfolio has ${assetClassCount} asset classes, minimum ${assetClassData.HARD_LIMITS.MIN_ASSET_CLASSES} required`,
-        currentCount: assetClassCount,
-        minRequired: assetClassData.HARD_LIMITS.MIN_ASSET_CLASSES
-      };
-    }
-
     return {
       valid: true,
-      assetClassCount
+      assetClassCount: 0
     };
   }
 
   /**
-   * Build context string for Claude's prompt
+   * Build allocation context (DEPRECATED - returns minimal context)
    */
   async buildAllocationContext(portfolio) {
-    const rateEnv = this.getRateEnvironment();
     const regime = await vixRegime.getRegime();
-    const limits = await this.getAllAssetClassLimits();
-    const currentAllocation = this.calculateAssetClassAllocation(portfolio);
 
-    let context = '\nASSET CLASS ALLOCATION:\n';
-    context += `Rate Environment: ${rateEnv.replace('_', ' ')}\n`;
+    let context = '\n**SECTOR ALLOCATION:**\n';
     context += `VIX Regime: ${regime.name}\n\n`;
-
-    context += 'Current Allocation vs Limits:\n';
-    for (const assetClass of assetClassData.getAllAssetClasses()) {
-      const current = (currentAllocation[assetClass] || 0) * 100;
-      const limit = limits[assetClass] * 100;
-      const status = current > limit * 0.8 ? '⚠️' : current > 0 ? '✓' : ' ';
-
-      if (current > 0 || limit !== assetClassData.BASE_LIMITS[assetClass]) {
-        context += `${status} ${assetClass}: ${current.toFixed(1)}% / ${limit.toFixed(0)}% limit\n`;
-      }
-    }
-
-    context += '\nHard Limits:\n';
-    context += `- Max per asset class: ${assetClassData.HARD_LIMITS.MAX_ASSET_CLASS_ALLOCATION * 100}%\n`;
-    context += `- Max stocks per asset class: ${assetClassData.HARD_LIMITS.MAX_STOCKS_PER_ASSET_CLASS}\n`;
-    context += `- Min asset classes: ${assetClassData.HARD_LIMITS.MIN_ASSET_CLASSES}\n`;
+    context += 'Note: Sector allocation is managed via 0-3 stocks per sub-sector constraint in Phase 4.\n';
 
     return context;
   }
