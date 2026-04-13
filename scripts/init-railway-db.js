@@ -1,12 +1,12 @@
-import { initDatabase } from '../src/db.js';
+import * as db from '../src/db.js';
 
-console.log('🚀 Initializing Railway database schema...\n');
+console.log('🚀 Initializing Railway database...\n');
 
 try {
-  await initDatabase();
-  console.log('\n✅ Railway database initialized successfully');
+  await db.initDatabase();
+  console.log('\n✅ Database initialized successfully!');
   process.exit(0);
 } catch (error) {
-  console.error('\n❌ Database initialization failed:', error);
+  console.error('\n❌ Error:', error.message);
   process.exit(1);
 }

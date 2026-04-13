@@ -263,19 +263,24 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS asset_class VARCHAR(50);
     `);
 
-    // Stock universe table - all stocks Whiskie analyzes
+    // Stock universe table - all stocks Whiskie analyzes (FMP-aligned)
     await client.query(`
       CREATE TABLE IF NOT EXISTS stock_universe (
         id SERIAL PRIMARY KEY,
         symbol VARCHAR(10) UNIQUE NOT NULL,
-        asset_class VARCHAR(50),
+        company_name VARCHAR(200),
         sector VARCHAR(100),
-        sub_industry VARCHAR(100),
+        industry VARCHAR(100),
+        market_cap BIGINT,
         market_cap_tier VARCHAR(20),
+        price DECIMAL(10, 2),
+        avg_daily_volume BIGINT,
+        exchange VARCHAR(20),
+        country VARCHAR(10),
+        is_etf BOOLEAN DEFAULT FALSE,
+        is_actively_trading BOOLEAN DEFAULT TRUE,
         shortable BOOLEAN DEFAULT FALSE,
         last_etb_check TIMESTAMP,
-        avg_daily_volume BIGINT,
-        last_price DECIMAL(10, 2),
         bid_ask_spread DECIMAL(5, 4),
         added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         removed_date TIMESTAMP,
@@ -292,7 +297,7 @@ export async function initDatabase() {
     `);
 
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_stock_universe_sub_industry ON stock_universe(sub_industry);
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_industry ON stock_universe(industry);
     `);
 
     await client.query(`
@@ -1367,22 +1372,28 @@ export async function updateDaysHeld() {
 export async function upsertStockUniverse(stock) {
   try {
     const result = await pool.query(
-      `INSERT INTO stock_universe (symbol, sector, sub_industry, market_cap_tier, shortable, last_etb_check)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO stock_universe (symbol, company_name, sector, industry, market_cap, market_cap_tier, price, shortable, last_etb_check)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (symbol)
        DO UPDATE SET
-         sector = $2,
-         sub_industry = $3,
-         market_cap_tier = $4,
-         shortable = $5,
-         last_etb_check = $6,
+         company_name = $2,
+         sector = $3,
+         industry = $4,
+         market_cap = $5,
+         market_cap_tier = $6,
+         price = $7,
+         shortable = $8,
+         last_etb_check = $9,
          status = 'active'
        RETURNING *`,
       [
         stock.symbol,
+        stock.company_name || stock.companyName,
         stock.sector,
-        stock.sub_industry,
-        stock.market_cap_tier || 'large-cap',
+        stock.industry,
+        stock.market_cap || stock.marketCap,
+        stock.market_cap_tier || 'large',
+        stock.price,
         stock.shortable || false,
         stock.last_etb_check || null
       ]
