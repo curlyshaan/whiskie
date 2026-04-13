@@ -1420,13 +1420,13 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       let watchlistContext = '';
       if (watchlist.length > 0) {
         watchlistContext = '\n\n**WATCHLIST (stocks you are monitoring):**\n';
-        watchlist.forEach(item => {
+        for (const item of watchlist) {
           const sector = await this.getSector(item.symbol);
           const atTarget = item.current_price <= item.target_entry_price ? '✅ AT TARGET' : '';
           watchlistContext += `- ${item.symbol} (${sector}): Current $${item.current_price}, Target Entry $${item.target_entry_price} ${atTarget}\n`;
           watchlistContext += `  Why watching: ${item.why_watching}\n`;
           watchlistContext += `  Why not buying now: ${item.why_not_buying_now}\n\n`;
-        });
+        }
         console.log(`   Found ${watchlist.length} stocks on watchlist`);
         if (buyOpportunities.length > 0) {
           console.log(`   🎯 ${buyOpportunities.length} stocks at or below target entry price!`);
@@ -2206,7 +2206,7 @@ ${historyContext}`;
 
       // Parse recommendations and execute trades automatically
       console.log('🔍 Parsing trade recommendations...');
-      const recommendations = this.parseRecommendations(analysis.analysis);
+      const recommendations = await this.parseRecommendations(analysis.analysis);
 
       if (recommendations.length > 0) {
         console.log(`✅ Found ${recommendations.length} trade recommendations`);
@@ -2317,7 +2317,7 @@ ${historyContext}`;
 
       // Parse and update watchlist
       console.log('👀 Parsing watchlist updates...');
-      const watchlistItems = this.parseWatchlist(analysis.analysis);
+      const watchlistItems = await this.parseWatchlist(analysis.analysis);
 
       if (watchlistItems.length > 0) {
         console.log(`✅ Found ${watchlistItems.length} watchlist items`);
@@ -2579,7 +2579,7 @@ ${historyContext}`;
    * Required format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY_PRICE | STOP_LOSS | TAKE_PROFIT
    * Example: EXECUTE_BUY: MSFT | 100 | 400.50 | 360.00 | 450.00
    */
-  parseRecommendations(analysisText) {
+  async parseRecommendations(analysisText) {
     const recommendations = [];
 
     try {
@@ -2590,7 +2590,7 @@ ${historyContext}`;
           const parsed = JSON.parse(jsonMatch[1]);
           if (parsed.trades && Array.isArray(parsed.trades)) {
             console.log('✅ Parsed trades from JSON block');
-            return parsed.trades.map(t => ({
+            return await Promise.all(parsed.trades.map(async t => ({
               type: t.action === 'short' ? 'short' : 'long',
               symbol: t.symbol,
               quantity: t.quantity,
@@ -2600,7 +2600,7 @@ ${historyContext}`;
               assetClass: t.asset_class || await this.getSector(t.symbol),
               intent: t.intent || 'momentum', // Default to momentum if not specified
               reasoning: t.reasoning || ''
-            }));
+            })));
           }
         } catch (jsonError) {
           console.warn('⚠️ JSON block found but failed to parse, falling back to regex');
@@ -2719,7 +2719,7 @@ ${historyContext}`;
    * Parse watchlist items from analysis
    * Format: WATCHLIST_ADD: SYMBOL | Asset Class | $CurrentPrice | $TargetEntry | $TargetExit | Why watching | Why not now
    */
-  parseWatchlist(analysisText) {
+  async parseWatchlist(analysisText) {
     const watchlistItems = [];
 
     try {
