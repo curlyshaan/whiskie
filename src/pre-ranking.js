@@ -75,7 +75,8 @@ class PreRanking {
         if (passed) {
           filteredStocks.push({
             symbol: stock.symbol,
-            assetClass: stock.assetClass,
+            sector: stock.sector,
+            industry: stock.industry,
             price,
             avgVolume,
             spread
