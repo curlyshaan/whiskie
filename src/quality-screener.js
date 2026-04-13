@@ -1,5 +1,6 @@
 import tradier from './tradier.js';
 import * as db from './db.js';
+import email from './email.js';
 
 /**
  * Quality Watchlist Manager
@@ -76,6 +77,7 @@ class QualityScreener {
     console.log(`   Monitoring ${watchlist.length} long candidates...`);
 
     const opportunities = [];
+    let errors = 0;
 
     for (const stock of watchlist) {
       try {
@@ -104,10 +106,23 @@ class QualityScreener {
 
       } catch (error) {
         console.warn(`   ⚠️ Error checking ${stock.symbol}:`, error.message);
+        errors++;
       }
     }
 
     console.log(`   ✅ Prepared ${opportunities.length} long candidates for Opus analysis`);
+
+    // Alert if high error rate (>10%)
+    const errorRate = errors / watchlist.length;
+    if (errorRate > 0.10) {
+      console.error(`   ⚠️ HIGH ERROR RATE: ${(errorRate * 100).toFixed(1)}% of watchlist stocks failed`);
+      await email.sendEmail(
+        email.alertEmail,
+        'Whiskie Alert: High Error Rate in Quality Screening',
+        `Quality screening completed with ${errors} errors out of ${watchlist.length} stocks (${(errorRate * 100).toFixed(1)}%).\n\nThis may indicate API issues or data quality problems.`
+      );
+    }
+
     return opportunities;
   }
 

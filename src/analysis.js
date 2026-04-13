@@ -272,7 +272,7 @@ class AnalysisEngine {
       const atr14 = this.calculateATRFromData(sma200Data.slice(0, 14));
       const atrPercent = atr14 && currentPrice ? (atr14 / currentPrice) * 100 : null;
 
-      // MACD calculation (simplified - could use FMP's MACD endpoint if needed)
+      // MACD calculation using local method (FMP MACD endpoint not available)
       const macd = this.calculateMACDFromData(sma200Data.slice(0, 35));
 
       // --- Integrated Buy / Short Signal ---

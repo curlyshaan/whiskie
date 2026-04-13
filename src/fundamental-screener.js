@@ -1,6 +1,7 @@
 import fmp from './fmp.js';
 import tradier from './tradier.js';
 import * as db from './db.js';
+import email from './email.js';
 import { getSectorConfig, normalizeSectorName } from './sector-config.js';
 
 /**
@@ -76,33 +77,44 @@ class FundamentalScreener {
       let filtered = 0;
       let errors = 0;
 
-      for (const stock of allStocks) {
-        try {
-          const result = await this.screenStock(stock);
+      // Process stocks in batches of 20 for parallel processing
+      const BATCH_SIZE = 20;
+      for (let i = 0; i < allStocks.length; i += BATCH_SIZE) {
+        const batch = allStocks.slice(i, i + BATCH_SIZE);
 
-          if (result === null) {
-            filtered++;
+        const results = await Promise.allSettled(
+          batch.map(stock => this.screenStock(stock))
+        );
+
+        for (let j = 0; j < results.length; j++) {
+          const result = results[j];
+          const stock = batch[j];
+
+          if (result.status === 'fulfilled') {
+            const screenResult = result.value;
+
+            if (screenResult === null) {
+              filtered++;
+            } else {
+              if (screenResult.longScore !== null) longCandidates.push(screenResult);
+              if (screenResult.shortScore !== null) shortCandidates.push(screenResult);
+            }
+
+            processed++;
+
+            // Debug logging for first 10 stocks
+            if (processed <= 10 && screenResult !== null) {
+              console.log(`   DEBUG ${stock.symbol}: Long=${screenResult.longScore || 'null'} (${screenResult.longPathway || 'none'}), Short=${screenResult.shortScore || 'null'}`);
+            }
           } else {
-            if (result.longScore !== null) longCandidates.push(result);
-            if (result.shortScore !== null) shortCandidates.push(result);
+            errors++;
+            console.warn(`   ⚠️ Error screening ${stock.symbol}:`, result.reason?.message || result.reason);
+            processed++;
           }
+        }
 
-          processed++;
-
-          // Debug logging for first 10 stocks
-          if (processed <= 10 && result !== null) {
-            console.log(`   DEBUG ${stock.symbol}: Long=${result.longScore || 'null'} (${result.longPathway || 'none'}), Short=${result.shortScore || 'null'}`);
-          }
-
-          if (processed % 50 === 0) {
-            console.log(`   Progress: ${processed}/${allStocks.length} | Longs: ${longCandidates.length} | Shorts: ${shortCandidates.length}`);
-          }
-
-        } catch (error) {
-          errors++;
-          if (errors <= 5) {
-            console.warn(`   ⚠️ Error screening ${stock.symbol}:`, error.message);
-          }
+        if (processed % 50 === 0) {
+          console.log(`   Progress: ${processed}/${allStocks.length} | Longs: ${longCandidates.length} | Shorts: ${shortCandidates.length}`);
         }
       }
 
@@ -111,6 +123,17 @@ class FundamentalScreener {
       console.log(`   Processed: ${processed} | Filtered out: ${filtered} | Errors: ${errors}`);
       console.log(`   Long candidates: ${longCandidates.length}`);
       console.log(`   Short candidates: ${shortCandidates.length}`);
+
+      // Alert if high error rate (>10%)
+      const errorRate = errors / allStocks.length;
+      if (errorRate > 0.10) {
+        console.error(`   ⚠️ HIGH ERROR RATE: ${(errorRate * 100).toFixed(1)}% of stocks failed screening`);
+        await email.sendEmail(
+          email.alertEmail,
+          'Whiskie Alert: High Error Rate in Fundamental Screening',
+          `Fundamental screening completed with ${errors} errors out of ${allStocks.length} stocks (${(errorRate * 100).toFixed(1)}%).\n\nThis may indicate API issues or data quality problems.`
+        );
+      }
 
       // Sort by score
       const sortedLongs = longCandidates.sort((a, b) => b.longScore - a.longScore);

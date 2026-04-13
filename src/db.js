@@ -416,6 +416,7 @@ export async function initDatabase() {
         pathway VARCHAR(30) NOT NULL,
         asset_class VARCHAR(50),
         sector VARCHAR(100),
+        industry VARCHAR(100),
         score INTEGER,
         metrics JSONB,
         reasons TEXT,
@@ -443,6 +444,12 @@ export async function initDatabase() {
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_status ON saturday_watchlist(status);
+    `);
+
+    // Add industry column to saturday_watchlist if it doesn't exist (migration for existing databases)
+    await client.query(`
+      ALTER TABLE saturday_watchlist
+      ADD COLUMN IF NOT EXISTS industry VARCHAR(100);
     `);
 
     // Add pathway and sector columns to quality_watchlist if they don't exist

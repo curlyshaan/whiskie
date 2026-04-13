@@ -1,7 +1,14 @@
 /**
  * Sector-Specific Scoring Configuration
  * Different sectors have different normal ranges for valuation and growth metrics
+ * Also includes momentum thresholds for pre-ranking
  */
+
+// Default momentum thresholds (can be overridden per sector)
+const DEFAULT_MOMENTUM = {
+  minMove: 0.020,        // 2.0% default
+  minVolumeSurge: 1.5    // 1.5x volume default
+};
 
 export const SECTOR_CONFIGS = {
   'Technology': {
@@ -12,6 +19,11 @@ export const SECTOR_CONFIGS = {
     earningsGrowthMin: 0.10,
     debtToEquityMax: 0.5,
     operatingMarginMin: 0.15,
+    // Momentum thresholds for pre-ranking
+    momentum: {
+      minMove: 0.025,        // 2.5% (Tech is volatile, higher threshold)
+      minVolumeSurge: 1.3    // 1.3x volume
+    },
     weights: {
       revenueGrowth: 30,      // Tech = growth story
       earningsGrowth: 20,
@@ -31,6 +43,10 @@ export const SECTOR_CONFIGS = {
     earningsGrowthMin: 0.08,
     debtToEquityMax: 0.8,
     operatingMarginMin: 0.08,
+    momentum: {
+      minMove: 0.020,        // 2.0%
+      minVolumeSurge: 1.5
+    },
     weights: {
       revenueGrowth: 20,
       earningsGrowth: 20,
@@ -219,7 +235,14 @@ export const SECTOR_CONFIGS = {
  * Returns default config if sector not found
  */
 export function getSectorConfig(sector) {
-  return SECTOR_CONFIGS[sector] || SECTOR_CONFIGS['Technology']; // Default to Tech
+  const config = SECTOR_CONFIGS[sector] || SECTOR_CONFIGS['Technology'];
+
+  // Add default momentum if not specified
+  if (!config.momentum) {
+    config.momentum = DEFAULT_MOMENTUM;
+  }
+
+  return config;
 }
 
 /**

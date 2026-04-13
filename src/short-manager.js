@@ -1,5 +1,4 @@
 import tradier from './tradier.js';
-import yahooFinance from './yahoo-finance.js';
 import * as db from './db.js';
 
 /**
@@ -62,31 +61,11 @@ class ShortManager {
       errors.push(`Failed to verify ETB status: ${error.message}`);
     }
 
-    // Check short interest as % of float (squeeze risk)
-    try {
-      const shortStats = await yahooFinance.getShortInterest(symbol);
-
-      if (shortStats && shortStats.shortPercentOfFloat) {
-        const shortPct = shortStats.shortPercentOfFloat;
-
-        if (shortPct > 0.30) {
-          // >30% short float = very high squeeze risk, hard block
-          errors.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — extreme squeeze risk, cannot short`);
-        } else if (shortPct > this.MAX_SHORT_FLOAT) {
-          // >15% = elevated risk, hard block (reduced from 20%)
-          errors.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% (max ${(this.MAX_SHORT_FLOAT * 100).toFixed(0)}%) — squeeze risk, cannot short`);
-        } else if (shortPct > 0.10) {
-          warnings.push(`${symbol} short float is ${(shortPct * 100).toFixed(0)}% — moderate squeeze risk, monitor closely`);
-        }
-
-        // Check Days to Cover (squeeze risk indicator)
-        if (shortStats.shortRatio) {
-          const daysToCover = shortStats.shortRatio;
-
-          if (daysToCover > this.MAX_DAYS_TO_COVER) {
-            errors.push(`${symbol} days to cover is ${daysToCover.toFixed(1)} (max ${this.MAX_DAYS_TO_COVER}) — extreme squeeze risk, cannot short`);
-          } else if (daysToCover >= this.ELEVATED_DAYS_TO_COVER) {
-            warnings.push(`${symbol} days to cover is ${daysToCover.toFixed(1)} — elevated squeeze risk, max position 8%`);
+    // Short interest data not available from FMP or Yahoo Finance
+    // Relying on ETB verification + IV filter (80% max) to avoid meme stocks
+    // IV filter is effective since meme stocks typically have 100%+ IV
+    // Note: Without short interest data, we cannot check squeeze risk
+    // This is a known limitation - monitor positions closely
           }
         }
 
@@ -455,28 +434,13 @@ class ShortManager {
   }
 
   /**
-   * Get maximum position size based on Days to Cover
-   * DTC <4: 12% max
-   * DTC 4-5: 5% max
-   * DTC >5: blocked (handled in isShortable)
+   * Get maximum position size for short positions
+   * Without short interest data, use standard limit (12%)
+   * Note: This used to adjust based on Days to Cover, but that data is no longer available
    */
   async getMaxPositionSize(symbol) {
-    try {
-      const shortStats = await yahooFinance.getShortInterest(symbol);
-
-      if (shortStats && shortStats.shortRatio) {
-        const daysToCover = shortStats.shortRatio;
-
-        if (daysToCover >= this.ELEVATED_DAYS_TO_COVER) {
-          return this.REDUCED_SHORT_POSITION_PCT; // 5% for DTC 4-5
-        }
-      }
-
-      return this.MAX_SHORT_POSITION_PCT; // 12% for DTC <4
-    } catch (error) {
-      console.warn(`Could not fetch DTC for ${symbol}, using standard limit`);
-      return this.MAX_SHORT_POSITION_PCT;
-    }
+    // Without short interest data, use standard short position limit
+    return this.MAX_SHORT_POSITION_PCT; // 12%
   }
 
   /**

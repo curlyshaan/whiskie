@@ -1,6 +1,8 @@
 import tradier from './tradier.js';
+import fmp from './fmp.js';
 import * as db from './db.js';
 import sectorRotation from './sector-rotation.js';
+import { getSectorConfig } from './sector-config.js';
 
 /**
  * Pre-Ranking Algorithm
@@ -43,15 +45,41 @@ class PreRanking {
     ];
     console.log(`   Merged candidates: ${mergedStocks.length} (${watchlistStocks.length} from watchlist, ${mergedStocks.length - watchlistStocks.length} from universe)`);
 
-    // Filter stocks with live spread/volume/price checks
+    // Filter stocks with live spread/volume/price checks using batch quote fetching
     console.log(`   🔍 Starting live filtering with spread/volume/price checks...`);
     const filteredStocks = [];
     const failedStocks = { volume: [], spread: [], price: [], noQuote: [] };
-    let processed = 0;
 
+    // Batch fetch all quotes at once (much faster than one-by-one)
+    const symbols = mergedStocks.map(s => s.symbol);
+    console.log(`   📡 Fetching ${symbols.length} quotes in batch...`);
+
+    let quotes;
+    try {
+      quotes = await tradier.getQuotes(symbols);
+      // Normalize to array if single quote returned
+      if (!Array.isArray(quotes)) {
+        quotes = [quotes];
+      }
+    } catch (error) {
+      console.error(`   ❌ Batch quote fetch failed: ${error.message}`);
+      return { longs: [], shorts: [], scored: 0 };
+    }
+
+    // Create quote lookup map
+    const quoteMap = new Map();
+    for (const quote of quotes) {
+      if (quote && quote.symbol) {
+        quoteMap.set(quote.symbol, quote);
+      }
+    }
+
+    console.log(`   ✅ Fetched ${quoteMap.size} quotes`);
+
+    // Filter stocks using batch-fetched quotes
     for (const stock of mergedStocks) {
       try {
-        const quote = await tradier.getQuote(stock.symbol);
+        const quote = quoteMap.get(stock.symbol);
         if (!quote) {
           failedStocks.noQuote.push(stock.symbol);
           continue;
@@ -96,13 +124,6 @@ class PreRanking {
             watchlistScore: stock.score || null,
             source: stock.source
           });
-          const pathwayTag = stock.pathway ? ` [${stock.pathway}]` : '';
-          console.log(`   ✅ ${stock.symbol}${pathwayTag}: PASSED (vol: $${(dollarVolume/1e6).toFixed(1)}M, spread: ${(spread*100).toFixed(2)}%, price: $${price.toFixed(2)})`);
-        }
-
-        processed++;
-        if (processed % 50 === 0) {
-          console.log(`   📊 Progress: ${processed}/${mergedStocks.length} processed, ${filteredStocks.length} passed so far`);
         }
       } catch (error) {
         console.warn(`   ⚠️ Error filtering ${stock.symbol}:`, error.message);
@@ -116,6 +137,25 @@ class PreRanking {
     console.log(`      • Failed price check: ${failedStocks.price.length} stocks`);
     console.log(`      • No quote data: ${failedStocks.noQuote.length} stocks`);
 
+    // Get earnings calendar and filter candidates
+    console.log(`\n   📅 Fetching earnings calendar...`);
+    const earningsCalendar = await fmp.getEarningsCalendar();
+    const earningsMap = new Map();
+    const today = new Date();
+
+    for (const earning of earningsCalendar) {
+      const earningDate = new Date(earning.date);
+      const daysUntilEarnings = Math.floor((earningDate - today) / (1000 * 60 * 60 * 24));
+
+      // Track earnings from -3 days (just reported) to +7 days (upcoming)
+      if (daysUntilEarnings >= -3 && daysUntilEarnings <= 7) {
+        earningsMap.set(earning.symbol, { date: earning.date, daysUntil: daysUntilEarnings });
+      }
+    }
+
+    console.log(`   ✅ Found ${earningsMap.size} stocks with earnings in range (-3 to +7 days)`);
+    console.log(`   💡 Stocks with earnings -1 to -3 days (just reported) are ALLOWED for post-earnings dip opportunities`);
+
     // Get sector rotation data
     const sectorStrength = await sectorRotation.analyzeSectorStrength();
     const sectorMap = this.buildSectorMap(sectorStrength);
@@ -124,7 +164,7 @@ class PreRanking {
     const scoredStocks = [];
     for (const stock of filteredStocks) {
       try {
-        const score = await this.scoreStock(stock, sectorMap);
+        const score = await this.scoreStock(stock, sectorMap, earningsMap);
         if (score) {
           scoredStocks.push(score);
         }
@@ -153,12 +193,18 @@ class PreRanking {
       longs: longCandidates.map(s => ({
         symbol: s.symbol,
         pathway: s.pathway || null,
-        score: s.score
+        score: s.score,
+        source: s.pathway ? 'watchlist' : 'momentum',
+        sourceReasons: s.reasons,
+        timestamp: new Date().toISOString()
       })),
       shorts: shortCandidates.map(s => ({
         symbol: s.symbol,
         pathway: s.pathway || null,
-        score: s.score
+        score: s.score,
+        source: s.pathway ? 'watchlist' : 'momentum',
+        sourceReasons: s.reasons,
+        timestamp: new Date().toISOString()
       })),
       scored: scoredStocks.length
     };
@@ -221,9 +267,9 @@ class PreRanking {
 
   /**
    * Score individual stock
-   * Returns: { symbol, score, direction, reasons }
+   * Returns: { symbol, score, direction, reasons, earningsDate }
    */
-  async scoreStock(stock, sectorMap) {
+  async scoreStock(stock, sectorMap, earningsMap) {
     // Get real-time quote
     const quote = await tradier.getQuote(stock.symbol);
     if (!quote) return null;
@@ -239,6 +285,13 @@ class PreRanking {
     // Get sector strength
     const sectorData = sectorMap[stock.sector] || { strength: 0, status: 'NEUTRAL' };
 
+    // Get sector-specific momentum thresholds
+    const sectorConfig = getSectorConfig(stock.sector);
+    const momentumThresholds = sectorConfig.momentum;
+
+    // Check earnings calendar
+    const earningsInfo = earningsMap.get(stock.symbol);
+
     // Calculate momentum score
     let score = 0;
     let direction = null;
@@ -246,7 +299,25 @@ class PreRanking {
 
     // LONG SCORING
     if (change > 0) {
-      // Positive momentum
+      // Earnings filter for longs: exclude if earnings in next 3 days (imminent risk)
+      // BUT allow stocks that reported 1-3 days ago (post-earnings dip opportunity)
+      if (earningsInfo && earningsInfo.daysUntil >= 0 && earningsInfo.daysUntil <= 3) {
+        console.log(`   ⚠️ ${stock.symbol} has earnings in ${earningsInfo.daysUntil} days - excluding from longs (imminent risk)`);
+        return null;
+      }
+      // Note: Stocks with earnings -1 to -3 days (just reported) are ALLOWED
+      // Tavily news in daily analysis will catch "good earnings but stock down" opportunities
+
+      // Check if meets sector-adjusted momentum threshold
+      const meetsThreshold = Math.abs(change / 100) >= momentumThresholds.minMove &&
+                            volumeSurge >= momentumThresholds.minVolumeSurge;
+
+      if (!meetsThreshold) {
+        // Doesn't meet sector-specific momentum threshold
+        return null;
+      }
+
+      // Positive momentum (sector-adjusted scoring)
       if (change >= 3) {
         score += 30;
         reasons.push(`+${change.toFixed(1)}% intraday`);
@@ -279,7 +350,22 @@ class PreRanking {
 
     // SHORT SCORING
     if (change < 0) {
-      // Negative momentum
+      // Check if meets sector-adjusted momentum threshold
+      const meetsThreshold = Math.abs(change / 100) >= momentumThresholds.minMove &&
+                            volumeSurge >= momentumThresholds.minVolumeSurge;
+
+      if (!meetsThreshold) {
+        // Doesn't meet sector-specific momentum threshold
+        return null;
+      }
+
+      // Earnings boost for shorts: if earnings in next 3 days, boost score (IV spike opportunity)
+      if (earningsInfo && earningsInfo.daysUntil <= 3) {
+        score += 15;
+        reasons.push(`earnings in ${earningsInfo.daysUntil} days (IV spike)`);
+      }
+
+      // Negative momentum (sector-adjusted scoring)
       if (change <= -3) {
         score += 30;
         reasons.push(`${change.toFixed(1)}% breakdown`);
@@ -320,8 +406,10 @@ class PreRanking {
       price,
       change,
       volumeSurge: volumeSurge.toFixed(1),
-      pathway: stock.pathway || null,  // Preserve pathway from watchlist
-      watchlistScore: stock.watchlistScore || null
+      pathway: stock.pathway || null,
+      watchlistScore: stock.watchlistScore || null,
+      earningsDate: earningsInfo ? earningsInfo.date : null,
+      daysUntilEarnings: earningsInfo ? earningsInfo.daysUntil : null
     };
   }
 }

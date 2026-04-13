@@ -1687,7 +1687,14 @@ ${learningContext}
 **Input:** ${candidates.longs.length} long candidates from Phase 1
 
 **Long Candidates:**
-${candidates.longs.map(sym => `- ${sym}: $${fullMarketData[sym]?.price || 'N/A'} (${fullMarketData[sym]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[sym]?.change_percentage || 0}%)`).join('\n')}
+${candidates.longs.map(c => {
+  const price = fullMarketData[c.symbol]?.price || 'N/A';
+  const change = fullMarketData[c.symbol]?.change_percentage || 0;
+  const changeStr = change >= 0 ? `+${change}` : `${change}`;
+  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
+  const scoreTag = c.score ? ` (score: ${c.score})` : '';
+  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
+}).join('\n')}
 ${stockProfileContext}
 ${recentAnalysisContext}
 
@@ -1832,7 +1839,14 @@ ${learningContext}
 **Input:** ${candidates.shorts.length} short candidates from Phase 1
 
 **Short Candidates:**
-${candidates.shorts.map(sym => `- ${sym}: $${fullMarketData[sym]?.price || 'N/A'} (${fullMarketData[sym]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[sym]?.change_percentage || 0}%)`).join('\n')}
+${candidates.shorts.map(c => {
+  const price = fullMarketData[c.symbol]?.price || 'N/A';
+  const change = fullMarketData[c.symbol]?.change_percentage || 0;
+  const changeStr = change >= 0 ? `+${change}` : `${change}`;
+  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
+  const scoreTag = c.score ? ` (score: ${c.score})` : '';
+  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
+}).join('\n')}
 ${shortProfileContext}
 ${shortRecentAnalysisContext}
 
@@ -2017,10 +2031,24 @@ When constructing trades, preserve the pathway context and assign appropriate in
 All prices below are LIVE quotes - use these exact prices for entry calculations.
 
 Long Candidates:
-${candidates.longs.map(c => `- ${c.symbol}: $${fullMarketData[c.symbol]?.price || 'N/A'} (${fullMarketData[c.symbol]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[c.symbol]?.change_percentage || 0}%)`).join('\n')}
+${candidates.longs.map(c => {
+  const price = fullMarketData[c.symbol]?.price || 'N/A';
+  const change = fullMarketData[c.symbol]?.change_percentage || 0;
+  const changeStr = change >= 0 ? `+${change}` : `${change}`;
+  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
+  const scoreTag = c.score ? ` (score: ${c.score})` : '';
+  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
+}).join('\n')}
 
 Short Candidates:
-${candidates.shorts.map(c => `- ${c.symbol}: $${fullMarketData[c.symbol]?.price || 'N/A'} (${fullMarketData[c.symbol]?.change_percentage >= 0 ? '+' : ''}${fullMarketData[c.symbol]?.change_percentage || 0}%)`).join('\n')}
+${candidates.shorts.map(c => {
+  const price = fullMarketData[c.symbol]?.price || 'N/A';
+  const change = fullMarketData[c.symbol]?.change_percentage || 0;
+  const changeStr = change >= 0 ? `+${change}` : `${change}`;
+  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
+  const scoreTag = c.score ? ` (score: ${c.score})` : '';
+  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
+}).join('\n')}
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}

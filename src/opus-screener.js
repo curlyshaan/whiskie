@@ -22,23 +22,27 @@ class OpusScreener {
   /**
    * Run weekly Opus screening for quality and overvalued stocks
    * Called during Sunday weekly review
+   *
+   * NEW APPROACH: Analyzes fundamental screening results instead of raw universe
+   * This leverages Saturday's fundamental screening work and provides better candidates
    */
   async runWeeklyOpusScreening() {
     console.log('\n🧠 Running Opus-driven quality and overvalued screening...');
     const startTime = Date.now();
 
     try {
-      // Get all stocks from FMP-based universe
-      const allStocks = await this.getAllStocks();
-      console.log(`   Analyzing ${allStocks.length} stocks with Opus...`);
+      // Get top candidates from Saturday's fundamental screening
+      const fundamentalCandidates = await this.getFundamentalCandidates();
+      console.log(`   Analyzing ${fundamentalCandidates.length} pre-screened candidates with Opus...`);
+      console.log(`   (${fundamentalCandidates.filter(c => c.intent === 'LONG').length} longs, ${fundamentalCandidates.filter(c => c.intent === 'SHORT').length} shorts)`);
 
       // Fetch fundamental data using FMP paid API
       console.log('   📊 Fetching fundamental data from FMP...');
       const fundamentalsData = {};
       let fmpCount = 0;
-      const totalStocks = allStocks.length;
+      const totalStocks = fundamentalCandidates.length;
 
-      for (const stock of allStocks) {
+      for (const stock of fundamentalCandidates) {
         // Fetch from FMP directly (no cache)
         const data = await fmp.getFundamentals(stock.symbol);
 
@@ -47,8 +51,8 @@ class OpusScreener {
           fundamentalsData[stock.symbol] = data;
         }
 
-        // Progress logging every 50 stocks
-        if (fmpCount % 50 === 0) {
+        // Progress logging every 20 stocks
+        if (fmpCount % 20 === 0) {
           console.log(`   Progress: ${fmpCount}/${totalStocks} stocks loaded`);
         }
 
@@ -81,12 +85,17 @@ class OpusScreener {
 
       // Build comprehensive dataset for Opus
       const stocksForAnalysis = [];
-      for (const symbol of symbols) {
+      for (const candidate of fundamentalCandidates) {
+        const symbol = candidate.symbol;
         if (fundamentalsData[symbol] && marketData[symbol]) {
           stocksForAnalysis.push({
             symbol,
             fundamentals: fundamentalsData[symbol],
-            market: marketData[symbol]
+            market: marketData[symbol],
+            pathway: candidate.pathway,
+            fundamentalScore: candidate.score,
+            fundamentalReasons: candidate.reasons,
+            intent: candidate.intent
           });
         }
       }
@@ -116,7 +125,32 @@ class OpusScreener {
   }
 
   /**
-   * Get all stocks from FMP-based universe
+   * Get fundamental candidates from Saturday's screening
+   * Returns top 50 longs + top 50 shorts from saturday_watchlist
+   */
+  async getFundamentalCandidates() {
+    const result = await db.query(
+      `SELECT symbol, intent, pathway, sector, industry, score, reasons
+       FROM saturday_watchlist
+       WHERE status = 'active'
+       ORDER BY score DESC
+       LIMIT 100`,
+      []
+    );
+
+    return result.rows.map(row => ({
+      symbol: row.symbol,
+      intent: row.intent,
+      pathway: row.pathway,
+      sector: row.sector,
+      industry: row.industry,
+      score: row.score,
+      reasons: row.reasons
+    }));
+  }
+
+  /**
+   * Get all stocks from FMP-based universe (DEPRECATED - use getFundamentalCandidates instead)
    */
   async getAllStocks() {
     const result = await db.query(
@@ -141,26 +175,35 @@ class OpusScreener {
       .sort((a, b) => b.fundamentals.marketCap - a.fundamentals.marketCap)
       .slice(0, 100);
 
-    const prompt = `You are analyzing ${sortedStocks.length} stocks to identify:
+    const prompt = `You are analyzing ${sortedStocks.length} pre-screened stocks from Saturday's fundamental screening to refine and rank them.
 
-1. **QUALITY STOCKS** (15 max) - High-quality companies for dip-buying opportunities
+**Context:** These stocks were already identified by fundamental metrics screening with specific pathways (deepValue, highGrowth, overvalued, etc.). Your job is to:
+1. Use current news/catalysts (via Tavily) to validate or invalidate the fundamental thesis
+2. Reference stock profiles to understand business context and recent changes
+3. Rank and refine the list to identify the TOP 15 quality longs and TOP 15 overvalued shorts
+
+**QUALITY STOCKS** (15 max) - High-quality companies for dip-buying opportunities
    - Strong fundamentals: High ROE (>15%), low debt/equity (<0.5), positive FCF
    - Consistent growth: Revenue growth >10%, earnings growth >10%
    - Market leaders: High operating margins (>15%), strong competitive moats
    - Currently trading below intrinsic value or near support levels
+   - **Recent catalyst or news that validates the opportunity**
 
-2. **OVERVALUED/BROKEN STOCKS** (15 max) - Short candidates with deteriorating fundamentals
+**OVERVALUED/BROKEN STOCKS** (15 max) - Short candidates with deteriorating fundamentals
    - Overvaluation: High P/E (>30), high PEG (>2), extended from fundamentals
    - Deteriorating metrics: Declining margins, rising debt, negative FCF
    - Broken growth: Negative revenue/earnings growth, contracting business
    - Technical weakness: Extended from highs, showing distribution
+   - **Recent news showing deterioration or negative catalyst**
 
-**Stock Data:**
+**Stock Data (with fundamental screening context):**
 
 ${sortedStocks.map(s => {
-  const insiderSignal = s.insiderTrading ? advancedFMPScreener.analyzeInsiderTrading(s.insiderTrading) : null;
+  const pathwayTag = s.pathway ? ` [${s.pathway}]` : '';
+  const scoreTag = s.fundamentalScore ? ` (fundamental score: ${s.fundamentalScore})` : '';
+  const reasonsTag = s.fundamentalReasons ? `\n  Fundamental screening reasons: ${s.fundamentalReasons}` : '';
   return `
-${s.symbol} (${s.fundamentals.sector || 'Unknown'})
+${s.symbol}${pathwayTag}${scoreTag} (${s.fundamentals.sector || 'Unknown'})
   Market Cap: $${((s.fundamentals.marketCap || 0) / 1e9).toFixed(1)}B
   Price: $${s.market.price || 0} (52w high: $${s.market.high52w || 0}, ${(((s.market.price || 0) - (s.market.high52w || 1)) / (s.market.high52w || 1) * 100).toFixed(1)}% from high)
   P/E: ${(s.fundamentals.peRatio || 0).toFixed(1)}, PEG: ${(s.fundamentals.pegRatio || 0).toFixed(2)}
@@ -168,7 +211,7 @@ ${s.symbol} (${s.fundamentals.sector || 'Unknown'})
   Debt/Equity: ${(s.fundamentals.debtToEquity || 0).toFixed(2)}, ROE: ${((s.fundamentals.roe || 0) * 100).toFixed(1)}%
   Operating Margin: ${((s.fundamentals.operatingMargin || 0) * 100).toFixed(1)}%, Net Margin: ${((s.fundamentals.profitMargin || 0) * 100).toFixed(1)}%
   FCF: $${((s.fundamentals.freeCashflow || 0) / 1e9).toFixed(2)}B
-  Target Price: $${(s.fundamentals.targetMeanPrice || 0).toFixed(2)} (${s.fundamentals.numberOfAnalysts || 0} analysts)${insiderSignal ? `\n  Insider Trading: ${insiderSignal.signal} - ${insiderSignal.reason}` : ''}
+  Target Price: $${(s.fundamentals.targetMeanPrice || 0).toFixed(2)} (${s.fundamentals.numberOfAnalysts || 0} analysts)${reasonsTag}
 `;
 }).join('\n')}
 

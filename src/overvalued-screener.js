@@ -1,6 +1,5 @@
 import tradier from './tradier.js';
 import * as db from './db.js';
-import yahooFinance from './yahoo-finance.js';
 
 /**
  * Overvalued Watchlist Manager
@@ -42,23 +41,11 @@ class OvervaluedScreener {
     const volumeSurge = avgVolume > 0 ? volume / avgVolume : 0;
 
     // Get short squeeze risk data
-    // NOTE: Yahoo Finance API currently returning 401 errors
+    // Short interest data not available from FMP
     // Relying on ETB verification + IV filter (80% max) in short-manager.js
     // to avoid meme stocks. IV filter is effective since meme stocks typically
-    // have 100%+ IV. Short interest data would be nice-to-have but not critical.
-    let shortData = null;
-    try {
-      const shortStats = await yahooFinance.getShortInterest(symbol);
-      if (shortStats) {
-        shortData = {
-          shortFloat: shortStats.shortPercentOfFloat || 0,
-          daysToCover: shortStats.shortRatio || 0
-        };
-      }
-    } catch (error) {
-      // Non-blocking - short interest data unavailable but not critical
-      // ETB + IV filters provide adequate meme stock protection
-    }
+    // have 100%+ IV.
+    const shortData = null;
 
     return {
       symbol,
