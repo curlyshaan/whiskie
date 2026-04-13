@@ -43,10 +43,17 @@ class AllocationManager {
   }
 
   /**
-   * Get all asset class limits (DEPRECATED - returns empty)
+   * Get all asset class limits
+   * Returns 30% limit for all sectors (from MAX_SECTOR_ALLOCATION env var)
    */
   async getAllAssetClassLimits() {
-    return {};
+    const maxSectorAllocation = parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.30;
+
+    // Return default limit for all sectors
+    // This will be used as fallback for any sector not explicitly defined
+    return new Proxy({}, {
+      get: (target, prop) => maxSectorAllocation
+    });
   }
 
   /**

@@ -13,16 +13,23 @@ class SectorValidator {
       'Cloud': ['AMZN', 'GOOGL', 'MSFT', 'ORCL', 'IBM'],
       'Cybersecurity': ['CRWD', 'ZS', 'PANW', 'FTNT', 'S', 'OKTA', 'NET'],
       'E-commerce': ['AMZN', 'SHOP', 'EBAY', 'ETSY', 'W'],
+      'Media & Entertainment': ['SPOT', 'NFLX', 'DIS', 'PARA', 'WBD'],
 
       // Healthcare
       'Biotech': ['GILD', 'AMGN', 'REGN', 'VRTX', 'BIIB', 'MRNA', 'BNTX'],
       'Pharma': ['JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'BMY', 'GSK'],
       'Medical Devices': ['MDT', 'ABT', 'TMO', 'DHR', 'SYK', 'BSX', 'EW'],
+      'Healthcare Services': ['CVS', 'UNH', 'CI', 'HUM', 'ELV', 'CNC'],
 
       // Financial Services
       'Banks': ['JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'USB', 'PNC', 'TFC'],
       'Insurance': ['BRK.B', 'UNH', 'PGR', 'MET', 'AIG', 'ALL', 'TRV'],
       'Payments': ['V', 'MA', 'PYPL', 'SQ', 'AXP'],
+      'Asset Managers': ['BLK', 'APO', 'KKR', 'BX', 'ARES', 'CG'],
+
+      // Professional Services
+      'Consulting': ['ACN', 'IBM', 'CTSH', 'LDOS'],
+      'HR & Payroll': ['ADP', 'PAYX', 'WEX'],
 
       // Consumer
       'Retail': ['WMT', 'TGT', 'COST', 'HD', 'LOW', 'TJX', 'ROST'],
