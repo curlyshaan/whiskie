@@ -125,11 +125,11 @@ class WeeklyOpusReview {
   async analyzePathway(pathway, stocks) {
     const analyzed = [];
 
-    // Performance optimization: Only analyze top 30 per pathway (not all candidates)
-    // This reduces runtime from 3-6 hours to 1-2 hours
+    // Performance optimization: Only analyze top 20 per pathway (not all candidates)
+    // Sorted by fundamental score, then Opus picks top 15 by thesis strength
     const topCandidates = stocks
       .sort((a, b) => b.score - a.score)
-      .slice(0, 30);
+      .slice(0, 20);
 
     console.log(`   Analyzing top ${topCandidates.length}/${stocks.length} candidates (sorted by fundamental score)`);
 
