@@ -572,12 +572,8 @@ Return ONLY a JSON object with this structure (no other text):
   "metric_name": "why it matters for this stock"
 }`;
 
-                const response = await claude.deepAnalysis(prompt, {
-                  model: MODELS.SONNET,
-                  temperature: 0.1,
-                  maxTokens: 500,
-                  enableThinking: false
-                });
+                const messages = [{ role: 'user', content: prompt }];
+                const response = await claude.sendMessage(messages, MODELS.SONNET, null, false, 0);
 
                 let keyMetrics = null;
                 try {
