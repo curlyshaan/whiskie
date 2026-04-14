@@ -572,10 +572,11 @@ Return ONLY a JSON object with this structure (no other text):
   "metric_name": "why it matters for this stock"
 }`;
 
-                const response = await claude.generateText(prompt, {
+                const response = await claude.deepAnalysis(prompt, {
                   model: MODELS.OPUS,
                   temperature: 0.1,
-                  maxTokens: 500
+                  maxTokens: 500,
+                  enableThinking: false
                 });
 
                 let keyMetrics = null;
