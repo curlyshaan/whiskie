@@ -42,8 +42,8 @@ class FundamentalScreener {
 
     this.MIN_SHORT_MARKET_CAP = 2_000_000_000; // $2B minimum for shorts
     this.MIN_SHORT_DOLLAR_VOLUME = 20_000_000; // $20M daily volume for shorts
-    this.LONG_THRESHOLD = 40;               // Pass if ANY pathway ≥40 (raised from 35)
-    this.SHORT_THRESHOLD = 55;              // Raised from 50 for higher conviction
+    this.LONG_THRESHOLD = 38;               // Pass if ANY pathway ≥38 (relaxed from 40)
+    this.SHORT_THRESHOLD = 50;              // Relaxed from 55 for more short candidates
     this.MAX_SHORT_FLOAT = 0.15;            // Max 15% short float (reduced from 20%)
     this.debugCounter = 0;                  // Track stocks for debug logging
   }
@@ -384,14 +384,17 @@ class FundamentalScreener {
     let score = 0;
     const reasons = [];
 
-    // High growth - valuation ignored entirely
+    // High growth - tiered scoring to capture 18-25% growers in current macro
     if (metrics.revenueGrowth >= 0.50) {
       score += 40;
       reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (exceptional)`);
     } else if (metrics.revenueGrowth >= 0.30) {
-      score += 30;
+      score += 40;
       reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (strong)`);
-    } else if (metrics.revenueGrowth >= (sectorConfig.revenueGrowthMin || 0.1) * 1.5) {
+    } else if (metrics.revenueGrowth >= 0.20) {
+      score += 25;
+      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (solid)`);
+    } else if (metrics.revenueGrowth >= 0.15) {
       score += 15;
       reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth`);
     }
@@ -611,9 +614,9 @@ class FundamentalScreener {
     // Market cap requirement: $500M minimum (distress acceptable, upside compensates)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.turnaround) return { score: 0, reasons: [] };
 
-    // Debt ceiling - tightened from 2.0 to 1.5
-    if (metrics.debtToEquity > 1.5) {
-      return { score: 0, reasons: ['Turnaround requires D/E ≤ 1.5 (balance sheet must survive recovery period)'] };
+    // Debt ceiling - relaxed back to 2.0 (turnarounds often have elevated debt)
+    if (metrics.debtToEquity > 2.0) {
+      return { score: 0, reasons: ['Turnaround requires D/E ≤ 2.0 (balance sheet must survive recovery period)'] };
     }
 
     let score = 0;
