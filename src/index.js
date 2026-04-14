@@ -1934,6 +1934,13 @@ ${historyContext}`;
         phase3Analysis.analysis
       );
       console.log(`📝 Extracted reasoning for ${Object.keys(stockReasoningMap).length} stocks from Phase 2/3`);
+
+      // Log which stocks have reasoning
+      if (Object.keys(stockReasoningMap).length > 0) {
+        console.log(`   Stocks with detailed reasoning: ${Object.keys(stockReasoningMap).join(', ')}`);
+      } else {
+        console.log(`   ⚠️ No detailed reasoning extracted - check Phase 2/3 output format`);
+      }
       console.log('');
 
       // Save Phase 2 and Phase 3 to database for dashboard display
@@ -2301,8 +2308,16 @@ ${historyContext}`;
           const action = rec.type === 'short' ? 'SHORT' : 'BUY';
           console.log(`   💰 Preparing trade: ${action} ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
 
-          // Use detailed reasoning from Phase 2/3 if available, otherwise fall back to Phase 4 reasoning
-          const detailedReasoning = stockReasoningMap[rec.symbol] || rec.reasoning;
+          // Use detailed reasoning from Phase 2/3 if available, otherwise create descriptive fallback
+          let detailedReasoning = stockReasoningMap[rec.symbol];
+
+          if (!detailedReasoning) {
+            // Create descriptive fallback from available data
+            const action = rec.type === 'short' ? 'Short' : 'Long';
+            const pathwayDesc = rec.pathway ? ` (${rec.pathway} pathway)` : '';
+            const intentDesc = rec.intent ? ` - ${rec.intent}` : '';
+            detailedReasoning = `${action} position in ${rec.symbol}${pathwayDesc}${intentDesc}. Entry: $${rec.entryPrice}, Stop: $${rec.stopLoss}, Target: $${rec.takeProfit}. ${rec.reasoning || 'See Phase 4 analysis for full rationale.'}`;
+          }
 
           try {
             const approvalId = await tradeApproval.submitForApproval({
@@ -2395,54 +2410,75 @@ ${historyContext}`;
     const reasoningMap = {};
 
     // Extract from Phase 2 (long analysis)
-    const phase2Sections = phase2Text.split(/SYMBOL:\s*([A-Z]{1,5})/gi);
-    for (let i = 1; i < phase2Sections.length; i += 2) {
-      const symbol = phase2Sections[i].trim();
-      const content = phase2Sections[i + 1];
+    const phase2Sections = phase2Text.split(/(?=SYMBOL:\s*[A-Z]{1,5})/gi);
+    for (const section of phase2Sections) {
+      const symbolMatch = section.match(/SYMBOL:\s*([A-Z]{1,5})/i);
+      if (!symbolMatch) continue;
 
-      if (content) {
-        // Look for REASONING: field
-        const reasoningMatch = content.match(/REASONING:\s*(.+?)(?=\n\n|SYMBOL:|$)/is);
-        if (reasoningMatch) {
-          reasoningMap[symbol] = reasoningMatch[1].trim();
-        } else {
-          // Fallback: extract text between DECISION: BUY and next section
-          const buyMatch = content.match(/DECISION:\s*BUY\s*(.+?)(?=\n\n|SYMBOL:|---)/is);
-          if (buyMatch) {
-            // Clean up and take first 300 chars
-            const reasoning = buyMatch[1]
-              .replace(/ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:/gi, '')
-              .replace(/\$[\d.]+/g, '')
-              .replace(/\d+%/g, '')
-              .trim();
-            reasoningMap[symbol] = reasoning.substring(0, 300);
+      const symbol = symbolMatch[1].trim();
+
+      // Look for REASONING: field (most explicit)
+      let reasoningMatch = section.match(/REASONING:\s*(.+?)(?=\n\n|SYMBOL:|---|\n[A-Z]+:|$)/is);
+
+      if (reasoningMatch) {
+        reasoningMap[symbol] = reasoningMatch[1].trim();
+      } else {
+        // Fallback: Look for text after DECISION: BUY
+        const buyMatch = section.match(/DECISION:\s*BUY\s+(.+?)(?=\n\n|SYMBOL:|---|\n[A-Z]+:|$)/is);
+        if (buyMatch) {
+          // Extract meaningful text, skip field labels
+          let reasoning = buyMatch[1]
+            .replace(/ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:|SUB-SECTOR:/gi, '')
+            .replace(/\$[\d.]+/g, '')
+            .replace(/\d+%/g, '')
+            .replace(/High|Medium|Low/gi, '')
+            .trim();
+
+          // Take first 2-3 sentences (up to 400 chars)
+          const sentences = reasoning.match(/[^.!?]+[.!?]+/g);
+          if (sentences && sentences.length > 0) {
+            reasoning = sentences.slice(0, 3).join(' ').trim();
+          }
+
+          if (reasoning.length > 20) {
+            reasoningMap[symbol] = reasoning.substring(0, 400);
           }
         }
       }
     }
 
     // Extract from Phase 3 (short analysis)
-    const phase3Sections = phase3Text.split(/SYMBOL:\s*([A-Z]{1,5})/gi);
-    for (let i = 1; i < phase3Sections.length; i += 2) {
-      const symbol = phase3Sections[i].trim();
-      const content = phase3Sections[i + 1];
+    const phase3Sections = phase3Text.split(/(?=SYMBOL:\s*[A-Z]{1,5})/gi);
+    for (const section of phase3Sections) {
+      const symbolMatch = section.match(/SYMBOL:\s*([A-Z]{1,5})/i);
+      if (!symbolMatch) continue;
 
-      if (content) {
-        // Look for REASONING: field
-        const reasoningMatch = content.match(/REASONING:\s*(.+?)(?=\n\n|SYMBOL:|$)/is);
-        if (reasoningMatch) {
-          reasoningMap[symbol] = reasoningMatch[1].trim();
-        } else {
-          // Fallback: extract text between DECISION: SHORT and next section
-          const shortMatch = content.match(/DECISION:\s*SHORT\s*(.+?)(?=\n\n|SYMBOL:|---)/is);
-          if (shortMatch) {
-            // Clean up and take first 300 chars
-            const reasoning = shortMatch[1]
-              .replace(/ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:|TECHNICAL_CHECKLIST:/gi, '')
-              .replace(/\$[\d.]+/g, '')
-              .replace(/\d+%/g, '')
-              .trim();
-            reasoningMap[symbol] = reasoning.substring(0, 300);
+      const symbol = symbolMatch[1].trim();
+
+      // Look for REASONING: field
+      let reasoningMatch = section.match(/REASONING:\s*(.+?)(?=\n\n|SYMBOL:|---|\n[A-Z]+:|$)/is);
+
+      if (reasoningMatch) {
+        reasoningMap[symbol] = reasoningMatch[1].trim();
+      } else {
+        // Fallback: Look for text after DECISION: SHORT
+        const shortMatch = section.match(/DECISION:\s*SHORT\s+(.+?)(?=\n\n|SYMBOL:|---|\n[A-Z]+:|$)/is);
+        if (shortMatch) {
+          let reasoning = shortMatch[1]
+            .replace(/ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:|TECHNICAL_CHECKLIST:|SUB-SECTOR:/gi, '')
+            .replace(/\$[\d.]+/g, '')
+            .replace(/\d+%/g, '')
+            .replace(/High|Medium|Low/gi, '')
+            .trim();
+
+          // Take first 2-3 sentences
+          const sentences = reasoning.match(/[^.!?]+[.!?]+/g);
+          if (sentences && sentences.length > 0) {
+            reasoning = sentences.slice(0, 3).join(' ').trim();
+          }
+
+          if (reasoning.length > 20) {
+            reasoningMap[symbol] = reasoning.substring(0, 400);
           }
         }
       }
