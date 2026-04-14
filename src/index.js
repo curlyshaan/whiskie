@@ -573,7 +573,7 @@ Return ONLY a JSON object with this structure (no other text):
 }`;
 
                 const response = await claude.deepAnalysis(prompt, {
-                  model: MODELS.OPUS,
+                  model: MODELS.SONNET,
                   temperature: 0.1,
                   maxTokens: 500,
                   enableThinking: false
