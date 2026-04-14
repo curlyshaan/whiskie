@@ -291,7 +291,7 @@ ${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 200)}...`).join('\n\n
    - Long-term thesis drivers (2+ years)
 
 10. **METADATA** (REQUIRED - use exact format below)
-   ```
+
    Industry sector: [e.g., "Technology - Software", "Healthcare - Biotech"]
    Market cap category: [mega/large/mid/small based on: mega >$200B, large $10-200B, mid $2-10B, small <$2B]
    Growth stage: [hyper_growth/growth/mature/turnaround/declining]
@@ -300,7 +300,6 @@ ${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 200)}...`).join('\n\n
    Last earnings date: [YYYY-MM-DD or "N/A"]
    Next earnings date: [YYYY-MM-DD or "N/A"]
    Key metrics: {"primary": ["revenue_growth", "operating_margin"], "thresholds": {"revenue_growth": {"concern": 0.10, "target": 0.20}}}
-   ```
 
 **Output Format:**
 Structure your response with clear section headers. STAY WITHIN CHARACTER LIMITS. The METADATA section is REQUIRED and must use the exact format shown above. Be thorough but concise. Focus on insights that will be useful for daily trading decisions.`;
