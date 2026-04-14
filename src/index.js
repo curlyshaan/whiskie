@@ -2737,6 +2737,14 @@ ${historyContext}`;
       // Sort by position in text
       allTradeMatches.sort((a, b) => a.index - b.index);
 
+      console.log(`\n📋 Found ${allTradeMatches.length} EXECUTE commands in Phase 4 output`);
+      if (allTradeMatches.length > 0) {
+        console.log('   Parsing trades:');
+        allTradeMatches.forEach((t, i) => {
+          console.log(`   ${i + 1}. ${t.type.toUpperCase()} ${t.symbol} | ${t.quantity} | $${t.entryPrice} | $${t.stopLoss} | $${t.takeProfit} | ${t.pathway || 'null'} | ${t.intent}`);
+        });
+      }
+
       // Extract reasoning for each trade (text between current trade and next trade)
       for (let i = 0; i < allTradeMatches.length; i++) {
         const trade = allTradeMatches[i];
@@ -2761,23 +2769,25 @@ ${historyContext}`;
         // Validate stop-loss and take-profit
         if (trade.type === 'long') {
           if (trade.stopLoss >= trade.entryPrice) {
-            console.warn(`⚠️ Invalid stop-loss for ${trade.symbol}: $${trade.stopLoss} must be below entry $${trade.entryPrice}`);
+            console.warn(`   ❌ SKIPPED ${trade.symbol}: Invalid stop-loss $${trade.stopLoss} (must be below entry $${trade.entryPrice})`);
             continue;
           }
           if (trade.takeProfit <= trade.entryPrice) {
-            console.warn(`⚠️ Invalid take-profit for ${trade.symbol}: $${trade.takeProfit} must be above entry $${trade.entryPrice}`);
+            console.warn(`   ❌ SKIPPED ${trade.symbol}: Invalid take-profit $${trade.takeProfit} (must be above entry $${trade.entryPrice})`);
             continue;
           }
         } else {
           if (trade.stopLoss <= trade.entryPrice) {
-            console.warn(`⚠️ Invalid stop-loss for SHORT ${trade.symbol}: $${trade.stopLoss} must be ABOVE entry $${trade.entryPrice}`);
+            console.warn(`   ❌ SKIPPED ${trade.symbol}: Invalid stop-loss $${trade.stopLoss} (must be ABOVE entry $${trade.entryPrice} for shorts)`);
             continue;
           }
           if (trade.takeProfit >= trade.entryPrice) {
-            console.warn(`⚠️ Invalid take-profit for SHORT ${trade.symbol}: $${trade.takeProfit} must be BELOW entry $${trade.entryPrice}`);
+            console.warn(`   ❌ SKIPPED ${trade.symbol}: Invalid take-profit $${trade.takeProfit} (must be BELOW entry $${trade.entryPrice} for shorts)`);
             continue;
           }
         }
+
+        console.log(`   ✅ VALIDATED ${trade.symbol}: ${trade.type.toUpperCase()} passed all checks`);
 
         // Get sector for symbol
         const sector = await this.getSector(trade.symbol);
@@ -2797,9 +2807,14 @@ ${historyContext}`;
       }
 
       if (recommendations.length === 0) {
-        console.log('ℹ️ No EXECUTE_BUY or EXECUTE_SHORT commands found in analysis');
+        console.log('\nℹ️ No EXECUTE_BUY or EXECUTE_SHORT commands found in analysis');
         console.log('   Expected format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET');
         console.log('   Or: EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET');
+      } else {
+        console.log(`\n✅ Successfully parsed ${recommendations.length} trades from ${allTradeMatches.length} EXECUTE commands`);
+        if (recommendations.length < allTradeMatches.length) {
+          console.log(`   ⚠️ ${allTradeMatches.length - recommendations.length} trades were skipped due to validation failures (see warnings above)`);
+        }
       }
 
       return recommendations;
