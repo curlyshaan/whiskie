@@ -255,7 +255,7 @@ SATURDAY SCREENING RESULTS:
 - Operating Margin: ${(ratios?.operatingMargin * 100)?.toFixed(1) || 'N/A'}%
 - ROE: ${(ratios?.returnOnEquity * 100)?.toFixed(1) || 'N/A'}%
 - FCF Yield: ${(keyMetrics?.freeCashFlowYield * 100)?.toFixed(1) || 'N/A'}%
-- Current Price: $${quote?.last || stock.price}
+- Current Price: $${quote?.price || stock.price}
 
 `;
 

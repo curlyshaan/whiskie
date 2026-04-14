@@ -124,6 +124,14 @@ class FMPClient {
   }
 
   /**
+   * Get real-time quote (price, volume, change)
+   */
+  async getQuote(symbol) {
+    const data = await this.request(`/quote`, { symbol });
+    return data[0] || null;
+  }
+
+  /**
    * Get company profile (market cap, sector, industry)
    */
   async getProfile(symbol) {
