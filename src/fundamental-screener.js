@@ -79,8 +79,8 @@ class FundamentalScreener {
       let filtered = 0;
       let errors = 0;
 
-      // Process stocks in batches of 20 for parallel processing
-      const BATCH_SIZE = 20;
+      // Process stocks in batches of 5 for parallel processing (avoid rate limits)
+      const BATCH_SIZE = 5;
       for (let i = 0; i < allStocks.length; i += BATCH_SIZE) {
         const batch = allStocks.slice(i, i + BATCH_SIZE);
 
