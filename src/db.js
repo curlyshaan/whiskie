@@ -452,6 +452,13 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS industry VARCHAR(100);
     `);
 
+    // Add Opus review columns to saturday_watchlist
+    await client.query(`
+      ALTER TABLE saturday_watchlist
+      ADD COLUMN IF NOT EXISTS opus_conviction INTEGER,
+      ADD COLUMN IF NOT EXISTS opus_reasoning TEXT;
+    `);
+
     // Add pathway and sector columns to quality_watchlist if they don't exist
     await client.query(`
       ALTER TABLE quality_watchlist

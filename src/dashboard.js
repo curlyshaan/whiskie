@@ -1234,6 +1234,7 @@ function generateCronStatusHTML(executions, days) {
     { name: 'Weekly Earnings Refresh', type: 'weekly', schedule: 'Friday 3:00 PM ET', endpoint: null },
     { name: 'Stock Universe Refresh', type: 'weekly', schedule: 'Saturday 10:00 AM ET', endpoint: null },
     { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET', endpoint: '/api/trigger-saturday-screening' },
+    { name: 'Weekly Opus Review', type: 'weekly', schedule: 'Sunday 9:00 PM ET', endpoint: '/api/trigger-weekly-opus-review' },
     { name: 'Weekly Portfolio Review', type: 'weekly', schedule: 'Manual trigger', endpoint: '/weekly-review' }
   ];
 

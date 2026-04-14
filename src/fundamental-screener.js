@@ -894,17 +894,17 @@ class FundamentalScreener {
   async updateSaturdayWatchlist(longCandidates, shortCandidates) {
     try {
       // Expire old entries
-      await db.query(`UPDATE saturday_watchlist SET status = 'expired' WHERE status = 'active'`);
+      await db.query(`UPDATE saturday_watchlist SET status = 'expired' WHERE status = 'active' OR status = 'pending'`);
 
-      // Insert long candidates
+      // Insert long candidates with 'pending' status (Sunday Opus review will activate top 15)
       for (const c of longCandidates) {
         await db.query(
           `INSERT INTO saturday_watchlist
            (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date)
-           VALUES ($1, 'LONG', $2, $3, $4, $5, $6, $7, $8, 'active', NOW())
+           VALUES ($1, 'LONG', $2, $3, $4, $5, $6, $7, $8, 'pending', NOW())
            ON CONFLICT (symbol, pathway) DO UPDATE SET
              intent = 'LONG', score = $5, metrics = $6, reasons = $7,
-             price = $8, status = 'active', added_date = NOW()`,
+             price = $8, status = 'pending', added_date = NOW()`,
           [
             c.symbol, c.longPathway, c.sector, c.industry, c.longScore,
             JSON.stringify(c.metrics), c.longReasons.join(', '), parseFloat(c.price)
@@ -912,15 +912,15 @@ class FundamentalScreener {
         );
       }
 
-      // Insert short candidates
+      // Insert short candidates with 'pending' status
       for (const c of shortCandidates) {
         await db.query(
           `INSERT INTO saturday_watchlist
            (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date)
-           VALUES ($1, 'SHORT', $2, $3, $4, $5, $6, $7, $8, 'active', NOW())
+           VALUES ($1, 'SHORT', $2, $3, $4, $5, $6, $7, $8, 'pending', NOW())
            ON CONFLICT (symbol, pathway) DO UPDATE SET
              intent = 'SHORT', score = $5, metrics = $6, reasons = $7,
-             price = $8, status = 'active', added_date = NOW()`,
+             price = $8, status = 'pending', added_date = NOW()`,
           [
             c.symbol, c.shortPathway || 'overvalued', c.sector, c.industry, c.shortScore,
             JSON.stringify(c.metrics), c.shortReasons.join(', '), parseFloat(c.price)
@@ -928,7 +928,8 @@ class FundamentalScreener {
         );
       }
 
-      console.log(`   ✅ Saturday watchlist updated: ${longCandidates.length} longs, ${shortCandidates.length} shorts`);
+      console.log(`   ✅ Saturday watchlist updated: ${longCandidates.length} longs, ${shortCandidates.length} shorts (status: pending)`);
+      console.log(`   ⏭️  Sunday Opus review will analyze and activate top 15 per pathway`);
     } catch (error) {
       console.error('Error updating saturday watchlist:', error);
       throw error;

@@ -238,30 +238,40 @@ class WhiskieBot {
         const reviewJobId = await db.logCronJobStart('Weekly Review', 'weekly', scheduledTime);
 
         try {
-          console.log('\n⏰ Saturday 3:00 PM - Full weekly screening + review');
+          console.log('\n⏰ Saturday 3:00 PM - Fundamental screening');
 
-          // STEP 1: Run full fundamental value screening (all stocks in one pass)
-          console.log('\n📊 STEP 1: Fundamental screening (all stocks)...');
+          // Run full fundamental value screening (all stocks in one pass)
+          console.log('\n📊 Fundamental screening (all stocks)...');
           await fundamentalScreener.runWeeklyScreen('full');
-          console.log('✅ Fundamental screening complete');
+          console.log('✅ Fundamental screening complete (stocks set to pending status)');
+          console.log('⏭️  Sunday 9pm Opus review will analyze and activate top candidates');
           await db.logCronJobComplete(screeningJobId, true);
 
-          // STEP 2: Opus screens for quality and overvalued stocks
-          console.log('\n🧠 STEP 3: Opus quality + overvalued screening...');
-          await opusScreener.runWeeklyOpusScreening();
-          console.log('✅ Opus screening complete');
-
-          // STEP 4: Run weekly portfolio review with Opus
-          console.log('\n📋 STEP 4: Weekly portfolio review...');
-          await runWeeklyReview();
-          console.log('✅ Weekly review complete');
-          await db.logCronJobComplete(reviewJobId, true);
-
         } catch (error) {
-          console.error('❌ Error in Saturday weekly tasks:', error);
+          console.error('❌ Error in Saturday screening:', error);
           await db.logCronJobComplete(screeningJobId, false, error.message);
-          await db.logCronJobComplete(reviewJobId, false, error.message);
-          await email.sendErrorAlert(error, 'Saturday weekly screening/review failed');
+          await email.sendErrorAlert(error, 'Saturday fundamental screening failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule weekly Opus review - Sunday 9:00 PM ET
+      // Analyzes all saturday_watchlist candidates and activates top 15 per pathway
+      cron.schedule('0 21 * * 0', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Weekly Opus Review', 'weekly', scheduledTime);
+
+        try {
+          console.log('\n⏰ Sunday 9:00 PM - Weekly Opus review');
+          const weeklyOpusReview = (await import('./weekly-opus-review.js')).default;
+          const results = await weeklyOpusReview.runWeeklyReview();
+          console.log(`✅ Weekly Opus review complete: ${results.analyzed} analyzed, ${results.activated} activated`);
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Error in weekly Opus review:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await email.sendErrorAlert(error, 'Weekly Opus review failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -341,7 +351,11 @@ class WhiskieBot {
       console.log('📅 Weekly screening: Saturday 3:00 PM ET');
       console.log('   → Full fundamental screening (all stocks, 6 pathways)');
       console.log('   → Opus quality + overvalued screening');
-      console.log('   → Populates saturday_watchlist with intent/pathway tags');
+      console.log('   → Populates saturday_watchlist with status=\'active\'');
+      console.log('📅 Weekly Opus review: Sunday 9:00 PM ET');
+      console.log('   → Analyzes all saturday_watchlist candidates with Opus extended thinking');
+      console.log('   → Ranks by thesis strength, activates top 15 per pathway');
+      console.log('   → Sets top candidates to status=\'active\', rest to \'pending\'');
       console.log('💡 Press Ctrl+C to stop\n');
 
       this.botStarted = true;
@@ -532,6 +546,24 @@ class WhiskieBot {
           }
         })();
         res.json({ success: true, message: 'Weekly portfolio review started. This will take 5-10 minutes. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-weekly-opus-review', async (req, res) => {
+      try {
+        console.log('📡 Manual weekly Opus review triggered via API');
+        (async () => {
+          try {
+            const weeklyOpusReview = (await import('./weekly-opus-review.js')).default;
+            const results = await weeklyOpusReview.runWeeklyReview();
+            console.log(`✅ Weekly Opus review complete: ${results.analyzed} analyzed, ${results.activated} activated`);
+          } catch (error) {
+            console.error('❌ Error in weekly Opus review:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Weekly Opus review started. This will take 30-60 minutes depending on candidate count. Check logs for progress.' });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
