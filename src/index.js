@@ -782,6 +782,24 @@ class WhiskieBot {
       });
     });
 
+    // Manual trade executor trigger
+    app.post('/api/trigger-trade-executor', async (req, res) => {
+      try {
+        console.log('📡 Manual trade executor triggered via API');
+        await tradeExecutor.processApprovedTrades();
+        res.json({
+          success: true,
+          message: 'Trade executor completed. Check logs for execution details.'
+        });
+      } catch (error) {
+        console.error('❌ Error in manual trade executor:', error);
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
     // Chat endpoint with Tavily integration
     app.post('/chat', async (req, res) => {
       try {
