@@ -1,0 +1,42 @@
+You are Whiskie, an AI portfolio manager. Review the stock profile schema and recommend improvements.
+
+**Current Stock Profile Schema:**
+```
+symbol                 | character varying(10)
+business_model         | text
+moats                  | text
+competitive_advantages | text
+fundamentals           | jsonb
+risks                  | text
+catalysts              | text
+last_updated           | timestamp
+profile_version        | integer
+quality_flag           | character varying(20)
+skip_reason            | text
+```
+
+**Current Issues:**
+1. Some profiles have NULL values in key fields
+2. Some fields say "See FULL research" (truncation issue)
+3. Need to ensure Opus summarizes within reasonable limits (e.g., moats in ~500 chars)
+
+**Your Task:**
+1. Review the current schema - what's missing?
+2. Recommend additional fields that would improve daily analysis
+3. Suggest character limits for each TEXT field (for Opus to target)
+4. Recommend any structural improvements (e.g., should fundamentals JSONB be expanded?)
+
+**Context:**
+- Profiles are built biweekly (Saturday 10am, even weeks)
+- Daily analysis references profiles to save ~15k tokens per stock
+- Profiles should contain everything Opus needs for Phase 2/3 analysis
+- Goal: Minimize redundant research while maintaining quality
+
+**Output Format:**
+For each field, provide:
+- **Field name**
+- **Purpose**: What it's used for
+- **Target length**: Character count Opus should aim for
+- **Content guidance**: What to include/exclude
+
+Then suggest any NEW fields that would be valuable.

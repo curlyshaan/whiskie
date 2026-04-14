@@ -42,17 +42,32 @@ export async function saveStockProfile(profile) {
   try {
     const result = await db.query(
       `INSERT INTO stock_profiles (
-        symbol, business_model, moats, competitive_advantages,
-        fundamentals, risks, catalysts, last_updated, profile_version
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP, $8)
+        symbol, business_model, moats, competitive_advantages, competitive_landscape,
+        management_quality, valuation_framework, fundamentals, risks, catalysts,
+        industry_sector, market_cap_category, growth_stage,
+        insider_ownership_pct, institutional_ownership_pct,
+        last_earnings_date, next_earnings_date, key_metrics_to_watch,
+        last_updated, profile_version
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, CURRENT_TIMESTAMP, $19)
       ON CONFLICT (symbol)
       DO UPDATE SET
         business_model = $2,
         moats = $3,
         competitive_advantages = $4,
-        fundamentals = $5,
-        risks = $6,
-        catalysts = $7,
+        competitive_landscape = $5,
+        management_quality = $6,
+        valuation_framework = $7,
+        fundamentals = $8,
+        risks = $9,
+        catalysts = $10,
+        industry_sector = $11,
+        market_cap_category = $12,
+        growth_stage = $13,
+        insider_ownership_pct = $14,
+        institutional_ownership_pct = $15,
+        last_earnings_date = $16,
+        next_earnings_date = $17,
+        key_metrics_to_watch = $18,
         last_updated = CURRENT_TIMESTAMP,
         profile_version = stock_profiles.profile_version + 1
       RETURNING *`,
@@ -61,9 +76,20 @@ export async function saveStockProfile(profile) {
         profile.business_model,
         profile.moats,
         profile.competitive_advantages,
+        profile.competitive_landscape,
+        profile.management_quality,
+        profile.valuation_framework,
         JSON.stringify(profile.fundamentals || {}),
         profile.risks,
         profile.catalysts,
+        profile.industry_sector,
+        profile.market_cap_category,
+        profile.growth_stage,
+        profile.insider_ownership_pct,
+        profile.institutional_ownership_pct,
+        profile.last_earnings_date,
+        profile.next_earnings_date,
+        profile.key_metrics_to_watch ? JSON.stringify(profile.key_metrics_to_watch) : null,
         profile.profile_version || 1
       ]
     );
@@ -217,42 +243,65 @@ ${JSON.stringify(fundamentals, null, 2)}
 **Recent News:**
 ${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 200)}...`).join('\n\n')}
 
-**Your Task:** Create a comprehensive stock profile with the following sections:
+**Your Task:** Create a comprehensive stock profile with the following sections. CRITICAL: Stay within character limits for each section.
 
-1. **BUSINESS_MODEL** (2-3 paragraphs)
+1. **BUSINESS_MODEL** (MAX 1500 chars)
    - What does the company do? How do they make money?
    - Revenue streams, customer segments, key products/services
    - Business model sustainability and scalability
 
-2. **MOATS** (bullet points)
+2. **MOATS** (MAX 1200 chars)
    - Identify 3-5 competitive moats (network effects, brand, switching costs, scale, IP, regulatory)
    - Rate strength of each moat (Strong/Moderate/Weak)
    - Explain why each moat is defensible
 
-3. **COMPETITIVE_ADVANTAGES** (2-3 paragraphs)
+3. **COMPETITIVE_ADVANTAGES** (MAX 1000 chars)
    - What makes this company better than competitors?
    - Market position, technological edge, operational excellence
-   - Competitive landscape and threats
 
-4. **FUNDAMENTALS_SUMMARY** (structured analysis)
+4. **COMPETITIVE_LANDSCAPE** (MAX 1000 chars)
+   - Top 3-5 competitors and market share
+   - Pricing dynamics and competitive threats
+   - Industry structure and barriers to entry
+
+5. **MANAGEMENT_QUALITY** (MAX 800 chars)
+   - Capital allocation track record (buybacks, dividends, M&A)
+   - Insider ownership percentage
+   - Execution history and strategic vision
+
+6. **VALUATION_FRAMEWORK** (MAX 1000 chars)
+   - Primary valuation method (DCF, P/E, EV/EBITDA, etc.)
+   - Key multiples vs peers and historical average
+   - Normalized earnings and growth assumptions
+
+7. **FUNDAMENTALS_SUMMARY** (structured analysis)
    - Revenue growth trajectory and sustainability
    - Profitability metrics (margins, ROIC, ROE)
    - Balance sheet strength (debt levels, cash position)
-   - Valuation assessment (P/E, P/S, PEG relative to growth)
    - Capital allocation (buybacks, dividends, M&A)
 
-5. **RISKS** (bullet points)
+8. **RISKS** (MAX 1500 chars)
    - Identify 5-7 key risks (competitive, regulatory, execution, macro, valuation)
    - Rate severity (High/Medium/Low)
    - Explain potential impact
 
-6. **CATALYSTS** (bullet points)
+9. **CATALYSTS** (MAX 1200 chars)
    - Near-term catalysts (next 3-6 months)
    - Medium-term catalysts (6-18 months)
    - Long-term thesis drivers (2+ years)
 
+10. **METADATA**
+   - Industry sector (e.g., "Technology - Software", "Healthcare - Biotech")
+   - Market cap category: mega (>$200B), large ($10-200B), mid ($2-10B), small (<$2B)
+   - Growth stage: hyper_growth, growth, mature, turnaround, declining
+   - Insider ownership % (if available)
+   - Institutional ownership % (if available)
+   - Last earnings date (if available)
+   - Next earnings date (if available)
+   - Key metrics to watch (JSON format): {"primary": ["metric1", "metric2"], "thresholds": {"metric1": {"concern": 0.15, "target": 0.25}}}
+
 **Output Format:**
-Structure your response with clear section headers. Be thorough but concise. Focus on insights that will be useful for daily trading decisions.`;
+Structure your response with clear section headers. STAY WITHIN CHARACTER LIMITS. Be thorough but concise. Focus on insights that will be useful for daily trading decisions.`;
 
     console.log('  🤔 Running Opus deep research (10-20k tokens)...');
     const researchStart = Date.now();
@@ -340,6 +389,9 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
       business_model: existingProfile.business_model,
       moats: existingProfile.moats,
       competitive_advantages: existingProfile.competitive_advantages,
+      competitive_landscape: existingProfile.competitive_landscape,
+      management_quality: existingProfile.management_quality,
+      valuation_framework: existingProfile.valuation_framework,
       fundamentals: fundamentals || existingProfile.fundamentals,
       risks: update.analysis.includes('RISKS_UPDATE') ?
         update.analysis.match(/RISKS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.risks :
@@ -347,6 +399,14 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
       catalysts: update.analysis.includes('CATALYSTS_UPDATE') ?
         update.analysis.match(/CATALYSTS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.catalysts :
         existingProfile.catalysts,
+      industry_sector: existingProfile.industry_sector,
+      market_cap_category: existingProfile.market_cap_category,
+      growth_stage: existingProfile.growth_stage,
+      insider_ownership_pct: existingProfile.insider_ownership_pct,
+      institutional_ownership_pct: existingProfile.institutional_ownership_pct,
+      last_earnings_date: existingProfile.last_earnings_date,
+      next_earnings_date: existingProfile.next_earnings_date,
+      key_metrics_to_watch: existingProfile.key_metrics_to_watch,
       profile_version: (existingProfile.profile_version || 1) + 1
     };
 
@@ -400,18 +460,77 @@ function parseResearchIntoProfile(symbol, researchText, fundamentals) {
   // More flexible regex patterns - handle variations in header formatting
   const businessModelMatch = researchText.match(/(?:##\s*(?:BUSINESS[_\s]MODEL|Business\s+Model)|\*\*(?:BUSINESS[_\s]MODEL|Business\s+Model)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:MOATS?|Moats?|COMPETITIVE|Competitive)|$)/i);
   const moatsMatch = researchText.match(/(?:##\s*(?:MOATS?|Moats?)|\*\*(?:MOATS?|Moats?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:COMPETITIVE|Competitive)|$)/i);
-  const competitiveMatch = researchText.match(/(?:##\s*(?:COMPETITIVE[_\s]ADVANTAGES?|Competitive\s+Advantages?)|\*\*(?:COMPETITIVE[_\s]ADVANTAGES?|Competitive\s+Advantages?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
-  const risksMatch = researchText.match(/(?:##\s*(?:RISKS?|Risks?)|\*\*(?:RISKS?|Risks?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:CATALYSTS?|Catalysts?)|$)/i);
-  const catalystsMatch = researchText.match(/(?:##\s*(?:CATALYSTS?|Catalysts?)|\*\*(?:CATALYSTS?|Catalysts?)\*\*)[:\s]*\n([\s\S]*?)$/i);
+  const competitiveAdvMatch = researchText.match(/(?:##\s*(?:COMPETITIVE[_\s]ADVANTAGES?|Competitive\s+Advantages?)|\*\*(?:COMPETITIVE[_\s]ADVANTAGES?|Competitive\s+Advantages?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:COMPETITIVE[_\s]LANDSCAPE|Competitive\s+Landscape|MANAGEMENT|Management|VALUATION|Valuation|FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
+  const competitiveLandscapeMatch = researchText.match(/(?:##\s*(?:COMPETITIVE[_\s]LANDSCAPE|Competitive\s+Landscape)|\*\*(?:COMPETITIVE[_\s]LANDSCAPE|Competitive\s+Landscape)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:MANAGEMENT|Management|VALUATION|Valuation|FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
+  const managementMatch = researchText.match(/(?:##\s*(?:MANAGEMENT[_\s]QUALITY|Management\s+Quality)|\*\*(?:MANAGEMENT[_\s]QUALITY|Management\s+Quality)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:VALUATION|Valuation|FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
+  const valuationMatch = researchText.match(/(?:##\s*(?:VALUATION[_\s]FRAMEWORK|Valuation\s+Framework)|\*\*(?:VALUATION[_\s]FRAMEWORK|Valuation\s+Framework)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
+  const risksMatch = researchText.match(/(?:##\s*(?:RISKS?|Risks?)|\*\*(?:RISKS?|Risks?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:CATALYSTS?|Catalysts?|METADATA|Metadata)|$)/i);
+  const catalystsMatch = researchText.match(/(?:##\s*(?:CATALYSTS?|Catalysts?)|\*\*(?:CATALYSTS?|Catalysts?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:METADATA|Metadata)|$)/i);
+  const metadataMatch = researchText.match(/(?:##\s*(?:METADATA|Metadata)|\*\*(?:METADATA|Metadata)\*\*)[:\s]*\n([\s\S]*?)$/i);
+
+  // Parse metadata section
+  let industrySector = null;
+  let marketCapCategory = null;
+  let growthStage = null;
+  let insiderOwnership = null;
+  let institutionalOwnership = null;
+  let lastEarningsDate = null;
+  let nextEarningsDate = null;
+  let keyMetrics = null;
+
+  if (metadataMatch) {
+    const metadata = metadataMatch[1];
+
+    const sectorMatch = metadata.match(/Industry\s+sector[:\s]+([^\n]+)/i);
+    if (sectorMatch) industrySector = sectorMatch[1].trim();
+
+    const marketCapMatch = metadata.match(/Market\s+cap\s+category[:\s]+(mega|large|mid|small)/i);
+    if (marketCapMatch) marketCapCategory = marketCapMatch[1].toLowerCase();
+
+    const growthMatch = metadata.match(/Growth\s+stage[:\s]+(hyper_growth|growth|mature|turnaround|declining)/i);
+    if (growthMatch) growthStage = growthMatch[1].toLowerCase();
+
+    const insiderMatch = metadata.match(/Insider\s+ownership[:\s]+(\d+(?:\.\d+)?)/i);
+    if (insiderMatch) insiderOwnership = parseFloat(insiderMatch[1]);
+
+    const institutionalMatch = metadata.match(/Institutional\s+ownership[:\s]+(\d+(?:\.\d+)?)/i);
+    if (institutionalMatch) institutionalOwnership = parseFloat(institutionalMatch[1]);
+
+    const lastEarningsMatch = metadata.match(/Last\s+earnings\s+date[:\s]+(\d{4}-\d{2}-\d{2})/i);
+    if (lastEarningsMatch) lastEarningsDate = lastEarningsMatch[1];
+
+    const nextEarningsMatch = metadata.match(/Next\s+earnings\s+date[:\s]+(\d{4}-\d{2}-\d{2})/i);
+    if (nextEarningsMatch) nextEarningsDate = nextEarningsMatch[1];
+
+    const metricsMatch = metadata.match(/Key\s+metrics\s+to\s+watch[:\s]+(\{[\s\S]*?\})/i);
+    if (metricsMatch) {
+      try {
+        keyMetrics = JSON.parse(metricsMatch[1]);
+      } catch (e) {
+        console.warn('Failed to parse key_metrics JSON:', e.message);
+      }
+    }
+  }
 
   return {
     symbol,
-    business_model: cleanText(businessModelMatch ? businessModelMatch[1] : researchText.substring(0, 1000), 2000),
-    moats: cleanText(moatsMatch ? moatsMatch[1] : '', 1500),
-    competitive_advantages: cleanText(competitiveMatch ? competitiveMatch[1] : '', 1500),
+    business_model: cleanText(businessModelMatch ? businessModelMatch[1] : researchText.substring(0, 1000), 1500),
+    moats: cleanText(moatsMatch ? moatsMatch[1] : '', 1200),
+    competitive_advantages: cleanText(competitiveAdvMatch ? competitiveAdvMatch[1] : '', 1000),
+    competitive_landscape: cleanText(competitiveLandscapeMatch ? competitiveLandscapeMatch[1] : '', 1000),
+    management_quality: cleanText(managementMatch ? managementMatch[1] : '', 800),
+    valuation_framework: cleanText(valuationMatch ? valuationMatch[1] : '', 1000),
     fundamentals: fundamentals || {},
-    risks: cleanText(risksMatch ? risksMatch[1] : '', 2000),
-    catalysts: cleanText(catalystsMatch ? catalystsMatch[1] : '', 1500),
+    risks: cleanText(risksMatch ? risksMatch[1] : '', 1500),
+    catalysts: cleanText(catalystsMatch ? catalystsMatch[1] : '', 1200),
+    industry_sector: industrySector,
+    market_cap_category: marketCapCategory,
+    growth_stage: growthStage,
+    insider_ownership_pct: insiderOwnership,
+    institutional_ownership_pct: institutionalOwnership,
+    last_earnings_date: lastEarningsDate,
+    next_earnings_date: nextEarningsDate,
+    key_metrics_to_watch: keyMetrics,
     profile_version: 1
   };
 }
