@@ -23,9 +23,12 @@ npm run start:live     # Run in production mode
 npm run db:init        # Initialize database schema
 npm run db:reset       # Reset all tables (destructive)
 
-# Scripts
-npm run populate-stocks    # Populate stock universe
-npm run update-etb         # Update easy-to-borrow status
+# Stock Universe Population
+# IMPORTANT: Use populate-universe-v2.js (FMP API-based), NOT populate-stock-universe.js
+node scripts/populate-universe-v2.js  # Populate from FMP API (top 7 per industry, $7B+ market cap)
+npm run update-etb                     # Update easy-to-borrow status
+
+# DO NOT USE: npm run populate-stocks uses hardcoded sub-industry-data.js (deprecated)
 
 # Testing
 node test/test-4phase.js           # Test 4-phase analysis system

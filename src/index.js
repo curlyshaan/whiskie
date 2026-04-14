@@ -488,6 +488,50 @@ class WhiskieBot {
       }
     });
 
+    app.post('/api/trigger-profile-build-all', async (req, res) => {
+      try {
+        console.log('📡 Building profiles for ALL stocks in stock_universe');
+        (async () => {
+          try {
+            const db = await import('./db.js');
+            const stockProfiles = await import('./stock-profiles.js');
+
+            const result = await db.query(
+              'SELECT symbol FROM stock_universe WHERE status = $1 ORDER BY symbol',
+              ['active']
+            );
+
+            const symbols = result.rows.map(r => r.symbol);
+            console.log(`Building profiles for ${symbols.length} stocks from stock_universe...`);
+
+            let completed = 0;
+            let failed = 0;
+
+            for (const symbol of symbols) {
+              try {
+                console.log(`[${completed + failed + 1}/${symbols.length}] Building ${symbol}...`);
+                await stockProfiles.buildStockProfile(symbol);
+                completed++;
+
+                // 3-second delay between profiles to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 3000));
+              } catch (error) {
+                console.error(`Failed ${symbol}: ${error.message}`);
+                failed++;
+              }
+            }
+
+            console.log(`✅ Profile building complete: ${completed} succeeded, ${failed} failed`);
+          } catch (error) {
+            console.error('❌ Error in profile building:', error);
+          }
+        })();
+        res.json({ success: true, message: `Building profiles for all stocks in universe. This will take 15-20 minutes. Check logs for progress.` });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     app.post('/api/trigger-weekly-portfolio-review', async (req, res) => {
       try {
         console.log('📡 Manual weekly portfolio review triggered via API');
