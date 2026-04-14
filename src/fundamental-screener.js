@@ -738,6 +738,12 @@ class FundamentalScreener {
       score += 10;
       valuationSignals++;
       reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (overvalued)`);
+    } else if (metrics.pegRatio < 0 && metrics.peRatio > highPE * 0.9 && metrics.peRatio > 15) {
+      // Negative PEG: paying premium P/E for declining earnings
+      // Requires P/E >90% of sector threshold AND absolute floor of 15
+      score += 15;
+      valuationSignals++;
+      reasons.push(`Negative PEG with P/E ${metrics.peRatio.toFixed(1)} (premium multiple on declining earnings)`);
     }
 
     if (metrics.evToEbitda > 40) {

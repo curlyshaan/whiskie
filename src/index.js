@@ -452,44 +452,51 @@ class WhiskieBot {
     });
 
 
-    app.post('/api/trigger-profile-build-missing', async (req, res) => {
+    app.post('/api/trigger-profile-build-watchlist', async (req, res) => {
       try {
-        console.log('📡 Building profiles for stocks WITHOUT profiles');
+        console.log('📡 Building/updating profiles for stocks in saturday_watchlist');
         (async () => {
           try {
             const db = await import('./db.js');
             const stockProfiles = await import('./stock-profiles.js');
 
-            // Get all stocks from universe
-            const universeResult = await db.query(
-              'SELECT symbol FROM stock_universe WHERE status = $1 ORDER BY symbol',
+            // Get all stocks from saturday_watchlist
+            const watchlistResult = await db.query(
+              'SELECT DISTINCT symbol FROM saturday_watchlist WHERE status = $1 ORDER BY symbol',
               ['active']
             );
 
-            // Get stocks that already have profiles
-            const profilesResult = await db.query('SELECT symbol FROM stock_profiles');
+            // Get existing profiles with their last_updated timestamps
+            const profilesResult = await db.query(
+              'SELECT symbol, last_updated FROM stock_profiles'
+            );
 
-            const allSymbols = new Set(universeResult.rows.map(r => r.symbol));
-            const existingProfiles = new Set(profilesResult.rows.map(r => r.symbol));
+            const watchlistSymbols = watchlistResult.rows.map(r => r.symbol);
+            const existingProfiles = new Map(
+              profilesResult.rows.map(r => [r.symbol, r.last_updated])
+            );
 
-            // Find missing profiles
-            const missingSymbols = [...allSymbols].filter(s => !existingProfiles.has(s));
+            console.log(`Watchlist stocks: ${watchlistSymbols.length}, Existing profiles: ${existingProfiles.size}`);
 
-            console.log(`Total stocks: ${allSymbols.size}, Existing profiles: ${existingProfiles.size}, Missing: ${missingSymbols.length}`);
-
-            if (missingSymbols.length === 0) {
-              console.log('✅ All stocks already have profiles!');
-              return;
-            }
-
-            let completed = 0;
+            let newProfiles = 0;
+            let incrementalUpdates = 0;
             let failed = 0;
 
-            for (const symbol of missingSymbols) {
+            for (const symbol of watchlistSymbols) {
               try {
-                console.log(`[${completed + failed + 1}/${missingSymbols.length}] Building ${symbol}...`);
-                await stockProfiles.buildStockProfile(symbol);
-                completed++;
+                const hasProfile = existingProfiles.has(symbol);
+
+                if (hasProfile) {
+                  // Incremental update for existing profiles
+                  console.log(`[${newProfiles + incrementalUpdates + failed + 1}/${watchlistSymbols.length}] Updating ${symbol} (incremental)...`);
+                  await stockProfiles.updateStockProfile(symbol); // Uses incremental update logic
+                  incrementalUpdates++;
+                } else {
+                  // Full build for new profiles
+                  console.log(`[${newProfiles + incrementalUpdates + failed + 1}/${watchlistSymbols.length}] Building ${symbol} (new)...`);
+                  await stockProfiles.buildStockProfile(symbol);
+                  newProfiles++;
+                }
 
                 // 3-second delay between profiles to avoid rate limiting
                 await new Promise(resolve => setTimeout(resolve, 3000));
@@ -499,12 +506,12 @@ class WhiskieBot {
               }
             }
 
-            console.log(`✅ Profile building complete: ${completed} succeeded, ${failed} failed`);
+            console.log(`✅ Profile building complete: ${newProfiles} new, ${incrementalUpdates} updated, ${failed} failed`);
           } catch (error) {
             console.error('❌ Error in profile building:', error);
           }
         })();
-        res.json({ success: true, message: `Building profiles for missing stocks only. Check logs for progress.` });
+        res.json({ success: true, message: `Building/updating profiles for saturday_watchlist stocks. Check logs for progress.` });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
@@ -541,19 +548,6 @@ class WhiskieBot {
         })();
         res.json({ success: true, message: 'Pre-market scan started. Check logs for progress.' });
       } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-      }
-    });
-
-
-    app.post('/api/clear-stock-universe', async (req, res) => {
-      try {
-        console.log('📡 Clearing stock_universe table');
-        const result = await db.query(`DELETE FROM stock_universe`);
-        console.log(`✅ Cleared ${result.rowCount} rows from stock_universe`);
-        res.json({ success: true, message: `Cleared ${result.rowCount} rows from stock_universe table` });
-      } catch (error) {
-        console.error('❌ Clear failed:', error);
         res.status(500).json({ success: false, error: error.message });
       }
     });

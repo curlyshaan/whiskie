@@ -509,6 +509,19 @@ function parseResearchIntoProfile(symbol, researchText, fundamentals) {
         keyMetrics = JSON.parse(metricsMatch[1]);
       } catch (e) {
         console.warn('Failed to parse key_metrics JSON:', e.message);
+        // Attempt to sanitize common JSON errors
+        const sanitized = metricsMatch[1]
+          .replace(/,\s*}/g, '}')  // Remove trailing commas in objects
+          .replace(/,\s*]/g, ']')  // Remove trailing commas in arrays
+          .replace(/([{,]\s*)(\w+):/g, '$1"$2":')  // Quote unquoted keys
+          .replace(/:\s*'([^']*)'/g, ':"$1"');  // Replace single quotes with double quotes
+        try {
+          keyMetrics = JSON.parse(sanitized);
+          console.log('Successfully parsed key_metrics after sanitization');
+        } catch (e2) {
+          console.warn('Failed to parse key_metrics even after sanitization:', e2.message);
+          keyMetrics = null;  // Fallback to null
+        }
       }
     }
   }
@@ -717,6 +730,7 @@ export default {
   getStockProfiles,
   getStaleProfiles,
   buildStockProfile,
+  updateStockProfile,
   runBiweeklyDeepResearch,
   buildProfileBatch
 };
