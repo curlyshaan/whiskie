@@ -33,11 +33,11 @@ class WeeklyOpusReview {
     console.log('');
 
     try {
-      // Get all stocks from saturday_watchlist (status = 'active' from Saturday screening)
+      // Get all stocks from saturday_watchlist (status = 'pending' from Saturday screening)
       const result = await db.query(
         `SELECT symbol, intent, pathway, sector, industry, score, metrics, reasons, price
          FROM saturday_watchlist
-         WHERE status = 'active'
+         WHERE status = 'pending'
          ORDER BY pathway, score DESC`
       );
 
