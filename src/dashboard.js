@@ -1215,23 +1215,6 @@ router.post('/api/approvals/clear-all', async (req, res) => {
   }
 });
 
-// Manual trigger for biweekly deep research
-router.post('/api/trigger-deep-research', async (req, res) => {
-  try {
-    const stockProfiles = (await import('./stock-profiles.js')).default;
-    console.log('🔬 Manual trigger: Starting biweekly deep research...');
-    const results = await stockProfiles.runBiweeklyDeepResearch();
-    res.json({
-      success: true,
-      message: 'Deep research completed',
-      results: results
-    });
-  } catch (error) {
-    console.error('❌ Error in manual deep research trigger:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 function generateCronStatusHTML(executions, days) {
   // Group executions by job name
   const jobGroups = {};
@@ -1248,17 +1231,10 @@ function generateCronStatusHTML(executions, days) {
     { name: 'Morning Analysis', type: 'daily', schedule: '10:00 AM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
     { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
     { name: 'Daily Summary', type: 'daily', schedule: '6:00 PM ET Mon-Fri', endpoint: '/api/trigger-eod-summary' },
+    { name: 'Weekly Earnings Refresh', type: 'weekly', schedule: 'Friday 3:00 PM ET', endpoint: null },
+    { name: 'Stock Universe Refresh', type: 'weekly', schedule: 'Saturday 10:00 AM ET', endpoint: null },
     { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET', endpoint: '/api/trigger-saturday-screening' },
-    { name: 'Biweekly Deep Research', type: 'weekly', schedule: 'Sunday 10:00 AM ET (even weeks)', endpoint: '/api/trigger-deep-research' },
-    { name: 'Weekly Portfolio Review', type: 'weekly', schedule: 'Manual trigger', endpoint: '/api/trigger-weekly-portfolio-review' },
-    { name: 'Batch Profile Build #1', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/1' },
-    { name: 'Batch Profile Build #2', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/2' },
-    { name: 'Batch Profile Build #3', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/3' },
-    { name: 'Batch Profile Build #4', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/4' },
-    { name: 'Batch Profile Build #5', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/5' },
-    { name: 'Batch Profile Build #6', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/6' },
-    { name: 'Batch Profile Build #7', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/7' },
-    { name: 'Batch Profile Build #8', type: 'batch', schedule: 'Manual trigger', endpoint: '/api/trigger-batch-profiles/8' }
+    { name: 'Weekly Portfolio Review', type: 'weekly', schedule: 'Manual trigger', endpoint: '/weekly-review' }
   ];
 
   return `

@@ -202,6 +202,34 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
+      // Schedule stock universe refresh - Saturday 10:00 AM ET
+      cron.schedule('0 10 * * 6', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Stock Universe Refresh', 'weekly', scheduledTime);
+
+        try {
+          console.log('\n⏰ Saturday 10:00 AM - Refreshing stock universe');
+
+          const { exec } = await import('child_process');
+          const { promisify } = await import('util');
+          const execAsync = promisify(exec);
+
+          console.log('📊 Running populate-universe-v2.js...');
+          const { stdout, stderr } = await execAsync('node scripts/populate-universe-v2.js');
+
+          if (stderr) console.error('Universe refresh stderr:', stderr);
+          console.log(stdout);
+          console.log('✅ Stock universe refreshed successfully');
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Error refreshing stock universe:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await email.sendErrorAlert(error, 'Stock universe refresh failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
       // Schedule combined weekly screening - Saturday 3:00 PM ET
       // Runs full fundamental screening + Opus screening + weekly review
       cron.schedule('0 15 * * 6', async () => {
@@ -234,28 +262,6 @@ class WhiskieBot {
           await db.logCronJobComplete(screeningJobId, false, error.message);
           await db.logCronJobComplete(reviewJobId, false, error.message);
           await email.sendErrorAlert(error, 'Saturday weekly screening/review failed');
-        }
-      }, {
-        timezone: 'America/New_York'
-      });
-
-      // Schedule biweekly deep stock research - Sunday 10:00 AM ET (every 2 weeks)
-      cron.schedule('0 10 * * 0', async () => {
-        const weekNumber = Math.ceil((new Date().getTime() - new Date(new Date().getFullYear(), 0, 1).getTime()) / (7 * 24 * 60 * 60 * 1000));
-        if (weekNumber % 2 === 0) {
-          const scheduledTime = new Date();
-          const jobId = await db.logCronJobStart('Biweekly Deep Research', 'weekly', scheduledTime);
-
-          try {
-            console.log('\n⏰ Sunday 10:00 AM - Biweekly deep stock research');
-            await stockProfiles.runBiweeklyDeepResearch();
-            console.log('✅ Biweekly research complete');
-            await db.logCronJobComplete(jobId, true);
-          } catch (error) {
-            console.error('❌ Error in biweekly research:', error);
-            await db.logCronJobComplete(jobId, false, error.message);
-            await email.sendErrorAlert(error, 'Biweekly stock research failed');
-          }
         }
       }, {
         timezone: 'America/New_York'
@@ -330,11 +336,12 @@ class WhiskieBot {
       console.log('   • Hourly (9am-4pm) - Order reconciliation');
       console.log('   • Hourly - Expire old trade approvals');
       console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
+      console.log('📅 Stock universe refresh: Saturday 10:00 AM ET');
+      console.log('   → Repopulate stock_universe from FMP (top 7 per industry, $7B+ market cap)');
       console.log('📅 Weekly screening: Saturday 3:00 PM ET');
       console.log('   → Full fundamental screening (all stocks, 6 pathways)');
       console.log('   → Opus quality + overvalued screening');
-      console.log('   → Weekly portfolio review with learning feedback');
-      console.log('📅 Biweekly deep research: Saturday 10:00 AM ET (even weeks)');
+      console.log('   → Populates saturday_watchlist with intent/pathway tags');
       console.log('💡 Press Ctrl+C to stop\n');
 
       this.botStarted = true;
