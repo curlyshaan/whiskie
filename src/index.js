@@ -405,13 +405,11 @@ class WhiskieBot {
       try {
         console.log('📡 Manual Saturday screening triggered via API');
 
-        // Import and run full weekly screening
+        // Import and run Saturday screening only (no weekly review)
         const fundamentalScreener = (await import('./fundamental-screener.js')).default;
         const opusScreener = (await import('./opus-screener.js')).default;
-        const { runWeeklyReview } = await import('./weekly-review.js');
-        const fmpCache = (await import('./fmp-cache.js')).default;
 
-        // Run all steps sequentially
+        // Run screening steps only
         (async () => {
           try {
             console.log('\n📊 STEP 1: Fundamental screening (all stocks)...');
@@ -420,12 +418,9 @@ class WhiskieBot {
             console.log('\n🧠 STEP 2: Opus quality + overvalued screening...');
             await opusScreener.runWeeklyOpusScreening();
 
-            console.log('\n📋 STEP 4: Weekly portfolio review...');
-            await runWeeklyReview();
-
-            console.log('✅ Full weekly screening complete');
+            console.log('✅ Saturday screening complete');
           } catch (error) {
-            console.error('❌ Error in manual screening:', error);
+            console.error('❌ Error in Saturday screening:', error);
           }
         })();
 
