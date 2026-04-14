@@ -118,6 +118,13 @@ class FundamentalScreener {
         if (processed % 50 === 0) {
           console.log(`   Progress: ${processed}/${allStocks.length} | Longs: ${longCandidates.length} | Shorts: ${shortCandidates.length}`);
         }
+
+        // Add 3-second delay between batches to avoid rate limits
+        // Each stock makes ~6 API calls, batch of 5 = 30 calls
+        // 3 seconds = 10 batches/minute = 300 calls/minute (at limit)
+        if (i + BATCH_SIZE < allStocks.length) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
       }
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
