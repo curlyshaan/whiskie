@@ -199,10 +199,23 @@ class WeeklyOpusReview {
 
       // Extract text from response
       let responseText = '';
+
+      // Debug: log response structure
+      console.log(`   Response structure: ${JSON.stringify(Object.keys(response))}`);
+      if (response.content) {
+        console.log(`   Content blocks: ${response.content.length}, types: ${response.content.map(b => b.type).join(', ')}`);
+      }
+
       if (response.content && response.content[0] && response.content[0].text) {
         responseText = response.content[0].text;
       } else if (typeof response === 'string') {
         responseText = response;
+      } else if (response.content) {
+        // Try to find text block
+        const textBlock = response.content.find(b => b.type === 'text');
+        if (textBlock) {
+          responseText = textBlock.text;
+        }
       }
 
       // Parse Opus output
