@@ -290,18 +290,20 @@ ${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 200)}...`).join('\n\n
    - Medium-term catalysts (6-18 months)
    - Long-term thesis drivers (2+ years)
 
-10. **METADATA**
-   - Industry sector (e.g., "Technology - Software", "Healthcare - Biotech")
-   - Market cap category: mega (>$200B), large ($10-200B), mid ($2-10B), small (<$2B)
-   - Growth stage: hyper_growth, growth, mature, turnaround, declining
-   - Insider ownership % (if available)
-   - Institutional ownership % (if available)
-   - Last earnings date (if available)
-   - Next earnings date (if available)
-   - Key metrics to watch (JSON format): {"primary": ["metric1", "metric2"], "thresholds": {"metric1": {"concern": 0.15, "target": 0.25}}}
+10. **METADATA** (REQUIRED - use exact format below)
+   ```
+   Industry sector: [e.g., "Technology - Software", "Healthcare - Biotech"]
+   Market cap category: [mega/large/mid/small based on: mega >$200B, large $10-200B, mid $2-10B, small <$2B]
+   Growth stage: [hyper_growth/growth/mature/turnaround/declining]
+   Insider ownership: [X.X%]
+   Institutional ownership: [X.X%]
+   Last earnings date: [YYYY-MM-DD or "N/A"]
+   Next earnings date: [YYYY-MM-DD or "N/A"]
+   Key metrics: {"primary": ["revenue_growth", "operating_margin"], "thresholds": {"revenue_growth": {"concern": 0.10, "target": 0.20}}}
+   ```
 
 **Output Format:**
-Structure your response with clear section headers. STAY WITHIN CHARACTER LIMITS. Be thorough but concise. Focus on insights that will be useful for daily trading decisions.`;
+Structure your response with clear section headers. STAY WITHIN CHARACTER LIMITS. The METADATA section is REQUIRED and must use the exact format shown above. Be thorough but concise. Focus on insights that will be useful for daily trading decisions.`;
 
     console.log('  🤔 Running Opus deep research (10-20k tokens)...');
     const researchStart = Date.now();
@@ -383,7 +385,7 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
     const updateDuration = ((Date.now() - updateStart) / 1000).toFixed(1);
     console.log(`  ✅ Update complete (${updateDuration}s)`);
 
-    // Merge updates with existing profile
+    // Merge updates with existing profile (apply cleanText to enforce character limits)
     const updatedProfile = {
       symbol,
       business_model: existingProfile.business_model,
@@ -394,10 +396,10 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
       valuation_framework: existingProfile.valuation_framework,
       fundamentals: fundamentals || existingProfile.fundamentals,
       risks: update.analysis.includes('RISKS_UPDATE') ?
-        update.analysis.match(/RISKS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.risks :
+        cleanText(update.analysis.match(/RISKS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.risks, 1500) :
         existingProfile.risks,
       catalysts: update.analysis.includes('CATALYSTS_UPDATE') ?
-        update.analysis.match(/CATALYSTS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.catalysts :
+        cleanText(update.analysis.match(/CATALYSTS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.catalysts, 1200) :
         existingProfile.catalysts,
       industry_sector: existingProfile.industry_sector,
       market_cap_category: existingProfile.market_cap_category,
@@ -502,7 +504,7 @@ function parseResearchIntoProfile(symbol, researchText, fundamentals) {
     const nextEarningsMatch = metadata.match(/Next\s+earnings\s+date[:\s]+(\d{4}-\d{2}-\d{2})/i);
     if (nextEarningsMatch) nextEarningsDate = nextEarningsMatch[1];
 
-    const metricsMatch = metadata.match(/Key\s+metrics\s+to\s+watch[:\s]+(\{[\s\S]*?\})/i);
+    const metricsMatch = metadata.match(/Key\s+metrics[:\s]+(\{[\s\S]*?\})/i);
     if (metricsMatch) {
       try {
         keyMetrics = JSON.parse(metricsMatch[1]);
@@ -510,6 +512,19 @@ function parseResearchIntoProfile(symbol, researchText, fundamentals) {
         console.warn('Failed to parse key_metrics JSON:', e.message);
       }
     }
+  }
+
+  // Fallback: derive metadata from fundamentals if not provided by Opus
+  if (!marketCapCategory && fundamentals?.marketCap) {
+    const marketCap = fundamentals.marketCap;
+    if (marketCap > 200000000000) marketCapCategory = 'mega';
+    else if (marketCap > 10000000000) marketCapCategory = 'large';
+    else if (marketCap > 2000000000) marketCapCategory = 'mid';
+    else marketCapCategory = 'small';
+  }
+
+  if (!industrySector && fundamentals?.sector && fundamentals?.industry) {
+    industrySector = `${fundamentals.sector} - ${fundamentals.industry}`;
   }
 
   return {
