@@ -2048,6 +2048,16 @@ ${assetClassContext}
 
 **Your Task:** Construct final portfolio with 12-14 positions total.
 
+**PRIMARY GOAL: BEAT S&P 500 (SPY)**
+Your portfolio must outperform SPY on a risk-adjusted basis. This means:
+- Target: Outperform SPY by 5-10% annually (minimum goal, not a ceiling)
+- Consider SPY's current momentum and trend when sizing positions
+- Balance sector weights vs SPY to capture alpha opportunities
+- Optimize for Sharpe ratio (return per unit of risk)
+- Take concentrated bets where conviction is high and risk/reward is favorable
+
+This is NOT about "safe diversification" - it's about beating the benchmark through superior stock selection and position sizing.
+
 **Portfolio Constraints:**
 - Total positions: 10-12 (combined longs + shorts)
 - Max position size: 12% ($12,000)
