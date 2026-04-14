@@ -27,6 +27,8 @@ class FundamentalScreener {
   constructor() {
     this.MIN_DOLLAR_VOLUME = 5_000_000;    // $5M daily dollar volume minimum
     this.MIN_PRICE = 5;                     // No penny stocks
+    this.MIN_AVG_VOLUME_SHARES_LONG = 250_000;   // 250K shares/day minimum for longs
+    this.MIN_AVG_VOLUME_SHARES_SHORT = 500_000;  // 500K shares/day minimum for shorts
 
     // Pathway-specific market cap minimums (quality strategies need scale)
     this.MARKET_CAP_REQUIREMENTS = {
@@ -40,9 +42,9 @@ class FundamentalScreener {
 
     this.MIN_SHORT_MARKET_CAP = 2_000_000_000; // $2B minimum for shorts
     this.MIN_SHORT_DOLLAR_VOLUME = 20_000_000; // $20M daily volume for shorts
-    this.LONG_THRESHOLD = 35;               // Pass if ANY pathway ≥35
-    this.SHORT_THRESHOLD = 50;              // Lowered from 60 - was too restrictive
-    this.MAX_SHORT_FLOAT = 0.20;            // Max 20% short float (meme stock risk)
+    this.LONG_THRESHOLD = 40;               // Pass if ANY pathway ≥40 (raised from 35)
+    this.SHORT_THRESHOLD = 55;              // Raised from 50 for higher conviction
+    this.MAX_SHORT_FLOAT = 0.15;            // Max 15% short float (reduced from 20%)
     this.debugCounter = 0;                  // Track stocks for debug logging
   }
 
@@ -175,6 +177,7 @@ class FundamentalScreener {
       // Skip if no fundamentals (likely an ETF or non-equity security)
       if (!fundamentals) return null;
 
+      const avgVolume = fundamentals.avgVolume || 0;
       const marketCap = fundamentals.marketCap || 0;
 
       const sector = normalizeSectorName(fundamentals.sector);
@@ -184,6 +187,16 @@ class FundamentalScreener {
       // Score long pathways (each pathway checks its own market cap requirement)
       const longResult = this.scoreLong(metrics, sector, sectorConfig, marketCap);
       const shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
+
+      // Apply volume filters after scoring
+      if (longResult && avgVolume < this.MIN_AVG_VOLUME_SHARES_LONG) {
+        // Filter out low-volume longs
+        longResult = null;
+      }
+      if (shortResult && avgVolume < this.MIN_AVG_VOLUME_SHARES_SHORT) {
+        // Filter out low-volume shorts
+        shortResult = null;
+      }
 
       // Debug: log first 10 stocks regardless of pass/fail
       this.debugCounter++;
@@ -294,44 +307,66 @@ class FundamentalScreener {
     // Market cap requirement: $2B minimum (quality value vs value traps)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.deepValue) return { score: 0, reasons: [] };
 
-    // FIX #4: Accrual ratio check - reject if earnings not backed by cash
+    // Accrual ratio check - reject if earnings not backed by cash
     if (metrics.accrualRatio > 0.12) {
       return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
     }
 
     let score = 0;
     const reasons = [];
+    let qualityScore = 0;
+    let valueSignals = 0;
 
+    // VALUE SIGNALS (need at least 2 of 3)
     if (metrics.pegRatio > 0 && metrics.pegRatio <= (sectorConfig.pegRange?.ideal || 1.5)) {
       score += 30;
+      valueSignals++;
       reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (excellent)`);
     } else if (metrics.pegRatio > 0 && metrics.pegRatio <= (sectorConfig.pegRange?.high || 2.5)) {
       score += 15;
+      valueSignals++;
       reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (acceptable)`);
     }
 
     if (metrics.peRatio > 0 && metrics.peRatio < (sectorConfig.peRange?.low || 15)) {
       score += 25;
+      valueSignals++;
       reasons.push(`P/E ${metrics.peRatio.toFixed(1)} (low for sector)`);
     } else if (metrics.peRatio > 0 && metrics.peRatio < (sectorConfig.peRange?.mid || 25)) {
       score += 12;
+      valueSignals++;
     }
 
     if (metrics.freeCashflowPerShare > 0) {
       score += 20;
+      valueSignals++;
       reasons.push('Positive FCF');
     }
 
+    // Require at least 2 value signals
+    if (valueSignals < 2) {
+      return { score: 0, reasons: ['Deep value requires 2 of 3 value signals (PEG, P/E, FCF)'] };
+    }
+
+    // QUALITY METRICS
     if (metrics.debtToEquity <= (sectorConfig.debtToEquityMax || 1) * 0.5) {
+      qualityScore += 15;
       score += 15;
       reasons.push(`Low debt (D/E: ${metrics.debtToEquity.toFixed(2)})`);
     } else if (metrics.debtToEquity <= (sectorConfig.debtToEquityMax || 1)) {
+      qualityScore += 8;
       score += 8;
     }
 
     if (metrics.roic > 0.15) {
+      qualityScore += 10;
       score += 10;
       reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}%`);
+    }
+
+    // Require minimum quality threshold (avoid value traps)
+    if (qualityScore < 15) {
+      return { score: 0, reasons: ['Deep value requires quality floor: low debt OR good ROIC (≥15 pts)'] };
     }
 
     return { score, reasons };
@@ -498,7 +533,12 @@ class FundamentalScreener {
     // Market cap requirement: $2B minimum (quality verification)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.qarp) return { score: 0, reasons: [] };
 
-    // FIX #4: Accrual ratio check - reject if earnings not backed by cash
+    // P/E ceiling - reject expensive stocks (QARP = Quality at REASONABLE Price)
+    if (metrics.peRatio > 35) {
+      return { score: 0, reasons: ['P/E >35 - too expensive for QARP'] };
+    }
+
+    // Accrual ratio check - reject if earnings not backed by cash
     if (metrics.accrualRatio > 0.12) {
       return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
     }
@@ -506,37 +546,62 @@ class FundamentalScreener {
     let score = 0;
     const reasons = [];
 
+    // Track category scores for multi-category requirement
+    const categoryScores = {
+      quality: 0,
+      valuation: 0,
+      growth: 0,
+      balance: 0
+    };
+
     // Quality at Reasonable Price - high ROIC/ROE compounders at fair valuations
-    if (metrics.roic > 0.15) {
+    if (metrics.roic > 0.20) {
+      categoryScores.quality += 25;
       score += 25;
+      reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}% (exceptional quality)`);
+    } else if (metrics.roic > 0.15) {
+      categoryScores.quality += 15;
+      score += 15;
       reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}% (quality compounder)`);
     }
 
     if (metrics.roe > 0.20) {
+      categoryScores.quality += 25;
       score += 25;
       reasons.push(`ROE ${(metrics.roe * 100).toFixed(1)}% (high returns)`);
     }
 
     // P/E 15-25 = reasonable, not cheap
     if (metrics.peRatio >= 15 && metrics.peRatio <= 25) {
+      categoryScores.valuation += 20;
       score += 20;
       reasons.push(`P/E ${metrics.peRatio.toFixed(1)} (reasonable valuation)`);
     } else if (metrics.peRatio > 25 && metrics.peRatio <= 30) {
+      categoryScores.valuation += 10;
       score += 10;
     }
 
     // Consistent earnings growth (proxy: positive earnings growth)
     if (metrics.earningsGrowth > 0.10) {
+      categoryScores.growth += 20;
       score += 20;
       reasons.push(`${(metrics.earningsGrowth * 100).toFixed(0)}% earnings growth (consistent)`);
     } else if (metrics.earningsGrowth > 0) {
+      categoryScores.growth += 10;
       score += 10;
     }
 
     // Bonus: low debt
     if (metrics.debtToEquity < 0.5) {
+      categoryScores.balance += 10;
       score += 10;
       reasons.push('Low debt');
+    }
+
+    // Require scoring in at least 3 of 4 categories
+    const categoriesWithPoints = Object.values(categoryScores).filter(s => s >= 10).length;
+    if (categoriesWithPoints < 3) {
+      return { score: 0, reasons: ['QARP requires scoring in 3 of 4 categories (quality, valuation, growth, balance)'] };
     }
 
     return { score, reasons };
@@ -546,18 +611,20 @@ class FundamentalScreener {
     // Market cap requirement: $500M minimum (distress acceptable, upside compensates)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.turnaround) return { score: 0, reasons: [] };
 
-    // FIX #2: Debt ceiling - D/E > 2.0 = auto-fail (balance sheet must survive recovery)
-    if (metrics.debtToEquity > 2.0) {
-      return { score: 0, reasons: ['Turnaround requires D/E ≤ 2.0 (balance sheet must survive recovery period)'] };
+    // Debt ceiling - tightened from 2.0 to 1.5
+    if (metrics.debtToEquity > 1.5) {
+      return { score: 0, reasons: ['Turnaround requires D/E ≤ 1.5 (balance sheet must survive recovery period)'] };
     }
 
     let score = 0;
     const reasons = [];
+    let operationalScore = 0;
+    let financialScore = 0;
 
-    // Turnaround situations - improving metrics but poor TTM numbers
+    // OPERATIONAL IMPROVEMENT
     // Debt reduction
     if (metrics.debtToEquity > 0 && metrics.debtToEquity < 1.0) {
-      // Check if debt is declining (proxy: current debt is reasonable)
+      operationalScore += 15;
       score += 15;
       reasons.push(`Debt/Equity ${metrics.debtToEquity.toFixed(2)} (manageable)`);
     }
@@ -565,24 +632,30 @@ class FundamentalScreener {
     // Margin expansion
     const marginExpansion = metrics.operatingMargin - metrics.operatingMarginPrev;
     if (marginExpansion > 0.03) {
+      operationalScore += 30;
       score += 30;
       reasons.push(`Margin expanding: +${(marginExpansion * 100).toFixed(1)}pp (turnaround signal)`);
     } else if (marginExpansion > 0.01) {
+      operationalScore += 15;
       score += 15;
       reasons.push('Margins improving');
     }
 
+    // FINANCIAL IMPROVEMENT
     // Revenue stabilization (after decline, now flat or growing)
     if (metrics.revenueGrowth >= 0 && metrics.revenueGrowth < 0.10) {
+      financialScore += 20;
       score += 20;
       reasons.push('Revenue stabilizing (turnaround phase)');
     } else if (metrics.revenueGrowth >= 0.10) {
+      financialScore += 25;
       score += 25;
       reasons.push(`Revenue growing ${(metrics.revenueGrowth * 100).toFixed(0)}% (turnaround accelerating)`);
     }
 
     // FCF turning positive
     if (metrics.freeCashflow > 0 && metrics.fcfGrowth > 0.20) {
+      financialScore += 25;
       score += 25;
       reasons.push('FCF turning positive (turnaround confirmation)');
     }
@@ -591,6 +664,11 @@ class FundamentalScreener {
     if (metrics.peRatio > 0 && metrics.peRatio < 20) {
       score += 15;
       reasons.push(`P/E ${metrics.peRatio.toFixed(1)} (undervalued turnaround)`);
+    }
+
+    // Require BOTH operational AND financial improvement
+    if (operationalScore < 20 || financialScore < 15) {
+      return { score: 0, reasons: ['Turnaround requires both operational improvement (≥20 pts) AND financial improvement (≥15 pts)'] };
     }
 
     return { score, reasons };
@@ -630,26 +708,37 @@ class FundamentalScreener {
 
   scoreShortValuation(metrics, sectorConfig, reasons) {
     let score = 0;
+    let valuationSignals = 0;
     const highPE = sectorConfig.peRange?.high || 40;
 
     if (metrics.peRatio > highPE * 1.5) {
       score += 20;
+      valuationSignals++;
       reasons.push(`Extreme P/E: ${metrics.peRatio.toFixed(1)} (1.5x sector ceiling of ${highPE})`);
     } else if (metrics.peRatio > highPE) {
       score += 10;
+      valuationSignals++;
     }
 
     if (metrics.pegRatio > 4.0) {
       score += 20;
+      valuationSignals++;
       reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (severely overvalued)`);
     } else if (metrics.pegRatio > 3.0) {
       score += 10;
+      valuationSignals++;
       reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (overvalued)`);
     }
 
     if (metrics.evToEbitda > 40) {
       score += 10;
+      valuationSignals++;
       reasons.push(`EV/EBITDA ${metrics.evToEbitda.toFixed(1)} (stretched)`);
+    }
+
+    // Require at least 2 valuation extremes
+    if (valuationSignals < 2) {
+      return 0;
     }
 
     return score;

@@ -1,0 +1,243 @@
+You are Whiskie, an AI portfolio manager. Review the fundamental screening criteria WITH ACTUAL CODE and recommend improvements.
+
+**Current Saturday Watchlist Distribution:**
+```
+ intent |   pathway   | total_count | unique_count
+--------+-------------+-------------+--------------
+ LONG   | cashMachine |          24 |           24
+ LONG   | deepValue   |          66 |           66
+ LONG   | highGrowth  |          18 |           18
+ LONG   | inflection  |          11 |           11
+ LONG   | qarp        |          85 |           85
+ LONG   | quality     |          15 |           15
+ LONG   | turnaround  |          77 |           77
+ SHORT  | overvalued  |          70 |           70
+```
+
+**ACTUAL CURRENT IMPLEMENTATION:**
+
+## Global Filters (applied to ALL stocks before scoring)
+
+```javascript
+this.MIN_DOLLAR_VOLUME = 5_000_000;    // $5M daily dollar volume minimum
+this.MIN_PRICE = 5;                     // No penny stocks
+
+// Market cap requirements per pathway
+this.MARKET_CAP_REQUIREMENTS = {
+  deepValue: 2_000_000_000,    // $2B
+  cashMachine: 2_000_000_000,  // $2B
+  qarp: 2_000_000_000,         // $2B
+  highGrowth: 500_000_000,     // $500M
+  inflection: 500_000_000,     // $500M
+  turnaround: 500_000_000      // $500M
+};
+
+this.MIN_SHORT_MARKET_CAP = 2_000_000_000; // $2B minimum for shorts
+this.MIN_SHORT_DOLLAR_VOLUME = 20_000_000; // $20M daily volume for shorts
+this.LONG_THRESHOLD = 35;               // Pass if ANY pathway ≥35
+this.SHORT_THRESHOLD = 50;              // Must hit ≥50 for shorts
+this.MAX_SHORT_FLOAT = 0.20;            // Max 20% short float
+```
+
+**CRITICAL MISSING FILTER:** No average volume (shares/day) check - only dollar volume!
+
+## LONG Pathway Scoring (actual code)
+
+### 1. deepValue (66 stocks) - Threshold: 35
+
+```javascript
+// Market cap: $2B minimum
+// Accrual ratio: reject if >12%
+
+// Scoring:
+if (pegRatio <= 1.5) score += 30;           // Excellent PEG
+else if (pegRatio <= 2.5) score += 15;      // Acceptable PEG
+
+if (peRatio < 15) score += 25;              // Low P/E for sector
+else if (peRatio < 25) score += 12;         // Mid P/E
+
+if (freeCashflowPerShare > 0) score += 20;  // Positive FCF
+
+if (debtToEquity <= 0.5) score += 15;       // Low debt
+else if (debtToEquity <= 1.0) score += 8;   // Moderate debt
+
+if (roic > 0.15) score += 10;               // ROIC >15%
+
+// Max possible: 30+25+20+15+10 = 100 points
+// Can pass with: PEG (30) + FCF (20) = 50 (no quality check!)
+```
+
+### 2. qarp (85 stocks) - Threshold: 35
+
+```javascript
+// Market cap: $2B minimum
+// Accrual ratio: reject if >12%
+
+// Scoring:
+if (roic > 0.15) score += 25;               // ROIC >15%
+if (roe > 0.20) score += 25;                // ROE >20%
+
+if (peRatio >= 15 && peRatio <= 25) score += 20;  // Reasonable P/E
+else if (peRatio > 25 && peRatio <= 30) score += 10;
+
+if (earningsGrowth > 0.10) score += 20;     // >10% earnings growth
+else if (earningsGrowth > 0) score += 10;
+
+if (debtToEquity < 0.5) score += 10;        // Low debt
+
+// Max possible: 25+25+20+20+10 = 100 points
+// Can pass with: ROIC (25) + ROE (25) = 50 (no valuation or growth required!)
+// NO UPPER LIMIT ON P/E - expensive stocks can pass!
+```
+
+### 3. turnaround (77 stocks) - Threshold: 35
+
+```javascript
+// Market cap: $500M minimum
+// Debt ceiling: reject if D/E > 2.0
+
+// Scoring:
+if (debtToEquity > 0 && debtToEquity < 1.0) score += 15;  // Manageable debt
+
+if (marginExpansion > 0.03) score += 30;    // >3pp margin expansion
+else if (marginExpansion > 0.01) score += 15;  // >1pp margin expansion
+
+if (revenueGrowth >= 0 && revenueGrowth < 0.10) score += 20;  // Stabilizing
+else if (revenueGrowth >= 0.10) score += 25;  // Growing
+
+if (freeCashflow > 0 && fcfGrowth > 0.20) score += 25;  // FCF turning positive
+
+if (peRatio > 0 && peRatio < 20) score += 15;  // Still cheap
+
+// Max possible: 15+30+25+25+15 = 110 points
+// Can pass with: Margin expansion (30) + Revenue stabilizing (20) = 50
+// NO requirement for BOTH operational AND financial improvement
+```
+
+### 4. highGrowth (18 stocks) - Threshold: 35
+
+```javascript
+// Market cap: $500M minimum
+// Accrual ratio: reject if >12%
+
+// Scoring:
+if (revenueGrowth >= 0.50) score += 40;     // ≥50% revenue growth
+else if (revenueGrowth >= 0.30) score += 30;  // ≥30% revenue growth
+else if (revenueGrowth >= 0.15) score += 15;  // ≥15% revenue growth
+
+if (earningsGrowth >= 0.40) score += 30;    // ≥40% earnings growth
+else if (earningsGrowth >= 0.20) score += 15;
+
+if (operatingMargin > 0) score += 10;       // Positive margin
+
+if (revenueGrowthQ > revenueGrowthPrevQ && revenueGrowthQ > 0.20) score += 20;  // Acceleration
+
+// Max possible: 40+30+10+20 = 100 points
+// Requires strong growth - seems appropriately selective
+```
+
+### 5. inflection (11 stocks) - Threshold: 35
+
+```javascript
+// Market cap: $500M minimum
+// Accrual ratio: reject if >12%
+// REQUIRES 2 of 4 criteria to score
+
+// Criteria:
+// 1. Revenue acceleration >10%: 35 points (or >5%: 20 points)
+// 2. Margin expansion >5pp: 30 points (or >2pp: 15 points)
+// 3. FCF growth >50%: 20 points
+// 4. PEG <3.0: 15 points
+
+// Max possible: 35+30+20+15 = 100 points
+// Multi-criteria requirement makes this selective - seems good
+```
+
+### 6. cashMachine (24 stocks) - Threshold: 35
+
+```javascript
+// Market cap: $2B minimum
+// Reject if: revenue declining >5% AND FCF growth ≤10%
+// Accrual ratio: reject if >12%
+
+// Scoring:
+if (fcfYield >= 0.10) score += 45;          // ≥10% FCF yield
+else if (fcfYield >= 0.08) score += 35;     // ≥8% FCF yield
+else if (fcfYield >= 0.05) score += 15;     // ≥5% FCF yield
+
+if (fcfGrowth > 0.20 && fcfGrowth > revenueGrowth) score += 25;
+else if (fcfGrowth > 0.10) score += 12;
+
+if (debtToEquity < 0.5) score += 15;        // Low debt
+if (roic > 0.20) score += 15;               // ROIC >20%
+
+// Max possible: 45+25+15+15 = 100 points
+// Can pass with: 8% FCF yield (35) alone - seems reasonable for "cash machine"
+```
+
+## SHORT Scoring (actual code)
+
+### overvalued (70 stocks) - Threshold: 50, must hit ALL 3 criteria
+
+```javascript
+// Market cap: $2B minimum
+// Dollar volume: $20M minimum
+// Short float: ≤20%
+
+// CRITERIA 1: Extreme valuation (≥20 points required)
+if (peRatio > highPE * 1.5) score += 20;    // 1.5x sector ceiling
+else if (peRatio > highPE) score += 10;
+
+if (pegRatio > 4.0) score += 20;            // PEG >4.0
+else if (pegRatio > 3.0) score += 10;       // PEG >3.0
+
+if (evToEbitda > 40) score += 10;           // EV/EBITDA >40
+
+// CRITERIA 2: Deteriorating fundamentals (≥20 points required)
+if (deceleration > 0.10) score += 25;       // Revenue deceleration >10%
+else if (deceleration > 0.05) score += 12;  // Revenue deceleration >5%
+
+if (marginCompression > 0.05) score += 25;  // Margin compression >5pp
+else if (marginCompression > 0.02) score += 12;  // Margin compression >2pp
+
+if (fcfGrowth < -0.20) score += 20;         // FCF declining >20%
+
+if (earningsGrowth < 0 && peRatio > 30) score += 20;  // Negative earnings + high P/E
+
+// CRITERIA 3: Safety checks (must pass all)
+// - Market cap ≥$2B
+// - Dollar volume ≥$20M
+// - Short float ≤20%
+
+// Can pass with: PEG >4.0 (20) + deceleration >10% (25) + margin compression >5pp (25) = 70
+// OR: PEG >3.0 (10) + P/E high (10) + deceleration >10% (25) + margin compression >5pp (25) = 70
+```
+
+## Your Task:
+
+1. **Analyze each high-count pathway** (qarp: 85, turnaround: 77, overvalued: 70, deepValue: 66):
+   - What specific scoring rules allow too many stocks to pass?
+   - Are there loopholes (e.g., passing on 2 metrics without others)?
+
+2. **Volume filtering gap**:
+   - Should we add MIN_AVG_VOLUME (shares/day) filter?
+   - Recommended thresholds for longs vs shorts?
+
+3. **Recommend specific code changes**:
+   - Exact threshold adjustments (e.g., "LONG_THRESHOLD: 35 → 40")
+   - New requirements (e.g., "qarp must score ≥15 in 3 of 4 categories")
+   - Additional filters or constraints
+
+4. **Balance selectivity vs opportunity**:
+   - We want quality candidates, not just fewer candidates
+   - Phase 2/3 Opus will further filter these
+   - Don't over-tighten and miss legitimate opportunities
+
+**Output Format:**
+For each pathway needing changes:
+- **Issue**: Specific scoring loophole or problem
+- **Fix**: Exact code change with numbers
+- **Reasoning**: Why this improves quality
+- **Expected impact**: Estimated new count
+
+Then provide overall recommendations for volume filtering and any cross-pathway improvements.

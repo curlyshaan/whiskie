@@ -1,0 +1,121 @@
+You are Whiskie, an AI portfolio manager. Review the fundamental screening criteria and recommend improvements.
+
+**Current Saturday Watchlist Distribution:**
+```
+ intent |   pathway   | total_count | unique_count
+--------+-------------+-------------+--------------
+ LONG   | cashMachine |          24 |           24
+ LONG   | deepValue   |          66 |           66
+ LONG   | highGrowth  |          18 |           18
+ LONG   | inflection  |          11 |           11
+ LONG   | qarp        |          85 |           85
+ LONG   | quality     |          15 |           15
+ LONG   | turnaround  |          77 |           77
+ SHORT  | overvalued  |          70 |           70
+```
+
+**Current Screening Criteria:**
+
+**LONG PATHWAYS (pass ANY one, threshold ≥35):**
+
+1. **deepValue** (66 stocks) - Market cap ≥$2B
+   - PEG ≤1.5 (ideal) or ≤2.5 (acceptable): 15-30 points
+   - P/E < sector low: 12-25 points
+   - Positive FCF: 20 points
+   - Low debt (D/E ≤0.5): 15 points
+   - ROIC >15%: 10 points
+   - Accrual ratio check: reject if >12%
+
+2. **highGrowth** (18 stocks) - Market cap ≥$500M
+   - Revenue growth ≥50%: 40 points, ≥30%: 30 points
+   - Earnings growth ≥40%: 30 points, ≥20%: 15 points
+   - Positive op margin: 10 points
+   - Q-over-Q acceleration: 20 points bonus
+   - Accrual ratio check: reject if >12%
+
+3. **inflection** (11 stocks) - Market cap ≥$500M
+   - Revenue acceleration (Q-over-Q): up to 30 points
+   - Margin expansion: up to 30 points
+   - Volume surge: up to 20 points
+   - Positive FCF: 15 points
+   - Requires 2 of 4 criteria to score
+   - Accrual ratio check: reject if >12%
+
+4. **cashMachine** (24 stocks) - Market cap ≥$2B
+   - FCF yield ≥10%: 45 points, ≥8%: 35 points
+   - FCF growth >20% (faster than revenue): 25 points
+   - Low debt (D/E <0.5): 15 points
+   - ROIC >20%: 15 points
+   - Reject if revenue declining >5% AND FCF growth ≤10%
+
+5. **qarp** (85 stocks) - Market cap ≥$2B
+   - ROIC >15%: 25 points
+   - ROE >20%: 25 points
+   - P/E 15-25: 20 points, 25-30: 10 points
+   - Earnings growth >10%: 20 points
+   - Low debt (D/E <0.5): 10 points
+   - Accrual ratio check: reject if >12%
+
+6. **turnaround** (77 stocks) - Market cap ≥$500M
+   - Debt/Equity <1.0: 15 points
+   - Margin expansion >3pp: 30 points, >1pp: 15 points
+   - Revenue stabilizing (0-10% growth): 20-25 points
+   - FCF turning positive (growth >20%): 25 points
+   - P/E <20: 15 points
+   - Reject if D/E >2.0
+
+**SHORT CRITERIA (must hit ALL three, threshold ≥50):**
+
+**overvalued** (70 stocks) - Market cap ≥$2B, Dollar volume ≥$20M
+1. Extreme valuation (≥20 points required):
+   - P/E >1.5x sector ceiling: 20 points
+   - PEG >4.0: 20 points, >3.0: 10 points
+   - EV/EBITDA >40: 10 points
+
+2. Deteriorating fundamentals (≥20 points required):
+   - Revenue deceleration >10%: 25 points, >5%: 12 points
+   - Margin compression >5pp: 25 points, >2pp: 12 points
+   - FCF declining <-20%: 20 points
+   - Negative earnings growth + P/E >30: 20 points
+
+3. Safety checks (must pass):
+   - Market cap ≥$2B
+   - Dollar volume ≥$20M
+   - Short float ≤20%
+
+**Current Filters:**
+- MIN_DOLLAR_VOLUME: $5M (longs), $20M (shorts)
+- MIN_PRICE: $5 (no penny stocks)
+- LONG_THRESHOLD: 35
+- SHORT_THRESHOLD: 50
+
+**Questions:**
+
+1. **High counts for turnaround (77) and qarp (85)**: Are these criteria too loose? Should we tighten thresholds?
+
+2. **Overvalued shorts (70)**: Is 70 short candidates too many? Should we raise the SHORT_THRESHOLD from 50?
+
+3. **Volume filtering**: Do we check average volume in Saturday screening? Should we add MIN_AVG_VOLUME filter (e.g., 500k shares/day)?
+
+4. **Market cap requirements**: Are current minimums appropriate? Should turnaround require higher market cap ($1B vs $500M)?
+
+5. **Scoring balance**: Are some pathways scoring too easily? Should we require higher point totals or more criteria?
+
+6. **Risk of over-filtering**: If we tighten criteria, do we risk filtering out legitimate opportunities?
+
+**Your Task:**
+
+1. Analyze each pathway's criteria - are they too loose or appropriately selective?
+2. Recommend specific threshold changes (with reasoning)
+3. Suggest additional filters if needed (volume, market cap, etc.)
+4. Balance selectivity vs opportunity cost - we want quality candidates, not just fewer candidates
+5. Consider that Phase 2/3 Opus analysis will further filter these candidates
+
+**Output Format:**
+For each pathway with high counts, provide:
+- **Current issue**: Why it's capturing too many stocks
+- **Recommended fix**: Specific threshold changes
+- **Reasoning**: Why this improves quality without missing opportunities
+- **Expected impact**: Estimated reduction in candidate count
+
+Then provide overall recommendations for volume filtering and any other improvements.
