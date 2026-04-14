@@ -176,7 +176,8 @@ class TradierAPI {
           side, // 'buy', 'sell', 'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close'
           quantity,
           type: orderType,
-          duration: 'day'
+          duration: 'gtc', // Good-til-canceled for extended hours support
+          extended_hours: true // Enable pre-market (4am-9:30am) and after-hours (4pm-8pm ET)
         }
       });
       return response.data.order;
