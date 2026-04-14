@@ -27,12 +27,11 @@ class FMPClient {
     this.RATE_LIMIT_PER_MINUTE = 300;
     this.lastResetDate = new Date().toDateString();
 
-    // Rate limiting: 1000ms between calls = 60 calls/min (safely under 300/min)
-    // Increased from 400ms to prevent rate limit errors during large screening operations
+    // Rate limiting: 400ms between calls = 150 calls/min (safely under 300/min)
     // With 6 API calls per stock in getFundamentals, this prevents rate limit errors
-    // 407 stocks × 6 calls = 2,442 calls over ~40 minutes (safe for Saturday screening)
+    // 407 stocks × 6 calls = 2,442 calls over ~16 minutes (safe for Saturday screening)
     this.lastCallTime = 0;
-    this.MIN_CALL_INTERVAL = 1000; // milliseconds
+    this.MIN_CALL_INTERVAL = 400; // milliseconds
 
     // Short-term cache for Saturday screening (30 minutes)
     // Prevents re-fetching same data when Opus screening runs after fundamental screening
