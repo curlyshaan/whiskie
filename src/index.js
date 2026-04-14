@@ -451,65 +451,43 @@ class WhiskieBot {
       }
     });
 
-    app.post('/api/trigger-deep-research', async (req, res) => {
-      try {
-        console.log('📡 Manual deep research triggered via API');
-        (async () => {
-          try {
-            const stockProfiles = await import('./stock-profiles.js');
-            await stockProfiles.runBiweeklyDeepResearch();
-            console.log('✅ Deep research complete');
-          } catch (error) {
-            console.error('❌ Error in manual deep research:', error);
-          }
-        })();
-        res.json({ success: true, message: 'Deep research started. This will take 20-30 minutes. Check logs for progress.' });
-      } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-      }
-    });
 
-    app.post('/api/trigger-batch-profiles/:batchNumber', async (req, res) => {
+    app.post('/api/trigger-profile-build-missing', async (req, res) => {
       try {
-        const batchNumber = parseInt(req.params.batchNumber);
-        console.log(`📡 Manual batch profile build #${batchNumber} triggered via API`);
-        (async () => {
-          try {
-            const stockProfiles = await import('./stock-profiles.js');
-            const result = await stockProfiles.buildProfileBatch(batchNumber, 50);
-            console.log(`✅ Batch ${batchNumber} complete: ${result.successful} successful, ${result.skipped} skipped, ${result.failed} failed`);
-          } catch (error) {
-            console.error(`❌ Error in batch ${batchNumber}:`, error);
-          }
-        })();
-        res.json({ success: true, message: `Batch ${batchNumber} started. Processing 50 stocks. Check logs for progress.` });
-      } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-      }
-    });
-
-    app.post('/api/trigger-profile-build-all', async (req, res) => {
-      try {
-        console.log('📡 Building profiles for ALL stocks in stock_universe');
+        console.log('📡 Building profiles for stocks WITHOUT profiles');
         (async () => {
           try {
             const db = await import('./db.js');
             const stockProfiles = await import('./stock-profiles.js');
 
-            const result = await db.query(
+            // Get all stocks from universe
+            const universeResult = await db.query(
               'SELECT symbol FROM stock_universe WHERE status = $1 ORDER BY symbol',
               ['active']
             );
 
-            const symbols = result.rows.map(r => r.symbol);
-            console.log(`Building profiles for ${symbols.length} stocks from stock_universe...`);
+            // Get stocks that already have profiles
+            const profilesResult = await db.query('SELECT symbol FROM stock_profiles');
+
+            const allSymbols = new Set(universeResult.rows.map(r => r.symbol));
+            const existingProfiles = new Set(profilesResult.rows.map(r => r.symbol));
+
+            // Find missing profiles
+            const missingSymbols = [...allSymbols].filter(s => !existingProfiles.has(s));
+
+            console.log(`Total stocks: ${allSymbols.size}, Existing profiles: ${existingProfiles.size}, Missing: ${missingSymbols.length}`);
+
+            if (missingSymbols.length === 0) {
+              console.log('✅ All stocks already have profiles!');
+              return;
+            }
 
             let completed = 0;
             let failed = 0;
 
-            for (const symbol of symbols) {
+            for (const symbol of missingSymbols) {
               try {
-                console.log(`[${completed + failed + 1}/${symbols.length}] Building ${symbol}...`);
+                console.log(`[${completed + failed + 1}/${missingSymbols.length}] Building ${symbol}...`);
                 await stockProfiles.buildStockProfile(symbol);
                 completed++;
 
@@ -526,7 +504,7 @@ class WhiskieBot {
             console.error('❌ Error in profile building:', error);
           }
         })();
-        res.json({ success: true, message: `Building profiles for all stocks in universe. This will take 15-20 minutes. Check logs for progress.` });
+        res.json({ success: true, message: `Building profiles for missing stocks only. Check logs for progress.` });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
@@ -550,23 +528,6 @@ class WhiskieBot {
       }
     });
 
-    app.post('/api/trigger-catalyst-update', async (req, res) => {
-      try {
-        console.log('📡 Manual catalyst update triggered via API');
-        (async () => {
-          try {
-            const { updateAllCatalysts } = await import('../scripts/update-catalysts.js');
-            await updateAllCatalysts();
-            console.log('✅ Catalyst update complete');
-          } catch (error) {
-            console.error('❌ Error in catalyst update:', error);
-          }
-        })();
-        res.json({ success: true, message: 'Catalyst update started. This will take 30-40 minutes. Check logs for progress.' });
-      } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-      }
-    });
 
     app.post('/api/trigger-premarket-scan', async (req, res) => {
       try {
@@ -584,26 +545,6 @@ class WhiskieBot {
       }
     });
 
-    app.post('/api/populate-stock-universe', async (req, res) => {
-      try {
-        console.log('📡 Manual stock universe population triggered via API');
-        res.json({ success: true, message: 'Use scripts/populate-universe-simple.js to populate stock universe from FMP' });
-      } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-      }
-    });
-
-    app.post('/api/db-migrate-add-asset-class', async (req, res) => {
-      try {
-        console.log('📡 Database migration: Adding asset_class column');
-        await db.query(`ALTER TABLE stock_universe ADD COLUMN IF NOT EXISTS asset_class VARCHAR(50)`);
-        console.log('✅ Migration complete: asset_class column added');
-        res.json({ success: true, message: 'Migration complete: asset_class column added to stock_universe table' });
-      } catch (error) {
-        console.error('❌ Migration failed:', error);
-        res.status(500).json({ success: false, error: error.message });
-      }
-    });
 
     app.post('/api/clear-stock-universe', async (req, res) => {
       try {
