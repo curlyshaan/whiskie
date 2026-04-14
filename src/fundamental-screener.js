@@ -79,8 +79,8 @@ class FundamentalScreener {
       let filtered = 0;
       let errors = 0;
 
-      // Process stocks in batches of 20 for parallel processing
-      const BATCH_SIZE = 20;
+      // Process stocks sequentially to avoid FMP rate limits (was 20, caused 120 parallel API calls)
+      const BATCH_SIZE = 1;
       for (let i = 0; i < allStocks.length; i += BATCH_SIZE) {
         const batch = allStocks.slice(i, i + BATCH_SIZE);
 
