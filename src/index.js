@@ -399,13 +399,13 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule trade executor and pathway exit monitoring every 45 minutes during market hours
-      cron.schedule('*/45 9-16 * * 1-5', async () => {
+      // Schedule trade executor and pathway exit monitoring every 30 minutes during market hours + extended hours
+      cron.schedule('*/30 4-20 * * 1-5', async () => {
         try {
           await tradeExecutor.processApprovedTrades();
           await pathwayExitMonitor.checkPathwayExits();
         } catch (error) {
-          console.error('❌ Error in 45-minute monitoring cycle:', error);
+          console.error('❌ Error in 30-minute monitoring cycle:', error);
         }
       }, {
         timezone: 'America/New_York'
