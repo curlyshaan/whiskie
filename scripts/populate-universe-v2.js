@@ -147,7 +147,7 @@ async function populateDatabase(stocks) {
             stock.marketCap,
             tier,
             stock.price,
-            stock.volume || 0,
+            Math.floor(stock.volume || 0),
             stock.exchangeShortName,
             stock.country || 'US',
             stock.isEtf || false,
