@@ -426,9 +426,9 @@ class RiskManager {
    */
   getTargetAllocation(regime) {
     const allocations = {
-      'bull': { long: 0.70, short: 0.10, cash: 0.20 },
-      'transitional': { long: 0.60, short: 0.20, cash: 0.20 },
-      'bear': { long: 0.40, short: 0.30, cash: 0.30 },
+      'bull': { long: 0.65, short: 0.20, cash: 0.15 },
+      'transitional': { long: 0.45, short: 0.25, cash: 0.30 },
+      'bear': { long: 0.30, short: 0.40, cash: 0.30 },
       'unknown': { long: 0.60, short: 0.15, cash: 0.25 }
     };
     return allocations[regime] || allocations['bull'];
