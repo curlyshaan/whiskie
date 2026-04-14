@@ -575,22 +575,28 @@ Return ONLY a JSON object with this structure (no other text):
                 const messages = [{ role: 'user', content: prompt }];
                 const response = await claude.sendMessage(messages, MODELS.SONNET, null, false, 0);
 
+                // Extract text from response object
+                let responseText = '';
+                if (response.content && response.content[0] && response.content[0].text) {
+                  responseText = response.content[0].text;
+                } else if (typeof response === 'string') {
+                  responseText = response;
+                } else {
+                  console.warn(`  ⚠️  Unexpected response format for ${profile.symbol}`);
+                  failed++;
+                  continue;
+                }
+
+                // Strip markdown code blocks
+                responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
                 let keyMetrics = null;
                 try {
-                  keyMetrics = JSON.parse(response);
+                  keyMetrics = JSON.parse(responseText);
                 } catch (e) {
-                  const sanitized = response
-                    .replace(/,\s*}/g, '}')
-                    .replace(/,\s*]/g, ']')
-                    .replace(/([{,]\s*)(\w+):/g, '$1"$2":')
-                    .replace(/:\s*'([^']*)'/g, ':"$1"');
-                  try {
-                    keyMetrics = JSON.parse(sanitized);
-                  } catch (e2) {
-                    console.warn(`  ⚠️  Failed to parse JSON for ${profile.symbol}`);
-                    failed++;
-                    continue;
-                  }
+                  console.warn(`  ⚠️  Failed to parse JSON for ${profile.symbol}: ${e.message}`);
+                  failed++;
+                  continue;
                 }
 
                 await db.query(
