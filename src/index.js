@@ -530,6 +530,96 @@ class WhiskieBot {
       }
     });
 
+    // TEMPORARY: One-time backfill for key_metrics_to_watch
+    app.post('/api/trigger-backfill-keymetrics', async (req, res) => {
+      try {
+        console.log('📡 Backfilling key_metrics_to_watch for existing profiles');
+        (async () => {
+          try {
+            const db = await import('./db.js');
+            const claude = (await import('./claude.js')).default;
+            const { MODELS } = await import('./claude.js');
+
+            const result = await db.query(
+              `SELECT symbol, business_model, fundamentals, risks, catalysts
+               FROM stock_profiles
+               WHERE key_metrics_to_watch IS NULL
+               ORDER BY symbol`
+            );
+
+            const profiles = result.rows;
+            console.log(`Found ${profiles.length} profiles with NULL key_metrics`);
+
+            let updated = 0;
+            let failed = 0;
+
+            for (const profile of profiles) {
+              try {
+                console.log(`[${updated + failed + 1}/${profiles.length}] Processing ${profile.symbol}...`);
+
+                const prompt = `You are analyzing ${profile.symbol}. Based on the profile below, identify 3-5 key metrics to monitor.
+
+Business Model: ${profile.business_model}
+
+Fundamentals: ${JSON.stringify(profile.fundamentals, null, 2)}
+
+Risks: ${profile.risks}
+
+Catalysts: ${profile.catalysts}
+
+Return ONLY a JSON object with this structure (no other text):
+{
+  "metric_name": "why it matters for this stock"
+}`;
+
+                const response = await claude.generateText(prompt, {
+                  model: MODELS.OPUS,
+                  temperature: 0.1,
+                  maxTokens: 500
+                });
+
+                let keyMetrics = null;
+                try {
+                  keyMetrics = JSON.parse(response);
+                } catch (e) {
+                  const sanitized = response
+                    .replace(/,\s*}/g, '}')
+                    .replace(/,\s*]/g, ']')
+                    .replace(/([{,]\s*)(\w+):/g, '$1"$2":')
+                    .replace(/:\s*'([^']*)'/g, ':"$1"');
+                  try {
+                    keyMetrics = JSON.parse(sanitized);
+                  } catch (e2) {
+                    console.warn(`  ⚠️  Failed to parse JSON for ${profile.symbol}`);
+                    failed++;
+                    continue;
+                  }
+                }
+
+                await db.query(
+                  'UPDATE stock_profiles SET key_metrics_to_watch = $1 WHERE symbol = $2',
+                  [keyMetrics, profile.symbol]
+                );
+
+                updated++;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+              } catch (error) {
+                console.error(`  ❌ Error processing ${profile.symbol}:`, error.message);
+                failed++;
+              }
+            }
+
+            console.log(`✅ Backfill complete: ${updated} updated, ${failed} failed`);
+          } catch (error) {
+            console.error('❌ Error in backfill:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Backfill started. This will take 10-15 minutes. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
 
     app.post('/api/trigger-premarket-scan', async (req, res) => {
       try {
