@@ -2389,13 +2389,22 @@ ${historyContext}`;
       const content = phase2Sections[i + 1];
 
       if (content) {
-        // Extract the reasoning section
-        const reasoningMatch = content.match(/REASONING:\s*([^\n]+(?:\n(?!SYMBOL:|DECISION:|ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:)[^\n]+)*)/i);
+        // Look for REASONING: field
+        const reasoningMatch = content.match(/REASONING:\s*(.+?)(?=\n\n|SYMBOL:|$)/is);
         if (reasoningMatch) {
           reasoningMap[symbol] = reasoningMatch[1].trim();
         } else {
-          // Fallback: take first 500 chars of content
-          reasoningMap[symbol] = content.substring(0, 500).trim();
+          // Fallback: extract text between DECISION: BUY and next section
+          const buyMatch = content.match(/DECISION:\s*BUY\s*(.+?)(?=\n\n|SYMBOL:|---)/is);
+          if (buyMatch) {
+            // Clean up and take first 300 chars
+            const reasoning = buyMatch[1]
+              .replace(/ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:/gi, '')
+              .replace(/\$[\d.]+/g, '')
+              .replace(/\d+%/g, '')
+              .trim();
+            reasoningMap[symbol] = reasoning.substring(0, 300);
+          }
         }
       }
     }
@@ -2407,13 +2416,22 @@ ${historyContext}`;
       const content = phase3Sections[i + 1];
 
       if (content) {
-        // Extract the reasoning section
-        const reasoningMatch = content.match(/REASONING:\s*([^\n]+(?:\n(?!SYMBOL:|DECISION:|ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:|TECHNICAL_CHECKLIST:)[^\n]+)*)/i);
+        // Look for REASONING: field
+        const reasoningMatch = content.match(/REASONING:\s*(.+?)(?=\n\n|SYMBOL:|$)/is);
         if (reasoningMatch) {
           reasoningMap[symbol] = reasoningMatch[1].trim();
         } else {
-          // Fallback: take first 500 chars of content
-          reasoningMap[symbol] = content.substring(0, 500).trim();
+          // Fallback: extract text between DECISION: SHORT and next section
+          const shortMatch = content.match(/DECISION:\s*SHORT\s*(.+?)(?=\n\n|SYMBOL:|---)/is);
+          if (shortMatch) {
+            // Clean up and take first 300 chars
+            const reasoning = shortMatch[1]
+              .replace(/ENTRY:|STOP:|TARGET:|POSITION_SIZE:|CONVICTION:|TECHNICAL_CHECKLIST:/gi, '')
+              .replace(/\$[\d.]+/g, '')
+              .replace(/\d+%/g, '')
+              .trim();
+            reasoningMap[symbol] = reasoning.substring(0, 300);
+          }
         }
       }
     }
