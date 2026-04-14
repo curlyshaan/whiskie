@@ -274,6 +274,99 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
+      // Schedule profile building - Sunday 3:00 PM ET
+      // Builds/updates profiles for all saturday_watchlist stocks before Opus review
+      cron.schedule('0 15 * * 0', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Profile Building', 'weekly', scheduledTime);
+
+        try {
+          console.log('\n⏰ Sunday 3:00 PM - Profile building for saturday_watchlist');
+
+          const stockProfiles = (await import('./stock-profiles.js')).default;
+
+          // Get all unique symbols from saturday_watchlist
+          const result = await db.query(
+            'SELECT DISTINCT symbol FROM saturday_watchlist WHERE status = $1 OR status = $2',
+            ['pending', 'active']
+          );
+
+          const watchlistSymbols = result.rows.map(r => r.symbol);
+          console.log(`   Found ${watchlistSymbols.length} unique stocks in saturday_watchlist`);
+
+          if (watchlistSymbols.length === 0) {
+            console.log('   ℹ️  No stocks to profile, skipping');
+            await db.logCronJobComplete(jobId, true);
+            return;
+          }
+
+          // Get existing profiles
+          const profilesResult = await db.query(
+            'SELECT symbol, last_updated FROM stock_profiles WHERE symbol = ANY($1)',
+            [watchlistSymbols]
+          );
+
+          const existingProfiles = new Map();
+          profilesResult.rows.forEach(p => {
+            existingProfiles.set(p.symbol, p.last_updated);
+          });
+
+          let newProfiles = 0;
+          let incrementalUpdates = 0;
+          let skipped = 0;
+          let failed = 0;
+
+          for (const symbol of watchlistSymbols) {
+            try {
+              const lastUpdated = existingProfiles.get(symbol);
+
+              if (lastUpdated) {
+                const daysSinceUpdate = (Date.now() - new Date(lastUpdated)) / (1000 * 60 * 60 * 24);
+
+                if (daysSinceUpdate < 12) {
+                  // Profile is fresh, skip
+                  console.log(`   [${newProfiles + incrementalUpdates + skipped + failed + 1}/${watchlistSymbols.length}] Skipping ${symbol} (updated ${daysSinceUpdate.toFixed(1)} days ago)`);
+                  skipped++;
+                } else {
+                  // Profile is stale, incremental update
+                  console.log(`   [${newProfiles + incrementalUpdates + skipped + failed + 1}/${watchlistSymbols.length}] Updating ${symbol} (incremental, ${daysSinceUpdate.toFixed(1)} days old)`);
+                  await stockProfiles.updateStockProfile(symbol);
+                  incrementalUpdates++;
+                }
+              } else {
+                // No profile exists, full build
+                console.log(`   [${newProfiles + incrementalUpdates + skipped + failed + 1}/${watchlistSymbols.length}] Building ${symbol} (new profile)`);
+                await stockProfiles.buildStockProfile(symbol);
+                newProfiles++;
+              }
+
+              // 3-second delay between profiles to avoid rate limiting
+              if (newProfiles + incrementalUpdates + skipped + failed < watchlistSymbols.length) {
+                await new Promise(resolve => setTimeout(resolve, 3000));
+              }
+
+            } catch (error) {
+              console.error(`   ❌ Failed ${symbol}: ${error.message}`);
+              failed++;
+            }
+          }
+
+          console.log(`\n   ✅ Profile building complete:`);
+          console.log(`      New profiles: ${newProfiles}`);
+          console.log(`      Updated profiles: ${incrementalUpdates}`);
+          console.log(`      Skipped (fresh): ${skipped}`);
+          console.log(`      Failed: ${failed}`);
+
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Error in profile building:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await email.sendErrorAlert(error, 'Profile building failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
       // Schedule weekly Opus review - Sunday 9:00 PM ET
       // Analyzes all saturday_watchlist candidates and activates top 15 per pathway
       cron.schedule('0 21 * * 0', async () => {
@@ -372,8 +465,12 @@ class WhiskieBot {
       console.log('📅 Weekly portfolio review: Sunday 1:00 PM ET');
       console.log('   → Reviews existing positions with Opus');
       console.log('   → Checks thesis validity, suggests stop-loss/take-profit adjustments');
+      console.log('📅 Profile building: Sunday 3:00 PM ET');
+      console.log('   → Builds/updates profiles for all saturday_watchlist stocks');
+      console.log('   → Fresh profiles (<12 days) skipped, stale profiles updated, new profiles built');
       console.log('📅 Weekly Opus review: Sunday 9:00 PM ET');
       console.log('   → Analyzes top 20 per pathway with Opus extended thinking');
+      console.log('   → Uses fresh profiles from 3pm build');
       console.log('   → Ranks by thesis strength, activates top 15 per pathway');
       console.log('   → Sets top candidates to status=\'active\', rest to \'pending\'');
       console.log('💡 Press Ctrl+C to stop\n');
