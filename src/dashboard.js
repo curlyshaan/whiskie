@@ -605,6 +605,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
               <th>Entry Price</th>
               <th>Current Price</th>
               <th>Gain/Loss</th>
+              <th>Pathway</th>
+              <th>Intent</th>
               <th>Stop Loss</th>
               <th>Take Profit</th>
             </tr>
@@ -625,10 +627,13 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
                   <td class="${gainLoss >= 0 ? 'positive' : 'negative'}">
                     ${gainLoss >= 0 ? '+' : ''}${gainLoss}%
                   </td>
+                  <td>${p.pathway || '-'}</td>
+                  <td>${p.intent || '-'}</td>
                   <td>${stopLoss ? '$' + stopLoss.toFixed(2) : '-'}</td>
                   <td>${takeProfit ? '$' + takeProfit.toFixed(2) : '-'}</td>
                 </tr>
               `;
+            }).join('')}
             }).join('')}
           </tbody>
         </table>`
@@ -1070,6 +1075,12 @@ router.get('/approvals', async (req, res) => {
           <div class="detail-item">
             <div class="detail-label">Take Profit</div>
             <div class="detail-value">$${parseFloat(trade.take_profit).toFixed(2)}</div>
+          </div>
+          ` : ''}
+          ${trade.pathway ? `
+          <div class="detail-item">
+            <div class="detail-label">Pathway</div>
+            <div class="detail-value">${trade.pathway}</div>
           </div>
           ` : ''}
           ${trade.intent ? `

@@ -299,6 +299,35 @@ class TradierAPI {
   }
 
   /**
+   * Place trailing stop order
+   * Automatically adjusts stop price as market moves in favorable direction
+   * @param {string} symbol - Stock symbol
+   * @param {string} side - 'buy' or 'sell'
+   * @param {number} quantity - Number of shares
+   * @param {number} trailAmount - Dollar amount to trail (e.g., $5.00)
+   * @param {string} accountId - Tradier account ID
+   */
+  async placeTrailingStopOrder(symbol, side, quantity, trailAmount, accountId = TRADIER_ACCOUNT_ID) {
+    try {
+      const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
+        params: {
+          class: 'equity',
+          symbol,
+          side,
+          quantity,
+          type: 'trailing_stop',
+          trail: trailAmount.toFixed(2),
+          duration: 'gtc'
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error(`Error placing trailing stop order for ${symbol}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
    * Place stop-limit order
    * Triggers at stop price, then becomes limit order
    */

@@ -15,19 +15,28 @@ export const PATHWAY_STRATEGIES = {
     initialTakeProfit: null, // Hold for thesis
     stopLoss: -0.15, // -15% hard stop
     trailingStop: {
-      activateAt: 1.00, // +100%
-      trailDistance: -0.25 // -25% from peak
+      activateAt: 0.50, // +50% (earlier activation to protect gains)
+      trailDistance: -0.20 // -20% from peak
     },
-    trimLevels: [
-      { gain: 1.00, trimPercent: 0.25 }, // Trim 25% at +100%
-      { gain: 2.00, trimPercent: 0.25 }  // Trim 25% at +200%
-    ],
-    reEvaluation: 'quarterly',
+    trimLevels: [], // No fixed trims - rely on trailing stops + fundamental reviews
+    reEvaluation: 'monthly',
+    fundamentalReview: {
+      // Quarterly review can trigger exits based on fundamentals
+      trimIf: [
+        'P/E exceeds sector median by >50% (valuation reached)',
+        'Valuation becomes expensive relative to growth'
+      ],
+      exitIf: [
+        'ROE declines >30% for 2 consecutive quarters',
+        'Debt/equity increases >50%',
+        'FCF turns negative for 2 consecutive quarters',
+        'Management change with questionable track record'
+      ]
+    },
     exitConditions: [
-      'Valuation reaches expensive (P/E >30 or P/B >5)',
-      'ROE declines >30% for 2 consecutive quarters',
-      'Debt/equity increases >50%',
-      'Management change with questionable track record'
+      'Trailing stop triggered (price falls 20% from peak after +50% gain)',
+      'Fundamental deterioration (see fundamentalReview)',
+      'Thesis invalidated (value recognized or fundamentals break)'
     ]
   },
 
@@ -86,15 +95,20 @@ export const PATHWAY_STRATEGIES = {
       activateAt: 0.40, // +40%
       trailDistance: -0.20 // -20% from peak
     },
-    trimLevels: [
-      { gain: 0.50, trimPercent: 0.25 } // Trim 25% at +50% (rebalance)
-    ],
-    reEvaluation: 'quarterly',
+    trimLevels: [], // No fixed trims - rely on trailing stops + fundamental reviews
+    reEvaluation: 'monthly',
+    fundamentalReview: {
+      exitIf: [
+        'FCF declines >20% for 2 consecutive quarters',
+        'Dividend cut or suspension',
+        'Payout ratio exceeds 100% (unsustainable)',
+        'Debt/EBITDA rises above 4x'
+      ]
+    },
     exitConditions: [
-      'FCF declines >20% for 2 consecutive quarters',
-      'Dividend cut or suspension',
-      'Payout ratio exceeds 100%',
-      'Debt/EBITDA rises above 4x'
+      'Trailing stop triggered (price falls 20% from peak after +40% gain)',
+      'Dividend cut >25%',
+      'Fundamental deterioration (see fundamentalReview)'
     ]
   },
 
@@ -111,7 +125,7 @@ export const PATHWAY_STRATEGIES = {
       { gain: 0.40, trimPercent: 0.33 }, // Trim 33% at +40%
       { gain: 0.80, trimPercent: 0.33 }  // Trim 33% at +80%
     ],
-    reEvaluation: 'quarterly',
+    reEvaluation: 'monthly',
     exitConditions: [
       'Valuation no longer reasonable (P/E exceeds sector by >75%)',
       'Quality deteriorates (ROE drops >25%)',
@@ -125,14 +139,19 @@ export const PATHWAY_STRATEGIES = {
     initialTakeProfit: null, // Hold for transformation
     stopLoss: -0.20, // -20% hard stop (need room for volatility)
     trailingStop: {
-      activateAt: 1.00, // +100%
-      trailDistance: -0.30 // -30% from peak
+      activateAt: 0.60, // +60% (earlier activation)
+      trailDistance: -0.25 // -25% from peak
     },
-    trimLevels: [
-      { gain: 1.00, trimPercent: 0.20 }, // Trim 20% at +100%
-      { gain: 2.00, trimPercent: 0.30 }  // Trim 30% at +200%
-    ],
-    reEvaluation: 'quarterly',
+    trimLevels: [], // No fixed trims - rely on trailing stops + fundamental reviews
+    reEvaluation: 'monthly',
+    fundamentalReview: {
+      exitIf: [
+        'Transformation plan abandoned or significantly altered',
+        'Key executives leave',
+        'Debt becomes unsustainable (interest coverage <2x)',
+        'Competitive position worsens despite transformation efforts'
+      ]
+    },
     exitConditions: [
       'Transformation plan abandoned or altered',
       'Key executives leave',

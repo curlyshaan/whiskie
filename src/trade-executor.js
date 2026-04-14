@@ -187,7 +187,24 @@ class TradeExecutor {
       oco_order_id: orderId,
       thesis: approval.reasoning,
       original_intent: approval.intent,
-      current_intent: approval.intent
+      current_intent: approval.intent,
+      pathway: approval.pathway,
+      intent: approval.intent
+    });
+
+    // Also create aggregate position with pathway info
+    await db.upsertPosition({
+      symbol: approval.symbol,
+      quantity: isShort ? -approval.quantity : approval.quantity,
+      cost_basis: approval.entry_price,
+      current_price: approval.entry_price,
+      sector: null, // Will be populated by position reconciliation
+      stock_type: positionType,
+      stop_loss: approval.stop_loss,
+      take_profit: approval.take_profit,
+      pathway: approval.pathway,
+      intent: approval.intent,
+      peak_price: approval.entry_price
     });
   }
 }

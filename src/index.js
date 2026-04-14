@@ -28,6 +28,7 @@ import opusScreener from './opus-screener.js';
 import tradeExecutor from './trade-executor.js';
 import circuitBreaker from './circuit-breaker.js';
 import earningsGuard from './earnings-guard.js';
+import pathwayExitMonitor from './pathway-exit-monitor.js';
 import portfolioRiskMetrics from './portfolio-risk-metrics.js';
 import learningFeedback from './learning-feedback.js';
 import orderReconciliation from './order-reconciliation.js';
@@ -271,12 +272,13 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule trade executor to process approved trades every 45 minutes during market hours
+      // Schedule trade executor and pathway exit monitoring every 45 minutes during market hours
       cron.schedule('*/45 9-16 * * 1-5', async () => {
         try {
           await tradeExecutor.processApprovedTrades();
+          await pathwayExitMonitor.checkPathwayExits();
         } catch (error) {
-          console.error('❌ Error processing approved trades:', error);
+          console.error('❌ Error in 45-minute monitoring cycle:', error);
         }
       }, {
         timezone: 'America/New_York'

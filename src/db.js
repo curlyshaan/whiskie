@@ -766,8 +766,8 @@ export async function logTrade(trade) {
 export async function upsertPosition(position) {
   try {
     const result = await pool.query(
-      `INSERT INTO positions (symbol, quantity, cost_basis, current_price, sector, stock_type, stop_loss, take_profit)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO positions (symbol, quantity, cost_basis, current_price, sector, stock_type, stop_loss, take_profit, pathway, intent, peak_price)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (symbol)
        DO UPDATE SET
          quantity = $2,
@@ -777,6 +777,9 @@ export async function upsertPosition(position) {
          stock_type = $6,
          stop_loss = $7,
          take_profit = $8,
+         pathway = $9,
+         intent = $10,
+         peak_price = $11,
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [
@@ -787,7 +790,10 @@ export async function upsertPosition(position) {
         position.sector,
         position.stock_type,
         position.stop_loss,
-        position.take_profit
+        position.take_profit,
+        position.pathway || null,
+        position.intent || null,
+        position.peak_price || position.current_price
       ]
     );
     return result.rows[0];
