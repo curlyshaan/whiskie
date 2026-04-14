@@ -231,11 +231,9 @@ class WhiskieBot {
       });
 
       // Schedule combined weekly screening - Saturday 3:00 PM ET
-      // Runs full fundamental screening + Opus screening + weekly review
       cron.schedule('0 15 * * 6', async () => {
         const scheduledTime = new Date();
         const screeningJobId = await db.logCronJobStart('Weekly Fundamental Screening', 'weekly', scheduledTime);
-        const reviewJobId = await db.logCronJobStart('Weekly Review', 'weekly', scheduledTime);
 
         try {
           console.log('\n⏰ Saturday 3:00 PM - Fundamental screening');
@@ -251,6 +249,26 @@ class WhiskieBot {
           console.error('❌ Error in Saturday screening:', error);
           await db.logCronJobComplete(screeningJobId, false, error.message);
           await email.sendErrorAlert(error, 'Saturday fundamental screening failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule weekly portfolio review - Sunday 1:00 PM ET
+      cron.schedule('0 13 * * 0', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Weekly Portfolio Review', 'weekly', scheduledTime);
+
+        try {
+          console.log('\n⏰ Sunday 1:00 PM - Weekly portfolio review');
+          const { runWeeklyReview } = await import('./weekly-review.js');
+          await runWeeklyReview();
+          console.log('✅ Weekly portfolio review complete');
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Error in weekly portfolio review:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await email.sendErrorAlert(error, 'Weekly portfolio review failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -350,10 +368,12 @@ class WhiskieBot {
       console.log('   → Repopulate stock_universe from FMP (top 7 per industry, $7B+ market cap)');
       console.log('📅 Weekly screening: Saturday 3:00 PM ET');
       console.log('   → Full fundamental screening (all stocks, 6 pathways)');
-      console.log('   → Opus quality + overvalued screening');
-      console.log('   → Populates saturday_watchlist with status=\'active\'');
+      console.log('   → Populates saturday_watchlist with status=\'pending\'');
+      console.log('📅 Weekly portfolio review: Sunday 1:00 PM ET');
+      console.log('   → Reviews existing positions with Opus');
+      console.log('   → Checks thesis validity, suggests stop-loss/take-profit adjustments');
       console.log('📅 Weekly Opus review: Sunday 9:00 PM ET');
-      console.log('   → Analyzes all saturday_watchlist candidates with Opus extended thinking');
+      console.log('   → Analyzes top 20 per pathway with Opus extended thinking');
       console.log('   → Ranks by thesis strength, activates top 15 per pathway');
       console.log('   → Sets top candidates to status=\'active\', rest to \'pending\'');
       console.log('💡 Press Ctrl+C to stop\n');
