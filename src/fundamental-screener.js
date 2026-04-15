@@ -42,8 +42,8 @@ class FundamentalScreener {
 
     this.MIN_SHORT_MARKET_CAP = 2_000_000_000; // $2B minimum for shorts
     this.MIN_SHORT_DOLLAR_VOLUME = 20_000_000; // $20M daily volume for shorts
-    this.LONG_THRESHOLD = 38;               // Pass if ANY pathway ≥38 (relaxed from 40)
-    this.SHORT_THRESHOLD = 50;              // Relaxed from 55 for more short candidates
+    this.LONG_THRESHOLD = 48;               // Raised from 38 to improve selectivity (62% pass rate too high)
+    this.SHORT_THRESHOLD = 65;              // Raised from 50 to match long threshold increase
     this.MAX_SHORT_FLOAT = 0.15;            // Max 15% short float (reduced from 20%)
     this.debugCounter = 0;                  // Track stocks for debug logging
   }
