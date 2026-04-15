@@ -512,10 +512,7 @@ router.post('/analyze', async (req, res) => {
     }
 
     // Format recommendation for HTML display
-    opusRecommendation = opusRecommendation
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n\n/g, '</p><p>')
-      .replace(/^(.+)$/gm, '<p>$1</p>');
+    opusRecommendation = formatOpusResponse(opusRecommendation);
 
     // Return results
     res.json({
@@ -697,6 +694,38 @@ Be specific and actionable. If you recommend waiting, explain what you're waitin
   }
 
   return prompt;
+}
+
+/**
+ * Format Opus response for better HTML display
+ */
+function formatOpusResponse(text) {
+  let html = text;
+
+  // Convert bold text
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+  // Convert numbered lists (1. 2. 3.)
+  html = html.replace(/^(\d+)\.\s+(.+)$/gm, '<li style="margin-bottom: 10px;">$2</li>');
+  html = html.replace(/(<li.*<\/li>\n?)+/g, '<ol style="margin: 15px 0 15px 25px; padding-left: 20px;">$&</ol>');
+
+  // Convert bullet points (- or •)
+  html = html.replace(/^[-•]\s+(.+)$/gm, '<li style="margin-bottom: 8px;">$1</li>');
+  html = html.replace(/(<li.*<\/li>\n?)+/g, '<ul style="margin: 15px 0 15px 25px; padding-left: 20px;">$&</ul>');
+
+  // Convert section headers (lines ending with :)
+  html = html.replace(/^([A-Z][^:\n]{3,50}):$/gm, '<h4 style="color: #667eea; margin-top: 20px; margin-bottom: 10px; font-size: 1.1rem;">$1</h4>');
+
+  // Convert paragraphs
+  html = html.split('\n\n').map(para => {
+    para = para.trim();
+    if (para && !para.startsWith('<')) {
+      return `<p style="margin-bottom: 12px; color: #d0d0d0; line-height: 1.8;">${para.replace(/\n/g, '<br>')}</p>`;
+    }
+    return para;
+  }).join('\n');
+
+  return html;
 }
 
 export default router;
