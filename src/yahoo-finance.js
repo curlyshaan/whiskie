@@ -80,8 +80,7 @@ class YahooFinance {
           continue;
         }
 
-        // Log warning but don't throw - return null so analysis can continue
-        console.warn(`Could not fetch short interest for ${symbol}:`, error.message);
+        // Silently return null - short interest is non-critical, no need to spam logs
         return null;
       }
     }

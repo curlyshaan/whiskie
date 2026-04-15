@@ -89,33 +89,53 @@ function markdownToHtml(text) {
  */
 router.get('/', async (req, res) => {
   try {
-    // Get today's analyses
+    // Get today's analyses (if table exists)
     const today = new Date().toISOString().split('T')[0];
-    const analyses = await db.query(
-      `SELECT * FROM ai_decisions
-       WHERE DATE(created_at) = $1
-       ORDER BY created_at DESC`,
-      [today]
-    );
+    let analyses = { rows: [] };
+    try {
+      analyses = await db.query(
+        `SELECT * FROM ai_decisions
+         WHERE DATE(created_at) = $1
+         ORDER BY created_at DESC`,
+        [today]
+      );
+    } catch (err) {
+      // Table doesn't exist yet - fresh start
+    }
 
-    // Get current portfolio
-    const portfolio = await db.query(
-      `SELECT * FROM positions WHERE quantity > 0 ORDER BY symbol`
-    );
+    // Get current portfolio (if table exists)
+    let portfolio = { rows: [] };
+    try {
+      portfolio = await db.query(
+        `SELECT * FROM positions WHERE quantity > 0 ORDER BY symbol`
+      );
+    } catch (err) {
+      // Table doesn't exist yet
+    }
 
-    // Get recent trades
-    const trades = await db.query(
-      `SELECT * FROM trades
-       ORDER BY executed_at DESC
-       LIMIT 10`
-    );
+    // Get recent trades (if table exists)
+    let trades = { rows: [] };
+    try {
+      trades = await db.query(
+        `SELECT * FROM trades
+         ORDER BY executed_at DESC
+         LIMIT 10`
+      );
+    } catch (err) {
+      // Table doesn't exist yet
+    }
 
-    // Get portfolio snapshot
-    const snapshot = await db.query(
-      `SELECT * FROM portfolio_snapshots
-       ORDER BY snapshot_date DESC
-       LIMIT 1`
-    );
+    // Get portfolio snapshot (if table exists)
+    let snapshot = { rows: [] };
+    try {
+      snapshot = await db.query(
+        `SELECT * FROM portfolio_snapshots
+         ORDER BY snapshot_date DESC
+         LIMIT 1`
+      );
+    } catch (err) {
+      // Table doesn't exist yet
+    }
 
     const html = generateDashboardHTML(analyses.rows, portfolio.rows, trades.rows, snapshot.rows[0]);
     res.send(html);

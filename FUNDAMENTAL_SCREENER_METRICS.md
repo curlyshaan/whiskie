@@ -336,6 +336,40 @@ All metrics sourced from FMP (Financial Modeling Prep) API:
 
 ## Recent Improvements (2026-04-15)
 
+### Comprehensive Pathway Filter Overhaul
+
+**Raised Selectivity Thresholds:**
+- LONG_THRESHOLD: 38 → 50 (31% increase)
+- SHORT_THRESHOLD: 50 → 55 (10% increase)
+- Expected impact: Significantly lower pass rates from previous 62%
+
+**Quality Minimums (Prevent One-Metric Wonders):**
+- **High Growth**: Raised from 10 pts → 20 pts
+- **Deep Value**: Raised to 25 pts + require ≥3 quality signals
+- **Cash Machine**: Raised to 20 pts + require ≥3 category diversity
+- **Inflection**: Added balance sheet requirement (≥15 pts)
+
+**Tiered Accrual Penalties (All Pathways):**
+- 8-10%: -15 points (was -10)
+- 10-12%: -25 points (new tier)
+- >12%: Reject (unchanged)
+- Better granularity than binary reject
+
+**Debt Penalties (High Growth):**
+- D/E > 2.0: -25 points (risky leverage)
+- D/E > 1.5: -15 points (elevated leverage)
+- Prevents growth stocks with dangerous debt loads
+
+**Revenue Scoring Fix (High Growth):**
+- ≥50% growth: +45 points (was +40)
+- ≥30% growth: +35 points (was +40)
+- Fixed illogical scoring where both tiers gave same points
+
+**Category Diversity Requirements:**
+- Deep Value must score in ≥3 of: ROE, operating margin, debt/equity, ROIC, quick ratio, dividend yield
+- Cash Machine must score in ≥3 of: FCF yield, FCF growth, efficiency, balance sheet
+- Prevents passing on single outlier metric
+
 ### Forward PEG Integration
 1. **Added `forwardPegRatio` field** to `fmp.js` getFundamentals()
 2. **HighGrowth pathway** now uses forward PEG (prefers forward over trailing)
@@ -346,7 +380,9 @@ All metrics sourced from FMP (Financial Modeling Prep) API:
 7. **Opus screener** shows both PEG ratios in Phase 2/3 analysis
 
 ### Why This Matters
-Growth stocks like LLY were incorrectly flagged as overvalued based on trailing PEG (3.29) when forward PEG (1.82) showed reasonable valuation. Forward PEG reflects expected future growth, making it more appropriate for high-growth companies.
+**Forward PEG:** Growth stocks like LLY were incorrectly flagged as overvalued based on trailing PEG (3.29) when forward PEG (1.82) showed reasonable valuation. Forward PEG reflects expected future growth, making it more appropriate for high-growth companies.
+
+**Quality Minimums:** Previous system allowed stocks to pass with single outlier metrics (e.g., 50% revenue growth = +40 pts, pass at 38 threshold). New system requires "best combos" - multiple quality signals across different categories. This creates more robust, diversified candidates with lower risk profiles.
 
 ---
 
