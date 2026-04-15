@@ -731,6 +731,8 @@ class FMPClient {
         // TTM Financial Health
         debtToEquity: ratiosTTM.debtToEquityRatioTTM || 0,
         currentRatio: ratiosTTM.currentRatioTTM || 0,
+        quickRatio: ratiosTTM.quickRatioTTM || 0,
+        cashRatio: ratiosTTM.cashRatioTTM || 0,
         interestCoverage: ratiosTTM.interestCoverageRatioTTM || 0,
 
         // TTM Profitability
@@ -759,6 +761,17 @@ class FMPClient {
         // Efficiency metrics
         assetTurnover: ratiosTTM.assetTurnoverTTM || 0,
         inventoryTurnover: ratiosTTM.inventoryTurnoverTTM || 0,
+        receivablesTurnover: ratiosTTM.receivablesTurnoverTTM || 0,
+
+        // Working capital metrics
+        daysOfSalesOutstanding: keyMetricsTTM?.daysOfSalesOutstandingTTM || 0,
+        daysOfInventoryOutstanding: keyMetricsTTM?.daysOfInventoryOutstandingTTM || 0,
+        daysOfPayablesOutstanding: keyMetricsTTM?.daysOfPayablesOutstandingTTM || 0,
+
+        // Cash flow efficiency
+        priceToOperatingCashFlow: ratiosTTM.priceToOperatingCashFlowRatioTTM || 0,
+        capexToOperatingCashFlow: keyMetricsTTM?.capexToOperatingCashFlowTTM || 0,
+        capexToRevenue: keyMetricsTTM?.capexToRevenueTTM || 0,
 
         // Shareholder returns
         dividendYield: ratiosTTM.dividendYieldTTM || 0,

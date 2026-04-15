@@ -206,7 +206,7 @@ ${sortedStocks.map(s => {
 ${s.symbol}${pathwayTag}${scoreTag} (${s.fundamentals.sector || 'Unknown'})
   Market Cap: $${((s.fundamentals.marketCap || 0) / 1e9).toFixed(1)}B
   Price: $${s.market.price || 0} (52w high: $${s.market.high52w || 0}, ${(((s.market.price || 0) - (s.market.high52w || 1)) / (s.market.high52w || 1) * 100).toFixed(1)}% from high)
-  P/E: ${(s.fundamentals.peRatio || 0).toFixed(1)}, PEG: ${(s.fundamentals.pegRatio || 0).toFixed(2)}
+  P/E: ${(s.fundamentals.peRatio || 0).toFixed(1)}, PEG (TTM): ${(s.fundamentals.pegRatio || 0).toFixed(2)}, PEG (Forward): ${(s.fundamentals.forwardPegRatio || 0).toFixed(2)}
   Revenue Growth: ${((s.fundamentals.revenueGrowth || 0) * 100).toFixed(1)}%, Earnings Growth: ${((s.fundamentals.earningsGrowth || 0) * 100).toFixed(1)}%
   Debt/Equity: ${(s.fundamentals.debtToEquity || 0).toFixed(2)}, ROE: ${((s.fundamentals.roe || 0) * 100).toFixed(1)}%
   Operating Margin: ${((s.fundamentals.operatingMargin || 0) * 100).toFixed(1)}%, Net Margin: ${((s.fundamentals.profitMargin || 0) * 100).toFixed(1)}%

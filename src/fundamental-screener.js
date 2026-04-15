@@ -269,6 +269,22 @@ class FundamentalScreener {
       debtToEquity: fundamentals.debtToEquity || 0,
       shortFloat: fundamentals.shortFloat || null,
       accrualRatio,  // FIX #4: Earnings quality check
+
+      // NEW: Liquidity metrics
+      quickRatio: fundamentals.quickRatio || 0,
+      cashRatio: fundamentals.cashRatio || 0,
+
+      // NEW: Efficiency metrics
+      assetTurnover: fundamentals.assetTurnover || 0,
+      cashConversionCycle: fundamentals.cashConversionCycle || 0,
+      daysOfSalesOutstanding: fundamentals.daysOfSalesOutstanding || 0,
+
+      // NEW: Cash flow metrics
+      priceToOperatingCashFlow: fundamentals.priceToOperatingCashFlow || 0,
+
+      // NEW: Shareholder returns
+      dividendYield: fundamentals.dividendYield || 0,
+
       price,
       dollarVolume,
       marketCap: fundamentals.marketCap || 0
@@ -370,6 +386,19 @@ class FundamentalScreener {
       qualityScore += 10;
       score += 10;
       reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}%`);
+    }
+
+    // Quick ratio - more conservative liquidity measure (excludes inventory)
+    if (metrics.quickRatio > 1.5) {
+      qualityScore += 8;
+      score += 8;
+      reasons.push(`Quick ratio ${metrics.quickRatio.toFixed(2)} (strong liquidity)`);
+    }
+
+    // Dividend yield - income component for value investors
+    if (metrics.dividendYield > 0.03) {
+      score += 10;
+      reasons.push(`Dividend yield ${(metrics.dividendYield * 100).toFixed(1)}% (income)`);
     }
 
     // Require minimum quality threshold (avoid value traps)
@@ -548,6 +577,21 @@ class FundamentalScreener {
       reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}%`);
     }
 
+    // Cash conversion cycle - negative is excellent (getting paid before paying suppliers)
+    if (metrics.cashConversionCycle < 0) {
+      score += 15;
+      reasons.push(`Cash conversion cycle ${metrics.cashConversionCycle.toFixed(0)} days (negative = excellent)`);
+    } else if (metrics.cashConversionCycle < 30) {
+      score += 8;
+      reasons.push(`Cash conversion cycle ${metrics.cashConversionCycle.toFixed(0)} days (efficient)`);
+    }
+
+    // Price to operating cash flow - alternative to P/E for cash-focused analysis
+    if (metrics.priceToOperatingCashFlow > 0 && metrics.priceToOperatingCashFlow < 15) {
+      score += 10;
+      reasons.push(`P/OCF ${metrics.priceToOperatingCashFlow.toFixed(1)} (attractive)`);
+    }
+
     return { score, reasons };
   }
 
@@ -603,6 +647,18 @@ class FundamentalScreener {
       score += 10;
     }
 
+    // PEG ratio check - QARP should have reasonable PEG (not overpaying for growth)
+    // Use trailing PEG for QARP (quality compounders with steady growth)
+    if (metrics.pegRatio > 0 && metrics.pegRatio <= 2.0) {
+      categoryScores.valuation += 15;
+      score += 15;
+      reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (reasonable price for growth)`);
+    } else if (metrics.pegRatio > 0 && metrics.pegRatio <= 2.5) {
+      categoryScores.valuation += 8;
+      score += 8;
+      reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (acceptable)`);
+    }
+
     // Consistent earnings growth (proxy: positive earnings growth)
     if (metrics.earningsGrowth > 0.10) {
       categoryScores.growth += 20;
@@ -618,6 +674,13 @@ class FundamentalScreener {
       categoryScores.balance += 10;
       score += 10;
       reasons.push('Low debt');
+    }
+
+    // Asset turnover - capital efficiency (revenue per dollar of assets)
+    if (metrics.assetTurnover > 1.0) {
+      categoryScores.quality += 10;
+      score += 10;
+      reasons.push(`Asset turnover ${metrics.assetTurnover.toFixed(2)} (capital efficient)`);
     }
 
     // Require scoring in at least 3 of 4 categories
@@ -682,6 +745,20 @@ class FundamentalScreener {
       reasons.push('FCF turning positive (turnaround confirmation)');
     }
 
+    // Quick ratio - liquidity check for distressed companies
+    if (metrics.quickRatio > 1.0) {
+      financialScore += 15;
+      score += 15;
+      reasons.push(`Quick ratio ${metrics.quickRatio.toFixed(2)} (adequate liquidity)`);
+    }
+
+    // Working capital improvement - days sales outstanding decreasing
+    if (metrics.daysOfSalesOutstanding > 0 && metrics.daysOfSalesOutstanding < 60) {
+      financialScore += 10;
+      score += 10;
+      reasons.push(`DSO ${metrics.daysOfSalesOutstanding.toFixed(0)} days (collecting efficiently)`);
+    }
+
     // Still cheap despite improvements
     if (metrics.peRatio > 0 && metrics.peRatio < 20) {
       score += 15;
@@ -742,20 +819,29 @@ class FundamentalScreener {
       valuationSignals++;
     }
 
-    if (metrics.pegRatio > 4.0) {
+    // CRITICAL FIX: Use forward PEG for growth stocks, trailing PEG for others
+    // Growth stocks (>15% revenue growth) should be evaluated on forward PEG
+    // This prevents false positives like LLY (trailing PEG 3.29, forward PEG 1.82)
+    const isGrowthStock = metrics.revenueGrowth > 0.15;
+    const pegToUse = (isGrowthStock && metrics.forwardPegRatio > 0)
+      ? metrics.forwardPegRatio
+      : metrics.pegRatio;
+    const pegLabel = (isGrowthStock && metrics.forwardPegRatio > 0) ? 'Forward PEG' : 'PEG';
+
+    if (pegToUse > 4.0) {
       score += 20;
       valuationSignals++;
-      reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (severely overvalued)`);
-    } else if (metrics.pegRatio > 3.0) {
+      reasons.push(`${pegLabel} ${pegToUse.toFixed(2)} (severely overvalued)`);
+    } else if (pegToUse > 3.0) {
       score += 10;
       valuationSignals++;
-      reasons.push(`PEG ${metrics.pegRatio.toFixed(2)} (overvalued)`);
-    } else if (metrics.pegRatio < 0 && metrics.peRatio > highPE * 0.9 && metrics.peRatio > 15) {
+      reasons.push(`${pegLabel} ${pegToUse.toFixed(2)} (overvalued)`);
+    } else if (pegToUse < 0 && metrics.peRatio > highPE * 0.9 && metrics.peRatio > 15) {
       // Negative PEG: paying premium P/E for declining earnings
       // Requires P/E >90% of sector threshold AND absolute floor of 15
       score += 15;
       valuationSignals++;
-      reasons.push(`Negative PEG with P/E ${metrics.peRatio.toFixed(1)} (premium multiple on declining earnings)`);
+      reasons.push(`Negative ${pegLabel} with P/E ${metrics.peRatio.toFixed(1)} (premium multiple on declining earnings)`);
     }
 
     if (metrics.evToEbitda > 40) {
