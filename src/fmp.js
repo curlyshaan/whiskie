@@ -711,6 +711,7 @@ class FMPClient {
         // TTM Valuation (current price × TTM earnings)
         peRatio: ratiosTTM.priceToEarningsRatioTTM || 0,
         pegRatio: ratiosTTM.priceToEarningsGrowthRatioTTM || 0,
+        forwardPegRatio: ratiosTTM.forwardPriceToEarningsGrowthRatioTTM || 0,
         priceToBook: ratiosTTM.priceToBookRatioTTM || 0,
         priceToSales: ratiosTTM.priceToSalesRatioTTM || 0,
         evToEbitda: keyMetricsTTM?.evToEBITDATTM || 0,

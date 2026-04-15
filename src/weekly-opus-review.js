@@ -262,8 +262,9 @@ SATURDAY SCREENING RESULTS:
 
     // Add fundamentals
     prompt += `CURRENT FUNDAMENTALS:
-- P/E: ${ratios?.peRatio?.toFixed(2) || 'N/A'}
-- PEG: ${ratios?.pegRatio?.toFixed(2) || 'N/A'}
+- P/E (TTM): ${ratios?.peRatioTTM?.toFixed(2) || 'N/A'}
+- PEG (TTM): ${ratios?.priceToEarningsGrowthRatioTTM?.toFixed(2) || 'N/A'}
+- PEG (Forward): ${ratios?.forwardPriceToEarningsGrowthRatioTTM?.toFixed(2) || 'N/A'}
 - Revenue Growth (YoY): ${(metrics?.revenueGrowthQ * 100)?.toFixed(1) || 'N/A'}%
 - Operating Margin: ${(ratios?.operatingMargin * 100)?.toFixed(1) || 'N/A'}%
 - ROE: ${(ratios?.returnOnEquity * 100)?.toFixed(1) || 'N/A'}%

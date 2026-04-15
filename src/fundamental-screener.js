@@ -248,6 +248,7 @@ class FundamentalScreener {
     return {
       peRatio: fundamentals.peRatio || 0,
       pegRatio: fundamentals.pegRatio || 0,
+      forwardPegRatio: fundamentals.forwardPegRatio || 0,
       priceToBook: fundamentals.priceToBook || 0,
       priceToSales: fundamentals.priceToSales || 0,
       evToEbitda: fundamentals.evToEbitda || 0,
@@ -422,6 +423,17 @@ class FundamentalScreener {
     if (metrics.revenueGrowthQ > metrics.revenueGrowthPrevQ && metrics.revenueGrowthQ > 0.20) {
       score += 20;
       reasons.push('Growth accelerating Q-over-Q');
+    }
+
+    // Forward PEG check - prefer forward PEG for growth stocks (reflects expected growth)
+    // Use forward PEG if available, otherwise fall back to trailing PEG
+    const pegToUse = metrics.forwardPegRatio > 0 ? metrics.forwardPegRatio : metrics.pegRatio;
+    if (pegToUse > 0 && pegToUse < 2.0) {
+      score += 15;
+      reasons.push(`PEG ${pegToUse.toFixed(2)} (reasonable valuation for growth)`);
+    } else if (pegToUse > 0 && pegToUse < 3.0) {
+      score += 5;
+      reasons.push(`PEG ${pegToUse.toFixed(2)} (acceptable)`);
     }
 
     return { score, reasons };

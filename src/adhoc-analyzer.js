@@ -613,8 +613,9 @@ Catalysts: ${profile.catalysts || 'N/A'}
   // Add fundamentals
   prompt += `CURRENT FUNDAMENTALS:
 - Market Cap: $${(quote.marketCap / 1e9).toFixed(2)}B
-- P/E Ratio: ${ratios?.peRatio?.toFixed(2) || 'N/A'}
-- PEG Ratio: ${ratios?.pegRatio?.toFixed(2) || 'N/A'}
+- P/E Ratio (TTM): ${ratios?.peRatioTTM?.toFixed(2) || 'N/A'}
+- PEG Ratio (TTM): ${ratios?.priceToEarningsGrowthRatioTTM?.toFixed(2) || 'N/A'}
+- PEG Ratio (Forward): ${ratios?.forwardPriceToEarningsGrowthRatioTTM?.toFixed(2) || 'N/A'}
 - Price to Book: ${ratios?.priceToBookRatio?.toFixed(2) || 'N/A'}
 - Operating Margin: ${(ratios?.operatingMargin * 100)?.toFixed(1) || 'N/A'}%
 - ROE: ${(ratios?.returnOnEquity * 100)?.toFixed(1) || 'N/A'}%
