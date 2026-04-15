@@ -185,13 +185,13 @@ class WhiskieBot {
       cron.schedule('0 15 * * 5', async () => {
         console.log('\n⏰ Friday 3:00 PM - Weekly earnings calendar refresh');
         try {
-          // Run Python script to update earnings calendar
+          // Run FMP-based earnings refresh script
           const { exec } = await import('child_process');
           const { promisify } = await import('util');
           const execAsync = promisify(exec);
 
-          console.log('📅 Running earnings calendar update...');
-          const { stdout, stderr } = await execAsync('python3 fetch-earnings.py');
+          console.log('📅 Running earnings calendar update from FMP...');
+          const { stdout, stderr } = await execAsync('node scripts/refresh-earnings-fmp.js');
 
           if (stderr) console.error('Earnings update stderr:', stderr);
           console.log(stdout);
