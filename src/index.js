@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import dotenv from 'dotenv';
 import express from 'express';
 import dashboard from './dashboard.js';
+import adhocAnalyzer from './adhoc-analyzer.js';
 import tradier from './tradier.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
@@ -54,6 +55,7 @@ app.use(express.json());
 
 // Mount dashboard routes
 app.use('/', dashboard);
+app.use('/adhoc-analyzer', adhocAnalyzer);
 
 /**
  * Whiskie - AI Trading Bot

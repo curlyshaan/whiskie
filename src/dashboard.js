@@ -520,6 +520,9 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
     <a href="/approvals" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;" id="approvalsBtn">
       ⚖️ Trade Approvals
     </a>
+    <a href="/adhoc-analyzer" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;">
+      🔍 Adhoc Analyzer
+    </a>
     <a href="/cron-status" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;">
       ⏰ Cron Jobs
     </a>
