@@ -15,8 +15,8 @@ import * as db from './db.js';
 
 class OpusScreener {
   constructor() {
-    this.QUALITY_WATCHLIST_SIZE = 15;
-    this.OVERVALUED_WATCHLIST_SIZE = 15;
+    this.QUALITY_WATCHLIST_SIZE = 7;
+    this.OVERVALUED_WATCHLIST_SIZE = 7;
   }
 
   /**
@@ -132,7 +132,7 @@ class OpusScreener {
     const result = await db.query(
       `SELECT symbol, intent, pathway, sector, industry, score, reasons
        FROM saturday_watchlist
-       WHERE status = 'active'
+       WHERE status = 'pending'
        ORDER BY score DESC
        LIMIT 100`,
       []
