@@ -16,7 +16,7 @@ import * as db from './db.js';
 class OpusScreener {
   constructor() {
     this.QUALITY_WATCHLIST_SIZE = 7;
-    this.OVERVALUED_WATCHLIST_SIZE = 7;
+    this.OVERVALUED_WATCHLIST_SIZE = 15;
   }
 
   /**
