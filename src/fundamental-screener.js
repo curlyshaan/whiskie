@@ -257,7 +257,8 @@ class FundamentalScreener {
       revenueGrowthQ: fundamentals.revenueGrowthQ || 0,
       revenueGrowthPrevQ: fundamentals.revenueGrowthPrevQ || 0,
       operatingMargin: fundamentals.operatingMargin || 0,
-      operatingMarginPrev: fundamentals.operatingMarginPrev || 0,
+      operatingMarginQ: fundamentals.operatingMarginQ || 0,
+      operatingMarginPrevQ: fundamentals.operatingMarginPrevQ || 0,
       profitMargin: fundamentals.profitMargin || 0,
       roe: fundamentals.roe || 0,
       roic: fundamentals.roic || 0,
@@ -331,12 +332,20 @@ class FundamentalScreener {
     // Market cap requirement: $2B minimum (quality value vs value traps)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.deepValue) return { score: 0, reasons: [] };
 
-    // Accrual ratio check - reject if earnings not backed by cash
-    if (metrics.accrualRatio > 0.12) {
-      return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    // VALUE TRAP PROTECTION: Reject if revenue declining >10% (shrinking value trap)
+    if (metrics.revenueGrowth < -0.10) {
+      return { score: 0, reasons: ['Revenue declining >10% - value trap risk'] };
     }
 
-    let score = 0;
+    // Tiered accrual ratio check
+    let accrualPenalty = 0;
+    if (metrics.accrualRatio > 0.12) {
+      return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    } else if (metrics.accrualRatio > 0.08) {
+      accrualPenalty = -10;
+    }
+
+    let score = accrualPenalty;
     const reasons = [];
     let qualityScore = 0;
     let valueSignals = 0;
@@ -413,13 +422,23 @@ class FundamentalScreener {
     // Market cap requirement: $500M minimum (growth emerges small)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.highGrowth) return { score: 0, reasons: [] };
 
-    // FIX #4: Accrual ratio check - reject if earnings not backed by cash
+    // Tiered accrual ratio check
+    let accrualPenalty = 0;
     if (metrics.accrualRatio > 0.12) {
       return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    } else if (metrics.accrualRatio > 0.08) {
+      accrualPenalty = -10;
     }
 
-    let score = 0;
+    // DEBT PENALTY: High growth with excessive leverage is risky
+    let debtPenalty = 0;
+    if (metrics.debtToEquity > 2.0) {
+      debtPenalty = -15;
+    }
+
+    let score = accrualPenalty + debtPenalty;
     const reasons = [];
+    let qualityScore = 0;  // Track quality/balance sheet points
 
     // High growth - tiered scoring to capture 18-25% growers in current macro
     if (metrics.revenueGrowth >= 0.50) {
@@ -443,9 +462,25 @@ class FundamentalScreener {
       score += 15;
     }
 
-    if (metrics.operatingMargin > 0) {
-      score += 10;
+    // TIERED OPERATING MARGIN SCORING (not binary)
+    if (metrics.operatingMargin > 0.15) {
+      score += 15;
+      qualityScore += 15;
+      reasons.push(`${(metrics.operatingMargin * 100).toFixed(1)}% op margin (strong profitability)`);
+    } else if (metrics.operatingMargin > 0.05) {
+      score += 8;
+      qualityScore += 8;
       reasons.push(`${(metrics.operatingMargin * 100).toFixed(1)}% op margin`);
+    } else if (metrics.operatingMargin < 0) {
+      score -= 20;
+      reasons.push(`Negative margin (growth without profitability path)`);
+    }
+
+    // Low debt bonus
+    if (metrics.debtToEquity < 0.5) {
+      qualityScore += 10;
+      score += 10;
+      reasons.push('Low debt');
     }
 
     // Bonus: Q-over-Q acceleration
@@ -463,6 +498,11 @@ class FundamentalScreener {
     } else if (pegToUse > 0 && pegToUse < 3.0) {
       score += 5;
       reasons.push(`PEG ${pegToUse.toFixed(2)} (acceptable)`);
+    }
+
+    // QUALITY MINIMUM: High growth must have ≥10 quality/balance points
+    if (qualityScore < 10) {
+      return { score: 0, reasons: ['High growth requires ≥10 quality/balance points (avoid one-metric wonders)'] };
     }
 
     return { score, reasons };
@@ -496,7 +536,7 @@ class FundamentalScreener {
     }
 
     // Criterion 2: Margin expansion
-    const marginExpansion = metrics.operatingMargin - metrics.operatingMarginPrev;
+    const marginExpansion = metrics.operatingMarginQ - metrics.operatingMarginPrevQ;
     let marginScore = 0;
     if (marginExpansion > 0.05) {
       marginScore = 30;
@@ -542,13 +582,17 @@ class FundamentalScreener {
       return { score: 0, reasons: ['Cash Machine requires FCF growth >10% when revenue declining >5%'] };
     }
 
-    // FIX #4: Accrual ratio check - reject if earnings not backed by cash
+    // Tiered accrual ratio check
+    let accrualPenalty = 0;
     if (metrics.accrualRatio > 0.12) {
       return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    } else if (metrics.accrualRatio > 0.08) {
+      accrualPenalty = -10;
     }
 
-    let score = 0;
+    let score = accrualPenalty;
     const reasons = [];
+    let qualityScore = 0;  // Track quality/balance sheet points
 
     if (metrics.fcfYield >= 0.10) {
       score += 45;
@@ -569,20 +613,24 @@ class FundamentalScreener {
 
     if (metrics.debtToEquity < 0.5) {
       score += 15;
+      qualityScore += 15;
       reasons.push('Low debt - FCF accrues to shareholders');
     }
 
     if (metrics.roic > 0.20) {
       score += 15;
+      qualityScore += 15;
       reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}%`);
     }
 
     // Cash conversion cycle - negative is excellent (getting paid before paying suppliers)
     if (metrics.cashConversionCycle < 0) {
       score += 15;
+      qualityScore += 15;
       reasons.push(`Cash conversion cycle ${metrics.cashConversionCycle.toFixed(0)} days (negative = excellent)`);
     } else if (metrics.cashConversionCycle < 30) {
       score += 8;
+      qualityScore += 8;
       reasons.push(`Cash conversion cycle ${metrics.cashConversionCycle.toFixed(0)} days (efficient)`);
     }
 
@@ -590,6 +638,11 @@ class FundamentalScreener {
     if (metrics.priceToOperatingCashFlow > 0 && metrics.priceToOperatingCashFlow < 15) {
       score += 10;
       reasons.push(`P/OCF ${metrics.priceToOperatingCashFlow.toFixed(1)} (attractive)`);
+    }
+
+    // QUALITY MINIMUM: Cash Machine must have ≥10 quality/balance points
+    if (qualityScore < 10) {
+      return { score: 0, reasons: ['Cash Machine requires ≥10 quality/balance points (avoid one-metric wonders)'] };
     }
 
     return { score, reasons };
@@ -870,7 +923,7 @@ class FundamentalScreener {
       reasons.push('Revenue growth slowing');
     }
 
-    const marginCompression = metrics.operatingMarginPrev - metrics.operatingMargin;
+    const marginCompression = metrics.operatingMarginPrevQ - metrics.operatingMarginQ;
     if (marginCompression > 0.05) {
       score += 25;
       reasons.push(`Margin compression: -${(marginCompression * 100).toFixed(1)}pp`);

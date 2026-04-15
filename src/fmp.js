@@ -794,7 +794,8 @@ class FMPClient {
         // Quarterly metrics for inflection detection
         revenueGrowthQ: revenueGrowthQ,
         revenueGrowthPrevQ: revenueGrowthPrevQ,
-        operatingMarginPrev: operatingMarginPrevQ,
+        operatingMarginQ: operatingMarginQ,  // Current quarter margin (for inflection/deterioration)
+        operatingMarginPrevQ: operatingMarginPrevQ,  // Previous quarter margin
 
         // Price data
         price: profile?.price || 0,
