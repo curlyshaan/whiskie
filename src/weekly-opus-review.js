@@ -18,7 +18,7 @@ import email from './email.js';
 
 class WeeklyOpusReview {
   constructor() {
-    this.TOP_PER_PATHWAY = 15; // Top 15 stocks per pathway
+    this.TOP_PER_PATHWAY = 7; // Top 7 stocks per pathway
     this.THINKING_BUDGET = 30000; // 30k tokens per stock
   }
 
