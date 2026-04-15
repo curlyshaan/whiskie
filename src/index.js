@@ -399,8 +399,8 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule trade executor and pathway exit monitoring every 30 minutes during market hours + extended hours
-      cron.schedule('*/30 4-20 * * 1-5', async () => {
+      // Schedule trade executor and pathway exit monitoring every 30 minutes during regular market hours
+      cron.schedule('*/30 9-16 * * 1-5', async () => {
         try {
           await tradeExecutor.processApprovedTrades();
           await pathwayExitMonitor.checkPathwayExits();
