@@ -410,9 +410,23 @@ class FundamentalScreener {
       reasons.push(`Dividend yield ${(metrics.dividendYield * 100).toFixed(1)}% (income)`);
     }
 
-    // Require minimum quality threshold (avoid value traps)
-    if (qualityScore < 15) {
-      return { score: 0, reasons: ['Deep value requires quality floor: low debt OR good ROIC (≥15 pts)'] };
+    // Require minimum quality threshold AND ≥3 quality signals (avoid value traps)
+    if (qualityScore < 25) {
+      return { score: 0, reasons: ['Deep value requires quality floor ≥25 pts (avoid value traps)'] };
+    }
+
+    // Count distinct quality signals
+    const qualitySignals = [
+      metrics.roe > 0.10,
+      metrics.operatingMargin > (sectorConfig.operatingMarginRange?.acceptable || 0.10),
+      metrics.debtToEquity <= (sectorConfig.debtToEquityMax || 1),
+      metrics.roic > 0.15,
+      metrics.quickRatio > 1.5,
+      metrics.dividendYield > 0.03
+    ].filter(Boolean).length;
+
+    if (qualitySignals < 3) {
+      return { score: 0, reasons: ['Deep value requires ≥3 quality signals (avoid one-metric wonders)'] };
     }
 
     return { score, reasons };
@@ -426,13 +440,17 @@ class FundamentalScreener {
     let accrualPenalty = 0;
     if (metrics.accrualRatio > 0.12) {
       return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    } else if (metrics.accrualRatio > 0.10) {
+      accrualPenalty = -25;
     } else if (metrics.accrualRatio > 0.08) {
-      accrualPenalty = -10;
+      accrualPenalty = -15;
     }
 
     // DEBT PENALTY: High growth with excessive leverage is risky
     let debtPenalty = 0;
     if (metrics.debtToEquity > 2.0) {
+      debtPenalty = -25;
+    } else if (metrics.debtToEquity > 1.5) {
       debtPenalty = -15;
     }
 
@@ -442,10 +460,10 @@ class FundamentalScreener {
 
     // High growth - tiered scoring to capture 18-25% growers in current macro
     if (metrics.revenueGrowth >= 0.50) {
-      score += 40;
+      score += 45;
       reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (exceptional)`);
     } else if (metrics.revenueGrowth >= 0.30) {
-      score += 40;
+      score += 35;
       reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (strong)`);
     } else if (metrics.revenueGrowth >= 0.20) {
       score += 25;
@@ -500,9 +518,9 @@ class FundamentalScreener {
       reasons.push(`PEG ${pegToUse.toFixed(2)} (acceptable)`);
     }
 
-    // QUALITY MINIMUM: High growth must have ≥10 quality/balance points
-    if (qualityScore < 10) {
-      return { score: 0, reasons: ['High growth requires ≥10 quality/balance points (avoid one-metric wonders)'] };
+    // QUALITY MINIMUM: High growth must have ≥20 quality/balance points
+    if (qualityScore < 20) {
+      return { score: 0, reasons: ['High growth requires ≥20 quality/balance points (avoid one-metric wonders)'] };
     }
 
     return { score, reasons };
@@ -569,6 +587,16 @@ class FundamentalScreener {
       return { score: 0, reasons: ['Inflection requires 2+ criteria (revenue accel, margin expansion, FCF growth, or valuation)'] };
     }
 
+    // Balance sheet quality minimum
+    let balanceScore = 0;
+    if (metrics.debtToEquity < 0.5) balanceScore += 10;
+    if (metrics.quickRatio > 1.5) balanceScore += 8;
+    if (metrics.currentRatio > 2.0) balanceScore += 8;
+
+    if (balanceScore < 15) {
+      return { score: 0, reasons: ['Inflection requires balance sheet score ≥15 (low debt + liquidity)'] };
+    }
+
     score = revenueScore + marginScore + fcfScore + valuationScore;
     return { score, reasons };
   }
@@ -586,8 +614,10 @@ class FundamentalScreener {
     let accrualPenalty = 0;
     if (metrics.accrualRatio > 0.12) {
       return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    } else if (metrics.accrualRatio > 0.10) {
+      accrualPenalty = -25;
     } else if (metrics.accrualRatio > 0.08) {
-      accrualPenalty = -10;
+      accrualPenalty = -15;
     }
 
     let score = accrualPenalty;
@@ -640,9 +670,21 @@ class FundamentalScreener {
       reasons.push(`P/OCF ${metrics.priceToOperatingCashFlow.toFixed(1)} (attractive)`);
     }
 
-    // QUALITY MINIMUM: Cash Machine must have ≥10 quality/balance points
-    if (qualityScore < 10) {
-      return { score: 0, reasons: ['Cash Machine requires ≥10 quality/balance points (avoid one-metric wonders)'] };
+    // QUALITY MINIMUM: Cash Machine must have ≥20 quality/balance points AND ≥3 categories
+    if (qualityScore < 20) {
+      return { score: 0, reasons: ['Cash Machine requires ≥20 quality/balance points (avoid one-metric wonders)'] };
+    }
+
+    // Category diversity check - must score in ≥3 distinct categories
+    const categories = {
+      fcfYield: metrics.fcfYield >= 0.05,
+      fcfGrowth: metrics.fcfGrowth > 0.10,
+      efficiency: metrics.cashConversionCycle < 30 || metrics.priceToOperatingCashFlow < 15,
+      balance: metrics.debtToEquity < 0.5 || metrics.roic > 0.20
+    };
+    const categoryCount = Object.values(categories).filter(Boolean).length;
+    if (categoryCount < 3) {
+      return { score: 0, reasons: ['Cash Machine requires ≥3 distinct categories (FCF yield, growth, efficiency, balance)'] };
     }
 
     return { score, reasons };
