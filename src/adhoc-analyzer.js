@@ -318,7 +318,18 @@ router.get('/', async (req, res) => {
       // Saturday watchlist check
       html += '<div class="check-item">';
       html += \`<div class="check-icon \${data.checks.inWatchlist ? 'yes' : 'no'}">\${data.checks.inWatchlist ? '✓' : '✗'}</div>\`;
-      html += \`<div>In Saturday Watchlist: \${data.checks.inWatchlist ? 'Yes (' + data.checks.watchlistStatus + ')' : 'No'}</div>\`;
+      html += '<div>';
+      html += \`In Saturday Watchlist: \${data.checks.inWatchlist ? 'Yes' : 'No'}\`;
+      if (data.checks.inWatchlist) {
+        html += \`<br><span style="color: #9ca3af; font-size: 0.9rem;">Status: \${data.checks.watchlistStatus}</span>\`;
+        if (data.checks.watchlistPathway) {
+          html += \`<br><span style="color: #9ca3af; font-size: 0.9rem;">Pathway: \${data.checks.watchlistPathway}</span>\`;
+        }
+        if (data.checks.opusConviction) {
+          html += \`<br><span style="color: #9ca3af; font-size: 0.9rem;">Opus Conviction: \${data.checks.opusConviction}/100</span>\`;
+        }
+      }
+      html += '</div>';
       html += '</div>';
 
       // Stock profile check
@@ -414,6 +425,8 @@ router.post('/analyze', async (req, res) => {
     );
     const inWatchlist = watchlistCheck.rows.length > 0;
     const watchlistStatus = inWatchlist ? watchlistCheck.rows[0].status : null;
+    const watchlistPathway = inWatchlist ? watchlistCheck.rows[0].pathway : null;
+    const opusConviction = inWatchlist ? watchlistCheck.rows[0].opus_conviction : null;
 
     // Step 3: Get stock profile
     const profileCheck = await db.query(
@@ -510,6 +523,8 @@ router.post('/analyze', async (req, res) => {
         inUniverse,
         inWatchlist,
         watchlistStatus,
+        watchlistPathway,
+        opusConviction,
         hasProfile
       },
       profile: profile ? {
