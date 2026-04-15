@@ -21,9 +21,11 @@ async function refreshEarningsCalendar() {
 
     let totalInserted = 0;
     const now = new Date();
-    const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
+    const sevenDaysAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     console.log(`   Fetching earnings for ${symbols.length} stocks...`);
+    console.log(`   Window: 3 days ago to 7 days ahead`);
 
     for (const symbol of symbols) {
       try {
@@ -38,13 +40,10 @@ async function refreshEarningsCalendar() {
 
             const earningDate = new Date(earning.date);
 
-            // Include if:
-            // 1. Upcoming (epsActual is null AND date is future)
-            // 2. Recent past (date within last 90 days)
-            const isUpcoming = earning.epsActual === null && earningDate > now;
-            const isRecentPast = earningDate >= ninetyDaysAgo && earningDate <= now;
+            // Include earnings within 3 days ago to 7 days ahead window
+            const isInWindow = earningDate >= threeDaysAgo && earningDate <= sevenDaysAhead;
 
-            if (isUpcoming || isRecentPast) {
+            if (isInWindow) {
               try {
                 await db.query(
                   `INSERT INTO earnings_calendar (symbol, earnings_date, earnings_time, source, last_updated)
