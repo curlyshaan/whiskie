@@ -194,7 +194,56 @@ The fundamental screener evaluates 407 stocks from the curated universe using **
 
 ---
 
-### 6. Turnaround
+### 6. Quality Compounder (NEW - 2026-04-15)
+**Philosophy:** Catch high-quality companies during temporary earnings dips
+
+**Market Cap Requirement:** $2B minimum (quality verification)
+
+**Hard Filters (must pass ALL):**
+- ROE > 20% (exceptional returns)
+- ROIC > 15% (capital efficiency)
+- Operating margin > 20% (pricing power)
+- Operating margin Q-over-Q ≥ -2% (stable/expanding margins - distinguishes temp vs structural)
+- D/E < 0.5 (low debt)
+- Interest coverage > 5x (debt serviceability)
+- Revenue growth > 8% (business still growing)
+- Earnings growth between -8% and +5% (temporary dip range)
+- P/E < 35 OR PEG < 3.0 (valuation ceiling - quality can still be overpriced)
+- Accrual ratio < 12%
+
+**Scoring Components:**
+
+**QUALITY METRICS:**
+- ROE > 25%: +30 points, "exceptional"
+- ROE 20-25%: +20 points
+- ROIC > 20%: +25 points, "capital efficient"
+- ROIC 15-20%: +15 points
+- Operating margin > 25%: +20 points, "pricing power"
+- Operating margin 20-25%: +15 points
+- Margin expanding Q-over-Q > 2%: +15 points (reward improving margins)
+
+**GROWTH:**
+- Revenue growth > 12%: +15 points
+- Revenue growth 8-12%: +10 points
+
+**BALANCE SHEET:**
+- D/E < 0.3: +15 points, "very low debt"
+- D/E 0.3-0.5: +10 points, "low debt"
+- Quick ratio > 1.5: +10 points, "strong liquidity"
+
+**ACCRUAL PENALTIES:**
+- 8-10%: -15 points
+- 10-12%: -25 points
+
+**Pass Threshold:** ≥50 points
+
+**Example:** GOOGL (ROE 35%, ROIC 21.8%, margin 32%, revenue +11.3%, earnings -1.5%) would score ~100 points
+
+**Why This Matters:** Opus-validated pathway to catch quality companies like GOOGL during temporary earnings dips. Strict safeguards prevent catching structural declines disguised as temporary weakness. Margin stability check and interest coverage requirements are critical filters.
+
+---
+
+### 7. Turnaround
 **Philosophy:** Distressed valuations + early recovery signs
 
 **Market Cap Requirement:** $500M minimum (distress acceptable, upside compensates)

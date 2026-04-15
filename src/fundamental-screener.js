@@ -8,11 +8,14 @@ import { getSectorConfig, normalizeSectorName } from './sector-config.js';
  * Combined Fundamental Screener
  * Single pass over FMP-based universe - identifies BOTH long and short candidates
  *
- * LONG PATHWAYS (pass ANY one, threshold ≥35):
- *   1. Deep Value     - low P/E, low PEG, high FCF
- *   2. High Growth    - >30% revenue growth (ignore valuation)
- *   3. Inflection     - Q-over-Q acceleration, margin expansion
- *   4. Cash Machine   - FCF yield >8%, growing FCF
+ * LONG PATHWAYS (pass ANY one, threshold ≥50):
+ *   1. Deep Value          - low P/E, low PEG, high FCF
+ *   2. High Growth         - >30% revenue growth (ignore valuation)
+ *   3. Inflection          - Q-over-Q acceleration, margin expansion
+ *   4. Cash Machine        - FCF yield >8%, growing FCF
+ *   5. QARP                - High ROIC/ROE at reasonable valuations
+ *   6. Quality Compounder  - High quality (ROE>20%, ROIC>15%) during temporary earnings dips
+ *   7. Turnaround          - Distressed valuations + early recovery signs
  *
  * SHORT CRITERIA (must hit ALL three):
  *   1. Extreme valuation (PEG >3 AND P/E >50, sector-adjusted)
@@ -35,6 +38,7 @@ class FundamentalScreener {
       deepValue: 2_000_000_000,    // $2B - quality value vs value traps
       cashMachine: 2_000_000_000,  // $2B - 8% FCF yield at $2B = opportunity, at $500M = distress
       qarp: 2_000_000_000,         // $2B - quality verification (prefer $10B+)
+      qualityCompounder: 2_000_000_000, // $2B - quality verification during temporary dips
       highGrowth: 500_000_000,     // $500M - growth emerges small
       inflection: 500_000_000,     // $500M - catch early momentum
       turnaround: 500_000_000      // $500M - distress acceptable, upside compensates
@@ -298,12 +302,13 @@ class FundamentalScreener {
 
   scoreLong(metrics, sector, sectorConfig, marketCap) {
     const pathways = {
-      deepValue:   this.scoreDeepValue(metrics, sectorConfig, marketCap),
-      highGrowth:  this.scoreHighGrowth(metrics, sectorConfig, marketCap),
-      inflection:  this.scoreInflection(metrics, sectorConfig, marketCap),
-      cashMachine: this.scoreCashMachine(metrics, marketCap),
-      qarp:        this.scoreQARP(metrics, marketCap),
-      turnaround:  this.scoreTurnaround(metrics, marketCap),
+      deepValue:        this.scoreDeepValue(metrics, sectorConfig, marketCap),
+      highGrowth:       this.scoreHighGrowth(metrics, sectorConfig, marketCap),
+      inflection:       this.scoreInflection(metrics, sectorConfig, marketCap),
+      cashMachine:      this.scoreCashMachine(metrics, marketCap),
+      qarp:             this.scoreQARP(metrics, marketCap),
+      qualityCompounder: this.scoreQualityCompounder(metrics, sectorConfig, marketCap),
+      turnaround:       this.scoreTurnaround(metrics, marketCap),
     };
 
     const best = Object.entries(pathways)
@@ -783,6 +788,132 @@ class FundamentalScreener {
     if (categoriesWithPoints < 3) {
       return { score: 0, reasons: ['QARP requires scoring in 3 of 4 categories (quality, valuation, growth, balance)'] };
     }
+
+    return { score, reasons };
+  }
+
+  scoreQualityCompounder(metrics, sectorConfig, marketCap) {
+    // Market cap requirement: $2B minimum (quality verification)
+    if (marketCap < 2_000_000_000) return { score: 0, reasons: [] };
+
+    // HARD FILTERS (must pass ALL) - Opus-recommended safeguards
+
+    // Quality floor - exceptional metrics required
+    if (metrics.roe <= 0.20) {
+      return { score: 0, reasons: ['Quality Compounder requires ROE >20%'] };
+    }
+    if (metrics.roic <= 0.15) {
+      return { score: 0, reasons: ['Quality Compounder requires ROIC >15%'] };
+    }
+    if (metrics.operatingMargin <= 0.20) {
+      return { score: 0, reasons: ['Quality Compounder requires operating margin >20%'] };
+    }
+
+    // Margin stability check - not compressing (Opus: critical to distinguish temp vs structural)
+    const marginChange = metrics.operatingMarginQ - metrics.operatingMarginPrevQ;
+    if (marginChange < -0.02) {
+      return { score: 0, reasons: ['Quality Compounder requires stable/expanding margins (Q-over-Q ≥ -2%)'] };
+    }
+
+    // Balance sheet strength
+    if (metrics.debtToEquity >= 0.5) {
+      return { score: 0, reasons: ['Quality Compounder requires D/E <0.5'] };
+    }
+    if (metrics.interestCoverage > 0 && metrics.interestCoverage < 5) {
+      return { score: 0, reasons: ['Quality Compounder requires interest coverage >5x'] };
+    }
+
+    // Revenue growth - business still growing
+    if (metrics.revenueGrowth <= 0.08) {
+      return { score: 0, reasons: ['Quality Compounder requires revenue growth >8%'] };
+    }
+
+    // Temporary earnings dip range (Opus: tightened from -10% to -8%)
+    if (metrics.earningsGrowth < -0.08 || metrics.earningsGrowth > 0.05) {
+      return { score: 0, reasons: ['Quality Compounder targets temporary dips (earnings growth -8% to +5%)'] };
+    }
+
+    // Valuation ceiling (Opus: quality can still be overpriced)
+    if (metrics.peRatio > 35 && metrics.pegRatio > 3.0) {
+      return { score: 0, reasons: ['Quality Compounder requires P/E <35 OR PEG <3.0'] };
+    }
+
+    // Accrual ratio check
+    if (metrics.accrualRatio > 0.12) {
+      return { score: 0, reasons: ['High accruals (>12%) - earnings not backed by cash'] };
+    }
+
+    // SCORING
+    let score = 0;
+    const reasons = [];
+
+    // Tiered accrual penalties
+    let accrualPenalty = 0;
+    if (metrics.accrualRatio > 0.10) {
+      accrualPenalty = -25;
+    } else if (metrics.accrualRatio > 0.08) {
+      accrualPenalty = -15;
+    }
+    score += accrualPenalty;
+
+    // ROE scoring
+    if (metrics.roe > 0.25) {
+      score += 30;
+      reasons.push(`ROE ${(metrics.roe * 100).toFixed(1)}% (exceptional)`);
+    } else {
+      score += 20;
+      reasons.push(`ROE ${(metrics.roe * 100).toFixed(1)}%`);
+    }
+
+    // ROIC scoring
+    if (metrics.roic > 0.20) {
+      score += 25;
+      reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}% (capital efficient)`);
+    } else {
+      score += 15;
+      reasons.push(`ROIC ${(metrics.roic * 100).toFixed(1)}%`);
+    }
+
+    // Operating margin scoring
+    if (metrics.operatingMargin > 0.25) {
+      score += 20;
+      reasons.push(`Operating margin ${(metrics.operatingMargin * 100).toFixed(1)}% (pricing power)`);
+    } else {
+      score += 15;
+      reasons.push(`Operating margin ${(metrics.operatingMargin * 100).toFixed(1)}%`);
+    }
+
+    // Margin expansion bonus (Opus: reward improving margins)
+    if (marginChange > 0.02) {
+      score += 15;
+      reasons.push(`Margin expanding +${(marginChange * 100).toFixed(1)}pp Q-over-Q`);
+    }
+
+    // Revenue growth scoring
+    if (metrics.revenueGrowth > 0.12) {
+      score += 15;
+      reasons.push(`Revenue growth ${(metrics.revenueGrowth * 100).toFixed(1)}%`);
+    } else {
+      score += 10;
+      reasons.push(`Revenue growth ${(metrics.revenueGrowth * 100).toFixed(1)}%`);
+    }
+
+    // Debt scoring
+    if (metrics.debtToEquity < 0.3) {
+      score += 15;
+      reasons.push(`Very low debt (D/E ${metrics.debtToEquity.toFixed(2)})`);
+    } else {
+      score += 10;
+      reasons.push(`Low debt (D/E ${metrics.debtToEquity.toFixed(2)})`);
+    }
+
+    // Liquidity scoring (Opus: quick ratio better than current ratio)
+    if (metrics.quickRatio > 1.5) {
+      score += 10;
+      reasons.push(`Strong liquidity (quick ratio ${metrics.quickRatio.toFixed(2)})`);
+    }
+
+    reasons.push(`Temporary earnings dip (${(metrics.earningsGrowth * 100).toFixed(1)}%) - quality intact`);
 
     return { score, reasons };
   }
