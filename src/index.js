@@ -547,16 +547,12 @@ class WhiskieBot {
 
         // Import and run Saturday screening only (no weekly review)
         const fundamentalScreener = (await import('./fundamental-screener.js')).default;
-        const opusScreener = (await import('./opus-screener.js')).default;
 
         // Run screening steps only
         (async () => {
           try {
-            console.log('\n📊 STEP 1: Fundamental screening (all stocks)...');
+            console.log('\n📊 Fundamental screening (all stocks)...');
             await fundamentalScreener.runWeeklyScreen('full');
-
-            console.log('\n🧠 STEP 2: Opus quality + overvalued screening...');
-            await opusScreener.runWeeklyOpusScreening();
 
             console.log('✅ Saturday screening complete');
           } catch (error) {
