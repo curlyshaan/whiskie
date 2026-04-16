@@ -20,12 +20,19 @@ class WeeklyOpusReview {
   constructor() {
     this.TOP_PER_PATHWAY = 7; // Top 7 stocks per pathway
     this.THINKING_BUDGET = 30000; // 30k tokens per stock
+    this.reviewRunning = false;
   }
 
   /**
    * Main entry point - analyze all pending watchlist stocks
    */
   async runWeeklyReview() {
+    if (this.reviewRunning) {
+      console.log('⚠️ Weekly Opus review already running, skipping duplicate trigger...');
+      return { analyzed: 0, activated: 0, skipped: true };
+    }
+
+    this.reviewRunning = true;
     console.log('');
     console.log('═══════════════════════════════════════');
     console.log('🔬 WEEKLY OPUS REVIEW');
@@ -74,6 +81,7 @@ class WeeklyOpusReview {
 
       for (const [pathway, stocks] of Object.entries(byPathway)) {
         console.log(`\n🔍 Analyzing ${pathway} pathway (${stocks.length} stocks)...`);
+        console.log(`   🧠 Using Opus extended thinking (${this.THINKING_BUDGET.toLocaleString()} tokens per stock)`);
 
         const analyzed = await this.analyzePathway(pathway, stocks);
         totalAnalyzed += analyzed.length;
@@ -116,6 +124,8 @@ class WeeklyOpusReview {
       console.error('❌ Error in weekly Opus review:', error);
       await email.sendErrorAlert(error, 'Weekly Opus review failed');
       throw error;
+    } finally {
+      this.reviewRunning = false;
     }
   }
 
@@ -194,7 +204,8 @@ class WeeklyOpusReview {
         MODELS.OPUS,
         null,
         true, // enableThinking
-        this.THINKING_BUDGET
+        this.THINKING_BUDGET,
+        { quiet: true }
       );
 
       // Extract text from response
@@ -371,6 +382,7 @@ Take your time to think through this carefully. Consider both bull and bear case
       emailBody += `<p>Active stocks are now ready for daily analysis. Pending stocks remain in watchlist but won't be analyzed unless they show momentum.</p>`;
 
       await email.sendEmail(
+        email.alertEmail,
         'Weekly Opus Review Complete',
         emailBody
       );

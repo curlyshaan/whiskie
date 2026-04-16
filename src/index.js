@@ -5,6 +5,7 @@ import dashboard from './dashboard.js';
 import adhocAnalyzer from './adhoc-analyzer.js';
 import tradier from './tradier.js';
 import claude from './claude.js';
+import fmp from './fmp.js';
 import tavily from './tavily.js';
 import email from './email.js';
 import riskManager from './risk-manager.js';

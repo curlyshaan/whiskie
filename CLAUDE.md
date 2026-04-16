@@ -1,355 +1,174 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Project guidance for future coding sessions in `Whiskie`.
 
-## Quick Start
+## Canonical docs
+
+When describing or modifying the current system, use these files first:
+
+- `README.md`
+- `ARCHITECTURE.md`
+- `FUNDAMENTAL_SCREENER_METRICS.md`
+
+Historical planning and review docs remain in the repo, but they are not the current source of truth.
+
+## Quick start
 
 ```bash
 npm install
-cp .env.example .env  # Configure environment variables
-npm start             # Start bot (runs on port 8080)
+cp .env.example .env
+npm start
 ```
 
-## Common Commands
+## Current commands
+
+### Runtime
 
 ```bash
-# Development
-npm start              # Start bot in current mode (paper/production)
-npm run dev            # Start with nodemon (auto-restart)
-npm run start:paper    # Explicitly run in paper trading mode
-npm run start:live     # Run in production mode
-
-# Database
-npm run db:init        # Initialize database schema
-npm run db:reset       # Reset all tables (destructive)
-
-# Stock Universe Population
-# IMPORTANT: Use populate-universe-v2.js (FMP API-based), NOT populate-stock-universe.js
-node scripts/populate-universe-v2.js  # Populate from FMP API (top 7 per industry, $7B+ market cap)
-npm run update-etb                     # Update easy-to-borrow status
-
-# DO NOT USE: npm run populate-stocks uses hardcoded sub-industry-data.js (deprecated)
-
-# Testing
-node test/test-4phase.js           # Test 4-phase analysis system
-node test/test-fmp.js              # Test FMP API integration
-node test/test-yahoo-finance.js    # Test Yahoo Finance integration
-node test/test-analysis.js         # Test full analysis workflow
+npm start
+npm run dev
+npm run start:paper
+npm run start:live
 ```
 
-## Architecture Overview
-
-### 4-Phase Analysis System
-
-Whiskie uses a multi-phase approach to separate screening from deep analysis:
-
-1. **Phase 1: Pre-ranking** (1-2 min)
-   - Screens 15-20 long candidates + 15-20 short candidates
-   - Sources: fundamental screeners, quality watchlist, overvalued watchlist
-   - Fast filtering to identify promising stocks
-
-2. **Phase 2: Long Analysis** (3-5 min, 50k token thinking budget)
-   - Deep Opus analysis of long candidates
-   - Uses extended thinking for thorough evaluation
-   - Considers fundamentals, technicals, catalysts, risks
-
-3. **Phase 3: Short Analysis** (3-5 min, 50k token thinking budget)
-   - Deep Opus analysis of short candidates
-   - Extended thinking for comprehensive short thesis
-   - Evaluates overvaluation, deteriorating fundamentals, technical weakness
-
-4. **Phase 4: Portfolio Construction** (1-2 min, 20k token thinking budget)
-   - Builds final portfolio with 0-3 stocks per sub-sector constraint
-   - Balances conviction, diversification, risk
-   - Outputs trade recommendations in parseable format
-
-### Stock Profile System
-
-Avoids redundant research by maintaining comprehensive stock dossiers:
-
-- **Biweekly deep research** (Saturday 10am, even weeks only)
-  - Builds detailed profiles for watchlist stocks
-  - Includes: business_model, moats, competitive_advantages, fundamentals, risks, catalysts
-  - Manual trigger: `POST /api/trigger-deep-research`
-
-- **Daily incremental updates**
-  - Fresh profiles (<14 days old): quick incremental updates
-  - Stale profiles (>14 days old): deeper refresh
-  - First-time stocks: full deep dive (20k tokens)
-
-- **Profile structure** (in `stock_profiles` table):
-  - `business_model`: What the company does, revenue model
-  - `moats`: Competitive advantages and barriers to entry
-  - `competitive_advantages`: Specific strengths vs competitors
-  - `fundamentals`: Financial metrics (JSON)
-  - `risks`: Key risks and concerns
-  - `catalysts`: Upcoming events or trends
-  - `last_updated`: Timestamp for staleness check
-  - `profile_version`: Increments on each update
-
-### Trade Approval Queue
-
-Human-in-the-loop system for trade execution:
-
-1. Bot generates trade recommendations in Phase 4
-2. Trades parsed and queued as "pending_approval" in `trade_approvals` table
-3. Email sent to user with trade details
-4. User reviews via web UI at `/approvals`
-5. User approves or rejects with optional feedback
-6. Approved trades executed by `trade-executor.js`
-7. Rejected trades logged for learning
-
-**Trade format** (must match for parsing):
-```
-EXECUTE_BUY: SYMBOL | QTY | ENTRY | STOP | TARGET
-EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET
-```
-
-### Data Source Strategy
-
-**FMP (Financial Modeling Prep)**:
-- Single paid API key with 300 calls/minute (unlimited daily)
-- **No caching** - FMP is fast enough without cache layer
-- **CRITICAL**: Always use `/stable` endpoint (not `/api/v3`)
-- Key endpoints:
-  - `/stable/ratios-ttm` - Current P/E, PEG, margins, ROE (TTM)
-  - `/stable/key-metrics-ttm` - ROIC, Graham number, EV ratios (TTM)
-  - `/stable/financial-growth?period=quarter` - True YoY growth rates
-  - `/stable/income-statement?period=quarter` - Quarterly financials
-  - `/stable/technical-indicators/ema` - 50/200 EMA
-  - `/stable/technical-indicators/rsi` - RSI(14)
-  - `/stable/earning-calendar` - Upcoming earnings dates
-- Rate limiting: 500ms delay between calls in batch operations
-- API key: `FMP_API_KEY_1`
-
-**Yahoo Finance**:
-- Short interest data (FMP doesn't provide this)
-- Fallback for historical data
-- Rate-limited, use sparingly
-
-**Tradier**:
-- Real-time quotes and order execution
-- Paper trading sandbox vs production
-- Controlled by `NODE_ENV` (paper/production)
-
-**Tavily**:
-- News search for fundamental analysis
-- Used in stock profile generation
-
-### Cron Schedule (America/New_York)
-
-| Time | Frequency | Job |
-|------|-----------|-----|
-| 9:00 AM | Mon-Fri | Pre-market gap scan |
-| 10:00 AM | Mon-Fri | Daily analysis (4-phase) |
-| 2:00 PM | Mon-Fri | Afternoon analysis |
-| 4:30 PM | Mon-Fri | End-of-day summary |
-| 3:00 PM | Friday | Earnings calendar refresh |
-| 9:00 PM | Saturday | Fundamental screening (first half) |
-| 10:00 AM | Saturday (even weeks) | Biweekly deep stock research |
-| 9:00 PM | Sunday | Full weekly screening + review |
-| Every 5 min | 9am-4pm Mon-Fri | Process approved trades |
-| Hourly | Always | Expire old trade approvals (24h) |
-
-## Key Files and Modules
-
-### Core Orchestration
-- `src/index.js` - Main bot orchestration, cron scheduling, API server
-- `src/dashboard.js` - Web UI for approvals and monitoring
-
-### AI Integration
-- `src/claude.js` - Claude API wrapper (via Quatarly)
-  - `MODELS.OPUS` = 'claude-opus-4-6-thinking' (primary model)
-  - Extended thinking enabled for Phases 2, 3, 4
-  - Temperature 1.0 for thinking, 0.1 for non-thinking calls
-
-### Data Sources
-- `src/fmp.js` - FMP API with 3-key rotation
-- `src/fmp-cache.js` - 90-day caching layer for FMP
-- `src/yahoo-finance.js` - Yahoo Finance integration
-- `src/tradier.js` - Tradier API for quotes and execution
-- `src/tavily.js` - Tavily news search
-
-### Analysis Pipeline
-- `src/pre-ranking.js` - Phase 1 screening
-- `src/opus-screener.js` - Phases 2, 3, 4 orchestration
-- `src/stock-profiles.js` - Stock profile management
-- `src/fundamental-screener.js` - Sector-adjusted fundamental screening (see below)
-- `src/quality-screener.js` - Quality stock identification
-- `src/overvalued-screener.js` - Short candidate screening
-- `src/etf-manager.js` - ETF tracking and watchlist (separate from stock screening)
-
-**Fundamental Screener - Sector-Adjusted Scoring**:
-- Screens 407-stock curated universe (not FMP's entire database)
-- Uses **sector-specific thresholds** from `src/sector-config.js`
-- Each sector has different ideal/high thresholds for P/E, PEG, ROE, margins, etc.
-- Example: P/E of 20 is good for Tech (ideal < 25), acceptable for Utilities (high < 20), poor for Financials (high < 18)
-- 6 long pathways: deepValue, highGrowth, inflection, cashMachine, qarp, turnaround
-- 3 short pathways: overvalued, deteriorating, overextended
-- Scoring thresholds: LONG_THRESHOLD = 35, SHORT_THRESHOLD = 60
-- **Tech deep value ≠ Finance deep value** - dynamic scoring per sector
-- ETFs automatically filtered out (no fundamental ratios) but available for Opus recommendations
-
-### Trade Management
-- `src/trade-approval.js` - Approval queue management
-- `src/trade-executor.js` - Execute approved trades
-- `src/order-manager.js` - OCO order management
-- `src/short-manager.js` - Short position handling
-
-### Risk & Analysis
-- `src/risk-manager.js` - Position sizing, sector limits
-- `src/vix-regime.js` - Market regime detection
-- `src/correlation-analysis.js` - Portfolio correlation
-- `src/sector-rotation.js` - Sector momentum tracking
-- `src/performance-analyzer.js` - Performance metrics
-- `src/weekly-review.js` - Weekly portfolio review
-
-### Database
-- `src/db.js` - PostgreSQL connection pool and schema
-- Key tables: `trades`, `positions`, `portfolio_snapshots`, `analyses`, `trade_approvals`, `stock_profiles`, `watchlist`, `value_watchlist`, `quality_watchlist`, `overvalued_watchlist`
-
-## Environment Variables
-
-Required in `.env`:
+### Database and maintenance
 
 ```bash
-# AI (via Quatarly)
-QUATARLY_API_KEY=qua-xxx
-QUATARLY_BASE_URL=https://api.quatarly.cloud/
-
-# Trading
-TRADIER_API_KEY=xxx
-TRADIER_ACCOUNT_ID=xxx
-NODE_ENV=paper  # or production
-
-# Data
-FMP_API_KEY_1=xxx
-FMP_API_KEY_2=xxx
-FMP_API_KEY_3=xxx
-TAVILY_API_KEY=xxx
-
-# Database
-DATABASE_URL=postgresql://user:pass@host:5432/whiskie
-
-# Email
-RESEND_API_KEY=xxx
-RESEND_FROM_EMAIL=whiskie@domain.com
-ALERT_EMAIL=your@email.com
-
-# Portfolio
-INITIAL_CAPITAL=100000
+npm run db:init
+npm run db:reset
+node scripts/populate-universe-v2.js
+npm run update-etb
 ```
 
-## Key Design Decisions
+### Important note
 
-### Why 4-phase analysis?
-Separates fast screening (Phase 1) from deep analysis (Phases 2-3), allowing different thinking budgets per phase. Phase 4 synthesizes into final portfolio with sector constraints.
-
-### Why stock profiles?
-First analysis of a stock is deep (20k tokens), subsequent analyses reference the profile for fast incremental updates. Biweekly refresh keeps profiles current. Avoids redundant research.
-
-### Why 0-3 per sub-sector?
-Prevents over-concentration in single industries while allowing flexibility. 0 = skip weak sectors, 3 = max conviction. Applies across both longs AND shorts combined.
-
-### Why FMP + Yahoo Finance?
-FMP provides comprehensive fundamentals with 3-key rotation for 750 calls/day. Yahoo provides free historical data and short interest. Complementary strengths, cost-effective.
-
-### Why trade approval queue?
-Human oversight before execution prevents runaway trading. Allows rejection with feedback for learning. Critical safety mechanism.
-
-### Why extended thinking?
-Opus with extended thinking (50k token budget) produces more thorough analysis than standard calls. Used in Phases 2, 3, 4 where deep reasoning is critical. Takes 3-7 minutes but worth it.
-
-## Troubleshooting
-
-### Trades not appearing in approval queue
-- Check Phase 4 output format matches: `EXECUTE_BUY: SYMBOL | QTY | ENTRY | STOP | TARGET`
-- Verify parser in `trade-approval.js` function `extractTradeRecommendations()`
-- Check logs for parsing errors
-
-### FMP rate limits hit
-- System auto-rotates between 3 keys (250 calls each = 750/day)
-- Check usage: `fmp.getUsageStats()`
-- Cache is 90 days, should minimize calls
-- If still hitting limits, add more keys or reduce analysis frequency
-
-### Database connection issues
-- Verify `DATABASE_URL` in `.env`
-- Check Railway database is running (if deployed)
-- Connection pool settings in `db.js` (max: 20, timeout: 2s)
-
-### Analysis too fast (not using full thinking budget)
-- Prompts use natural language ("take your time, don't rush")
-- Stock profiles reduce redundant research (by design)
-- First-time stocks get full deep dive
-- Check `enableThinking` and `thinkingBudget` parameters in claude.js calls
-
-### Port 8080 already in use
 ```bash
-lsof -ti:8080 | xargs kill
+npm run populate-stocks
 ```
 
-## Deployment
+still exists in `package.json`, but it points to the deprecated hardcoded universe script and should not be used for the live workflow.
 
-Deployed on Railway with auto-deploy from `main` branch.
+## Current validation commands
 
-**Railway configuration**:
-- Build command: (none, uses package.json)
-- Start command: `npm start`
-- Environment: Set all variables from `.env.example`
-- Database: PostgreSQL addon attached
+`npm test` is not configured.
+Use the node-based checks in `test/`:
 
-**Manual deploy**:
 ```bash
-git push origin main  # Triggers Railway deploy
+node test/test-4phase.js
+node test/test-analysis.js
+node test/test-fmp.js
+node test/test-full-analysis.js
+node test/test-yahoo-finance.js
 ```
 
-**View logs**:
-```bash
-railway logs
-```
+## Current architecture snapshot
 
-## Testing Strategy
+### Weekly flow
 
-Test files in `test/` directory:
-- `test-4phase.js` - Full 4-phase analysis workflow
-- `test-fmp.js` - FMP API integration and caching
-- `test-yahoo-finance.js` - Yahoo Finance data fetching
-- `test-analysis.js` - Analysis engine components
-- `test-full-analysis.js` - End-to-end analysis test
+- Friday 3:00 PM ET — earnings refresh
+- Saturday 10:00 AM ET — `scripts/populate-universe-v2.js`
+- Saturday 3:00 PM ET — `fundamentalScreener.runWeeklyScreen('full')`
+- Sunday 1:00 PM ET — weekly portfolio review
+- Sunday 3:00 PM ET — profile build/update for watchlist stocks
+- Sunday 9:00 PM ET — weekly Opus review, top `7` per pathway activated
 
-Run tests individually with `node test/<filename>.js`
+### Weekday flow
 
-## API Endpoints
+- 7:00 AM ET — corporate actions
+- 8:00 AM ET — macro regime detection
+- 9:00 AM ET — pre-market scan
+- 10:00 AM ET — daily analysis
+- 2:00 PM ET — daily analysis
+- every 30 minutes during market hours — approved trade processing + pathway exit monitoring
+- 4:30 PM ET — structured exit review
+- hourly during market hours — order reconciliation
+- 6:00 PM ET — daily summary
+- hourly — expire stale approvals
 
-**Dashboard**:
-- `GET /` - Main dashboard (portfolio, positions, recent trades)
-- `GET /approvals` - Trade approval queue UI
+## Current trading pipeline
 
-**Trade Approvals**:
-- `POST /api/approvals/:id/approve` - Approve pending trade
-- `POST /api/approvals/:id/reject` - Reject pending trade
+1. Universe refresh builds `stock_universe`
+2. Weekly screener writes `pending` rows to `saturday_watchlist`
+3. Weekly Opus review activates top `7` per pathway
+4. Pre-ranking merges active watchlist names with the broader universe
+5. Daily analysis runs:
+   - Phase 1 pre-ranking
+   - Phase 2 long analysis (`35k` thinking budget)
+   - Phase 3 short analysis (`35k` thinking budget)
+   - Phase 4 portfolio construction (`45k` thinking budget)
+6. Trades enter `trade_approvals`
+7. Approved trades execute during the market-hours monitoring loop
 
-**Manual Triggers**:
-- `POST /api/trigger-deep-research` - Run biweekly deep stock research
-- `POST /analyze` - Trigger analysis manually (bypasses cron)
+## Current screener facts
 
-## Important Constraints
+### Thresholds
 
-**Position Sizing**:
-- Max 15% per position (`MAX_POSITION_SIZE`)
-- Max 25% per sector (`MAX_SECTOR_ALLOCATION`)
-- Min 3% cash reserve (`MIN_CASH_RESERVE`)
+- `LONG_THRESHOLD = 48`
+- `SHORT_THRESHOLD = 65`
 
-**Trading Limits**:
-- Max 3 trades per day (`MAX_DAILY_TRADES`)
-- Max 20% portfolio drawdown (`MAX_PORTFOLIO_DRAWDOWN`)
+### Long pathways
 
-**Sector Constraint**:
-- 0-3 stocks per sub-sector (combined longs + shorts)
-- Enforced in Phase 4 portfolio construction
+- `deepValue`
+- `highGrowth`
+- `inflection`
+- `cashMachine`
+- `qarp`
+- `qualityCompounder`
+- `turnaround`
 
-**Trade Approval**:
-- 24-hour auto-expiration on pending approvals
-- Email notification on new approvals
-- Rejection feedback logged for learning
+### Short labels
+
+- `overvalued`
+- `deteriorating`
+- `overextended`
+
+## Data-source facts to preserve
+
+### FMP
+
+- use `/stable` endpoints
+- current client enforces `400ms` spacing
+- current client keeps a `30-minute` in-memory cache
+
+### Trade approval
+
+Current active approval statuses are:
+
+- `pending`
+- `approved`
+- `rejected`
+- `executed`
+- `expired`
+
+Use `trade_approvals` as the live approval flow. Do not treat legacy `pending_approvals` helpers as the primary path.
+
+## Current risk-manager defaults
+
+Environment variables can override them, but current code defaults are:
+
+- max position size: `12%`
+- max short position size: `10%`
+- max total short exposure: `20%`
+- min cash reserve: `10%`
+- max sector allocation: `30%`
+- max drawdown: `20%`
+- max daily trades: `7`
+
+## Current manual API routes
+
+`src/index.js` currently exposes:
+
+- `GET /health`
+- `GET /status`
+- `POST /analyze`
+- `POST /weekly-review`
+- `POST /api/trigger-saturday-screening`
+- `POST /api/trigger-daily-analysis`
+- `POST /api/trigger-profile-build-watchlist`
+- `POST /api/trigger-weekly-portfolio-review`
+- `POST /api/trigger-weekly-opus-review`
+- `POST /api/trigger-premarket-scan`
+- `POST /api/update-etb-status`
+- `POST /api/trigger-eod-summary`
+- `POST /api/trigger-trade-executor`
+- `POST /chat`

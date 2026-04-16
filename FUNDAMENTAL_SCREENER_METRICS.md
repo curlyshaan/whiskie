@@ -1,460 +1,343 @@
-# Fundamental Screener - Pathway Metrics & Criteria
+# Fundamental Screener Metrics
 
-This document details the exact metrics, thresholds, and conditions used by each pathway in Whiskie's fundamental screener.
+Current pathway reference for `src/fundamental-screener.js`.
 
-**Last Updated:** 2026-04-15
+This document is intentionally aligned to the live code rather than older design notes.
+If this file and the code ever diverge, the code wins.
 
----
+## Current role in the system
 
-## Overview
+The screener runs against active names in `stock_universe` and writes passing candidates to `saturday_watchlist`.
 
-The fundamental screener evaluates 407 stocks from the curated universe using **sector-adjusted thresholds** defined in `sector-config.js`. Each sector has different ideal/high thresholds for P/E, PEG, ROE, margins, etc.
+Current weekly flow:
 
-**Key Principle:** Tech deep value ≠ Finance deep value. Dynamic scoring per sector ensures fair evaluation.
+1. Saturday screening inserts candidates with `status='pending'`
+2. Sunday weekly Opus review analyzes pending rows
+3. The top `7` per pathway become `status='active'`
 
----
+## Shared baseline filters
 
-## LONG PATHWAYS
+These filters apply before or around pathway scoring.
 
-### 1. Deep Value
-**Philosophy:** Low valuation + high FCF + quality fundamentals
+### General baseline
 
-**Market Cap Requirement:** $2B minimum (quality value vs value traps)
+- minimum price: `$5`
+- minimum dollar volume: `$5M`
 
-**Rejection Criteria:**
-- Accrual ratio > 12% (earnings not backed by cash)
+### Average-volume gates
 
-**Scoring Components:**
+- longs require at least `250k` average shares/day
+- shorts require at least `500k` average shares/day
 
-**VALUE SIGNALS (need 2 of 3):**
-- **PEG Ratio (Trailing):**
-  - ≤ sector ideal (default 1.5): +30 points, "excellent"
-  - ≤ sector high (default 2.5): +15 points, "acceptable"
-  
-- **P/E Ratio:**
-  - < sector low (default 15): +25 points, "low for sector"
-  - < sector mid (default 25): +12 points
-  
-- **FCF Per Share:**
-  - > 0: +20 points
+### Short-specific baseline
 
-**QUALITY SIGNALS:**
-- **ROE:**
-  - > 15%: +20 points, "quality value"
-  - > 10%: +10 points
-  
-- **Operating Margin:**
-  - > sector ideal (default 15%): +15 points
-  - > sector acceptable (default 10%): +8 points
-  
-- **Debt to Equity:**
-  - < 0.5: +10 points, "low debt"
+- minimum market cap: `$2B`
+- minimum dollar volume: `$20M`
+- max short float for `overvalued` / `overextended`: `15%`
+- `deteriorating` can still pass with elevated short float, but the screener annotates it as consensus risk
 
-**Minimum Requirements:**
-- Must have at least 2 of 3 value signals
-- Quality score > 0
+## Current thresholds
 
-**Pass Threshold:** ≥38 points
+- `LONG_THRESHOLD = 48`
+- `SHORT_THRESHOLD = 65`
 
----
+These are the live constants in the current code.
 
-### 2. High Growth
-**Philosophy:** Revenue growth > 15%, ignore valuation (growth justifies premium)
+## Pathway-specific market-cap floors
 
-**Market Cap Requirement:** $500M minimum (growth emerges small)
+Current long-side minimums:
 
-**Rejection Criteria:**
-- Accrual ratio > 12% (earnings not backed by cash)
+- `deepValue`: `$2B`
+- `cashMachine`: `$2B`
+- `qarp`: `$2B`
+- `qualityCompounder`: `$2B`
+- `highGrowth`: `$500M`
+- `inflection`: `$500M`
+- `turnaround`: `$500M`
 
-**Scoring Components:**
+Current short-side minimum:
 
-**REVENUE GROWTH (tiered):**
-- ≥ 50%: +40 points, "exceptional"
-- ≥ 30%: +40 points, "strong"
-- ≥ 20%: +25 points, "solid"
-- ≥ 15%: +15 points
+- all shorts: `$2B`
 
-**EARNINGS GROWTH:**
-- ≥ 40%: +30 points
-- ≥ 20%: +15 points
+## Long pathways
 
-**PROFITABILITY:**
-- Operating margin > 0: +10 points
+## 1. `deepValue`
 
-**ACCELERATION BONUS:**
-- Q-over-Q acceleration (current Q > prev Q) AND current Q > 20%: +20 points
+Goal: cheap stocks with enough quality to avoid obvious value traps.
 
-**VALUATION CHECK (Forward PEG preferred):**
-- **Uses forward PEG if available, otherwise trailing PEG**
-- < 2.0: +15 points, "reasonable valuation for growth"
-- < 3.0: +5 points, "acceptable"
+### Hard gates
 
-**Pass Threshold:** ≥38 points
+- market cap must be at least `$2B`
+- reject if revenue growth is below `-10%`
+- reject if accrual ratio is above `12%`
+- require at least **2 of 3** value signals:
+  - attractive PEG vs sector range
+  - attractive P/E vs sector range
+  - positive FCF per share
+- require a quality floor of at least `25` points
+- require at least **3 quality signals** across profitability, leverage, liquidity, ROIC, or dividend support
 
----
+### Main scoring drivers
 
-### 3. Inflection
-**Philosophy:** Q-over-Q acceleration + margin expansion
+- PEG vs sector ideal/high range
+- P/E vs sector low/mid range
+- positive FCF per share
+- low debt
+- ROIC above `15%`
+- strong quick ratio
+- dividend yield above `3%`
 
-**Market Cap Requirement:** $500M minimum (catch early momentum)
+## 2. `highGrowth`
 
-**Rejection Criteria:**
-- Accrual ratio > 12%
+Goal: sector-relative revenue growth with enough quality to avoid single-metric growth traps.
 
-**Scoring Components:**
+### Hard gates
 
-**ACCELERATION:**
-- Revenue growth Q-over-Q acceleration > 10pp: +40 points, "strong acceleration"
-- Revenue growth Q-over-Q acceleration > 5pp: +25 points, "accelerating"
+- market cap must be at least `$500M`
+- reject if accrual ratio is above `12%`
+- apply accrual penalties between `8%-12%`
+- apply debt penalties for `D/E > 1.5` and `D/E > 2.0`
+- require at least `20` quality/balance-sheet points
 
-**MARGIN EXPANSION:**
-- Operating margin expansion > 5pp: +30 points, "margin expansion"
-- Operating margin expansion > 2pp: +15 points
+### Main scoring drivers
+
+- sector-relative revenue growth tiers
+- earnings growth
+- operating margin quality
+- low debt bonus
+- Q-over-Q revenue acceleration
+- forward PEG when available, otherwise trailing PEG
+
+## 3. `inflection`
+
+Goal: improving businesses where multiple signals are turning at once.
+
+### Hard gates
+
+- market cap must be at least `$500M`
+- reject if accrual ratio is above `12%`
+- require at least **2** of these 4 signal groups:
+  - revenue acceleration
+  - margin expansion
+  - FCF growth
+  - reasonable PEG
+- require a balance-sheet score of at least `10`
 
-**PROFITABILITY:**
-- Operating margin > 10%: +15 points
-- Operating margin > 5%: +8 points
+### Main scoring drivers
 
-**VALUATION (Trailing PEG):**
-- < 3.0: +10 points, "reasonable"
+- Q-over-Q revenue acceleration
+- Q-over-Q operating-margin expansion
+- fast FCF growth
+- PEG below `3.0`
+- debt and liquidity support
+
+## 4. `cashMachine`
+
+Goal: high free-cash-flow names where cash generation is real, not just optically cheap.
 
-**Pass Threshold:** ≥38 points
+### Hard gates
 
----
+- market cap must be at least `$2B`
+- reject if revenue is below `-5%` and FCF growth is not above `10%`
+- reject if accrual ratio is above `12%`
+- require at least `20` quality/balance-sheet points
+- require at least **3** active category signals across:
+  - FCF yield
+  - FCF growth
+  - efficiency
+  - balance sheet
 
-### 4. Cash Machine
-**Philosophy:** FCF yield > 8% + growing FCF
+### Main scoring drivers
 
-**Market Cap Requirement:** $2B minimum (8% FCF yield at $2B = opportunity, at $500M = distress)
+- FCF yield (`>= 10%`, `>= 8%`, `>= 5%` tiers)
+- FCF growth, especially when faster than revenue growth
+- low debt
+- ROIC above `20%`
+- favorable cash conversion cycle
+- attractive price-to-operating-cash-flow multiple
 
-**Rejection Criteria:**
-- Accrual ratio > 12%
+## 5. `qarp`
 
-**Scoring Components:**
+Goal: quality at a reasonable price.
 
-**FCF YIELD:**
-- > 12%: +40 points, "exceptional FCF yield"
-- > 8%: +30 points, "high FCF yield"
+### Hard gates
 
-**FCF GROWTH:**
-- > 20%: +25 points, "FCF growing strongly"
-- > 10%: +15 points, "FCF growing"
+- market cap must be at least `$2B`
+- reject if P/E is above the pathway's sector-aware ceiling
+- reject if accrual ratio is above `12%`
+- require scoring in at least **3 of 4** buckets:
+  - quality
+  - valuation
+  - growth
+  - balance
 
-**PROFITABILITY:**
-- Operating margin > 15%: +15 points
-- Operating margin > 10%: +8 points
+### Main scoring drivers
 
-**BALANCE SHEET:**
-- Debt to equity < 0.5: +10 points
+- ROIC above `15%` or `20%`
+- ROE above `20%`
+- reasonable P/E range
+- reasonable trailing PEG
+- positive earnings growth
+- low debt
+- asset turnover bonus
 
-**Pass Threshold:** ≥38 points
+## 6. `qualityCompounder`
 
----
+Goal: high-quality compounders during temporary earnings softness, not structural deterioration.
 
-### 5. QARP (Quality at Reasonable Price)
-**Philosophy:** High ROIC/ROE compounders at fair valuations
+### Hard gates
 
-**Market Cap Requirement:** $2B minimum (quality verification, prefer $10B+)
+- market cap must be at least `$2B`
+- `ROE > 20%`
+- `ROIC > 15%`
+- `operating margin > 20%`
+- Q-over-Q operating-margin change must be at least `-2%`
+- `D/E < 0.5`
+- if interest coverage is present, it must be at least `5x`
+- revenue growth must be above `8%`
+- earnings growth must fall between `-8%` and `+5%`
+- valuation must satisfy `P/E < 35` **or** `PEG < 3.0`
+- reject if accrual ratio is above `12%`
 
-**Rejection Criteria:**
-- P/E > 35 (too expensive for QARP)
-- Accrual ratio > 12%
+### Main scoring drivers
 
-**Scoring Components (must score in 3+ categories):**
+- ROE tiers above `20%` / `25%`
+- ROIC tiers above `15%` / `20%`
+- operating-margin tiers above `20%` / `25%`
+- Q-over-Q margin expansion bonus
+- revenue growth above `8%` / `12%`
+- lower debt
+- strong quick ratio
+- temporary earnings dip annotation
 
-**QUALITY:**
-- **ROIC:**
-  - > 20%: +25 points, "exceptional quality"
-  - > 15%: +15 points, "quality compounder"
-  
-- **ROE:**
-  - > 20%: +25 points, "high returns"
+## 7. `turnaround`
 
-**VALUATION:**
-- **P/E Ratio:**
-  - 15-25: +20 points, "reasonable valuation"
-  - 25-30: +10 points
-  
-- **PEG Ratio (Trailing):**
-  - ≤ 2.0: +15 points, "reasonable price for growth"
-  - ≤ 2.5: +8 points, "acceptable"
+Goal: improving special situations with early signs of operational or financial recovery.
 
-**GROWTH:**
-- **Earnings Growth:**
-  - > 10%: +20 points, "consistent"
-  - > 0%: +10 points
+### Hard gates
 
-**BALANCE SHEET:**
-- Debt to equity < 0.5: +10 points
+- market cap must be at least `$500M`
+- reject if `D/E > 2.0`
+- current code requires **at least one side** of the turnaround to clear its floor:
+  - operational score `>= 15`, or
+  - financial score `>= 12`
 
-**Minimum Requirements:**
-- Must score in 3+ categories (quality, valuation, growth, balance)
+### Main scoring drivers
 
-**Pass Threshold:** ≥38 points
+- manageable debt
+- operating-margin improvement
+- revenue stabilization or renewed growth
+- positive FCF with strong FCF growth
+- adequate quick ratio
+- improving working-capital collection (`daysOfSalesOutstanding`)
+- P/E below `20`
 
----
+## Short logic
 
-### 6. Quality Compounder (NEW - 2026-04-15)
-**Philosophy:** Catch high-quality companies during temporary earnings dips
+Short candidates must satisfy **all** of the following:
 
-**Market Cap Requirement:** $2B minimum (quality verification)
+1. valuation score `>= 20`
+2. deterioration score `>= 20`
+3. short safety check passes
+4. total score `>= 65`
 
-**Hard Filters (must pass ALL):**
-- ROE > 20% (exceptional returns)
-- ROIC > 15% (capital efficiency)
-- Operating margin > 20% (pricing power)
-- Operating margin Q-over-Q ≥ -2% (stable/expanding margins - distinguishes temp vs structural)
-- D/E < 0.5 (low debt)
-- Interest coverage > 5x (debt serviceability)
-- Revenue growth > 8% (business still growing)
-- Earnings growth between -8% and +5% (temporary dip range)
-- P/E < 35 OR PEG < 3.0 (valuation ceiling - quality can still be overpriced)
-- Accrual ratio < 12%
+### Valuation scoring
 
-**Scoring Components:**
+Current signals include:
 
-**QUALITY METRICS:**
-- ROE > 25%: +30 points, "exceptional"
-- ROE 20-25%: +20 points
-- ROIC > 20%: +25 points, "capital efficient"
-- ROIC 15-20%: +15 points
-- Operating margin > 25%: +20 points, "pricing power"
-- Operating margin 20-25%: +15 points
-- Margin expanding Q-over-Q > 2%: +15 points (reward improving margins)
+- sector-relative extreme P/E
+- PEG or forward PEG overvaluation
+- negative PEG + premium P/E combinations
+- EV/EBITDA above `40`
+- at least **2 valuation extremes** are required
 
-**GROWTH:**
-- Revenue growth > 12%: +15 points
-- Revenue growth 8-12%: +10 points
+### Deterioration scoring
 
-**BALANCE SHEET:**
-- D/E < 0.3: +15 points, "very low debt"
-- D/E 0.3-0.5: +10 points, "low debt"
-- Quick ratio > 1.5: +10 points, "strong liquidity"
+Current signals include:
 
-**ACCRUAL PENALTIES:**
-- 8-10%: -15 points
-- 10-12%: -25 points
+- revenue deceleration
+- margin compression
+- FCF decline
+- negative earnings growth combined with high P/E
 
-**Pass Threshold:** ≥50 points
+### Safety rules
 
-**Example:** GOOGL (ROE 35%, ROIC 21.8%, margin 32%, revenue +11.3%, earnings -1.5%) would score ~100 points
+- market cap must be at least `$2B`
+- dollar volume must be at least `$20M`
+- `overvalued` and `overextended` reject on short float above `15%`
+- `deteriorating` can survive higher short float but gets annotated for consensus/squeeze context
 
-**Why This Matters:** Opus-validated pathway to catch quality companies like GOOGL during temporary earnings dips. Strict safeguards prevent catching structural declines disguised as temporary weakness. Margin stability check and interest coverage requirements are critical filters.
+### Pathway label assignment
 
----
+Current short labels are assigned after scoring:
 
-### 7. Turnaround
-**Philosophy:** Distressed valuations + early recovery signs
+- `deteriorating` when deterioration clearly dominates valuation
+- `overvalued` when valuation dominates
+- `overextended` in extreme stretched-multiple cases
 
-**Market Cap Requirement:** $500M minimum (distress acceptable, upside compensates)
+## Watchlist output behavior
 
-**Rejection Criteria:**
-- Accrual ratio > 12%
+### On Saturday
 
-**Scoring Components:**
+The screener:
 
-**DISTRESSED VALUATION:**
-- P/E < 20: +15 points, "undervalued turnaround"
-- P/E < 15: +20 points
+- expires existing `active` / `pending` rows
+- inserts new long and short rows into `saturday_watchlist`
+- uses `status='pending'`
 
-**RECOVERY SIGNS:**
-- Revenue growth acceleration (current Q > prev Q): +30 points, "growth inflecting"
-- Margin expansion > 2pp: +25 points, "margins improving"
-- FCF growth > 20%: +20 points, "cash flow improving"
+### On Sunday
 
-**QUALITY CHECK:**
-- Operating margin > 5%: +10 points
-- Current ratio > 1.5: +10 points
+`src/weekly-opus-review.js`:
 
-**Pass Threshold:** ≥38 points
+- reviews pending rows by pathway
+- analyzes the top `20` names per pathway
+- activates the top `7` per pathway
 
----
+## Data inputs used by the screener
 
-## SHORT PATHWAYS
+Current inputs come from `src/fmp.js`, Tradier, and related helper logic.
 
-### Overvalued
-**Philosophy:** Extreme valuation + deteriorating fundamentals + short safety
+### FMP-derived data
 
-**Market Cap Requirement:** $2B minimum
+The scorer uses metrics such as:
 
-**Dollar Volume Requirement:** $20M daily minimum
+- P/E
+- trailing PEG and forward PEG
+- operating margin
+- ROE
+- ROIC
+- EV/EBITDA
+- debt-to-equity
+- free cash flow and FCF growth
+- revenue and earnings growth
+- quarterly revenue/margin comparisons
+- liquidity ratios
+- short float and other quality signals where available
 
-**Must Pass ALL 3 Criteria:**
+### Tradier-derived data
 
-#### CRITERIA 1: Extreme Valuation (need 2+ signals)
+The screener uses live quote information for:
 
-**P/E Ratio:**
-- > 1.5x sector ceiling: +20 points, "extreme P/E"
-- > sector ceiling: +10 points
+- price
+- volume
+- dollar-volume calculations
 
-**PEG Ratio:**
-- **CRITICAL: Uses forward PEG for growth stocks (>15% revenue growth), trailing PEG otherwise**
-- **This prevents false positives like LLY (trailing PEG 3.29, forward PEG 1.82)**
-- > 4.0: +20 points, "severely overvalued"
-- > 3.0: +10 points, "overvalued"
-- Negative PEG + P/E > 90% sector threshold + P/E > 15: +15 points, "premium multiple on declining earnings"
+## Rate limiting and batching
 
-**EV/EBITDA:**
-- > 40: +10 points, "stretched"
+Current screening behavior:
 
-**Minimum:** Must have 2+ valuation signals
+- stocks are processed in batches of `5`
+- there is a `10-second` delay between batches
+- `src/fmp.js` also enforces a `400ms` minimum interval and a `30-minute` in-memory cache
 
-#### CRITERIA 2: Deteriorating Fundamentals
+## Notes on source of truth
 
-**Revenue Deceleration:**
-- Deceleration > 10pp: +25 points, "revenue decelerating"
-- Deceleration > 5pp: +12 points, "revenue growth slowing"
+This document replaces older screener writeups that still mention:
 
-**Margin Compression:**
-- Compression > 5pp: +25 points, "margin compression"
-- Compression > 2pp: +12 points
+- `6` long pathways
+- lower thresholds such as `35`, `38`, `50`, or `55`
+- no-cache FMP behavior
+- top-15 Sunday activation
+- uniform universe counts like `365`, `377`, or `407`
 
-**FCF Decline:**
-- FCF growth < -20%: +20 points, "FCF declining"
-
-**Accrual Bonus:**
-- Accrual ratio > 12%: +15 points, "earnings not backed by cash"
-
-#### CRITERIA 3: Short Safety Check
-
-**Rejection Criteria (any one fails = reject):**
-- Short float > 15% (squeeze risk)
-- Market cap < $2B (liquidity risk)
-- Dollar volume < $20M (liquidity risk)
-- Average volume < 500K shares/day (liquidity risk)
-
-**Pass Threshold:** ≥50 points total (valuation + deterioration + accrual bonus)
-
----
-
-## Key Metrics Definitions
-
-### Accrual Ratio
-```
-Accrual Ratio = (Net Income - Operating Cash Flow) / Total Assets
-```
-- Measures earnings quality
-- High accruals (>12%) = earnings not backed by cash = red flag
-
-### PEG Ratio
-```
-PEG Ratio = P/E Ratio / Earnings Growth Rate
-```
-- **Trailing PEG:** Uses TTM P/E and historical earnings growth
-- **Forward PEG:** Uses TTM P/E and expected future earnings growth
-- < 1.0 = undervalued relative to growth
-- 1.0-2.0 = fairly valued
-- > 2.0 = potentially overvalued
-- > 3.0 = overvalued
-
-**When to Use Which:**
-- **Trailing PEG:** Value stocks, quality compounders (deepValue, QARP, inflection)
-- **Forward PEG:** Growth stocks (highGrowth, overvalued pathway for growth stocks)
-
-### FCF Yield
-```
-FCF Yield = Free Cash Flow / Market Cap
-```
-- > 8% = attractive
-- > 12% = exceptional
-
-### Sector-Adjusted Thresholds
-Defined in `sector-config.js`:
-- **P/E Range:** low, mid, high (e.g., Tech: 15/25/40, Utilities: 12/18/25)
-- **PEG Range:** ideal, high (e.g., Tech: 1.5/2.5, Healthcare: 1.8/3.0)
-- **ROE Range:** acceptable, ideal (e.g., Tech: 15%/25%, Financials: 10%/18%)
-- **Operating Margin Range:** acceptable, ideal (varies by sector)
-
----
-
-## Data Sources
-
-All metrics sourced from FMP (Financial Modeling Prep) API:
-
-**Endpoints:**
-- `/stable/ratios-ttm` - P/E, PEG (trailing & forward), margins, ROE
-- `/stable/key-metrics-ttm` - ROIC, FCF yield, EV ratios
-- `/stable/financial-growth?period=quarter` - True YoY growth rates
-- `/stable/income-statement?period=quarter` - Quarterly financials
-- `/stable/cash-flow-statement?period=quarter` - Cash flow data
-- `/stable/balance-sheet?period=quarter` - Balance sheet data
-
-**Rate Limiting:** 400ms between calls, 300 calls/minute limit
-
----
-
-## Recent Improvements (2026-04-15)
-
-### Comprehensive Pathway Filter Overhaul
-
-**Raised Selectivity Thresholds:**
-- LONG_THRESHOLD: 38 → 50 (31% increase)
-- SHORT_THRESHOLD: 50 → 55 (10% increase)
-- Expected impact: Significantly lower pass rates from previous 62%
-
-**Quality Minimums (Prevent One-Metric Wonders):**
-- **High Growth**: Raised from 10 pts → 20 pts
-- **Deep Value**: Raised to 25 pts + require ≥3 quality signals
-- **Cash Machine**: Raised to 20 pts + require ≥3 category diversity
-- **Inflection**: Added balance sheet requirement (≥15 pts)
-
-**Tiered Accrual Penalties (All Pathways):**
-- 8-10%: -15 points (was -10)
-- 10-12%: -25 points (new tier)
-- >12%: Reject (unchanged)
-- Better granularity than binary reject
-
-**Debt Penalties (High Growth):**
-- D/E > 2.0: -25 points (risky leverage)
-- D/E > 1.5: -15 points (elevated leverage)
-- Prevents growth stocks with dangerous debt loads
-
-**Revenue Scoring Fix (High Growth):**
-- ≥50% growth: +45 points (was +40)
-- ≥30% growth: +35 points (was +40)
-- Fixed illogical scoring where both tiers gave same points
-
-**Category Diversity Requirements:**
-- Deep Value must score in ≥3 of: ROE, operating margin, debt/equity, ROIC, quick ratio, dividend yield
-- Cash Machine must score in ≥3 of: FCF yield, FCF growth, efficiency, balance sheet
-- Prevents passing on single outlier metric
-
-### Forward PEG Integration
-1. **Added `forwardPegRatio` field** to `fmp.js` getFundamentals()
-2. **HighGrowth pathway** now uses forward PEG (prefers forward over trailing)
-3. **Overvalued pathway** uses forward PEG for growth stocks (>15% revenue growth)
-4. **QARP pathway** added PEG ratio checks (trailing PEG)
-5. **Adhoc analyzer** displays both trailing and forward PEG
-6. **Weekly Opus review** includes both PEG ratios in prompts
-7. **Opus screener** shows both PEG ratios in Phase 2/3 analysis
-
-### Why This Matters
-**Forward PEG:** Growth stocks like LLY were incorrectly flagged as overvalued based on trailing PEG (3.29) when forward PEG (1.82) showed reasonable valuation. Forward PEG reflects expected future growth, making it more appropriate for high-growth companies.
-
-**Quality Minimums:** Previous system allowed stocks to pass with single outlier metrics (e.g., 50% revenue growth = +40 pts, pass at 38 threshold). New system requires "best combos" - multiple quality signals across different categories. This creates more robust, diversified candidates with lower risk profiles.
-
----
-
-## Testing & Validation
-
-To test a specific stock against all pathways:
-```bash
-node test/test-fundamental-screener.js SYMBOL
-```
-
-To run full Saturday screening:
-```javascript
-import fundamentalScreener from './src/fundamental-screener.js';
-await fundamentalScreener.runSaturdayScreening();
-```
-
----
-
-## Related Files
-
-- `src/fundamental-screener.js` - Main screener implementation
-- `src/sector-config.js` - Sector-specific thresholds
-- `src/fmp.js` - FMP API integration and data fetching
-- `src/weekly-opus-review.js` - Sunday Opus review of Saturday candidates
-- `src/adhoc-analyzer.js` - Manual stock analysis tool
-- `src/opus-screener.js` - Phase 2/3 deep analysis with Opus
+Those older references should be treated as historical context only.

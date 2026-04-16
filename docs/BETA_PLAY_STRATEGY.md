@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> Historical or planning document.
+> This file is retained for context, but it is **not** the source of truth for the current implementation.
+> Use `README.md`, `ARCHITECTURE.md`, `FUNDAMENTAL_SCREENER_METRICS.md`, and `CLAUDE.md` for current behavior.
+
 # Beta Play Strategy
 
 **"The way to build superior long-term returns is through preservation of capital and home runs."**  

@@ -33,8 +33,9 @@ class ClaudeAPI {
   /**
    * Send message to Claude (non-streaming)
    */
-  async sendMessage(messages, model = MODELS.OPUS, systemPrompt = null, enableThinking = false, thinkingBudget = 50000) {
+  async sendMessage(messages, model = MODELS.OPUS, systemPrompt = null, enableThinking = false, thinkingBudget = 50000, options = {}) {
     try {
+      const { quiet = false } = options;
       const payload = {
         model,
         max_tokens: 16000,
@@ -43,13 +44,17 @@ class ClaudeAPI {
 
       // Extended thinking requires temperature 1.0
       if (enableThinking && model === MODELS.OPUS) {
-        console.log(`🧠 Enabling extended thinking with ${thinkingBudget.toLocaleString()} token budget...`);
+        if (!quiet) {
+          console.log(`🧠 Enabling extended thinking with ${thinkingBudget.toLocaleString()} token budget...`);
+        }
         payload.thinking = {
           type: 'enabled',
           budget_tokens: thinkingBudget
         };
         payload.temperature = 1; // Required for extended thinking
-        console.log('⏳ This may take 3-7 minutes for DEEP analysis...');
+        if (!quiet) {
+          console.log('⏳ This may take 3-7 minutes for DEEP analysis...');
+        }
       } else {
         payload.temperature = 0.1; // Consistent, focused decisions for non-thinking calls
       }
@@ -58,9 +63,13 @@ class ClaudeAPI {
         payload.system = systemPrompt;
       }
 
-      console.log(`📡 Calling Claude API (model: ${model}, temp: ${payload.temperature})...`);
+      if (!quiet) {
+        console.log(`📡 Calling Claude API (model: ${model}, temp: ${payload.temperature})...`);
+      }
       const response = await this.client.post('/v1/messages', payload);
-      console.log('✅ Claude API response received');
+      if (!quiet) {
+        console.log('✅ Claude API response received');
+      }
 
       return response.data;
     } catch (error) {

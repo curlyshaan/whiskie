@@ -646,7 +646,7 @@ async function sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthe
       <pre style="background: #f5f5f5; padding: 10px; border-radius: 5px;">${earningsReport}</pre>
     `;
 
-    await email.sendEmail('📅 Weekly Portfolio Review', html);
+    await email.sendEmail(email.alertEmail, '📅 Weekly Portfolio Review', html);
 
   } catch (error) {
     console.error('Error sending weekly summary email:', error);

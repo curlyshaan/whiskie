@@ -1,741 +1,393 @@
-# Whiskie Architecture Documentation
+# Whiskie Architecture
 
-Comprehensive technical documentation for the Whiskie AI Portfolio Manager system.
+Technical reference for the current Whiskie implementation.
 
-## Table of Contents
+## Documentation map
 
-1. [System Overview](#system-overview)
-2. [Saturday Watchlist System](#saturday-watchlist-system)
-3. [4-Phase Analysis System](#4-phase-analysis-system)
-4. [Stock Profile System](#stock-profile-system)
-5. [Trade Approval Queue](#trade-approval-queue)
-6. [Cron Schedule](#cron-schedule)
-7. [Data Sources](#data-sources)
-8. [Database Schema](#database-schema)
-9. [Risk Management](#risk-management)
-10. [Deployment](#deployment)
+Canonical docs:
 
----
+- `README.md` — high-level operator guide
+- `ARCHITECTURE.md` — technical behavior and system structure
+- `FUNDAMENTAL_SCREENER_METRICS.md` — current screener logic
+- `CLAUDE.md` — project guidance for future coding sessions
 
-## System Overview
+Historical planning/review docs remain in the repo, but they are archival context rather than the current implementation contract.
 
-Whiskie is an autonomous trading bot that manages a long/short equity portfolio using Claude Opus with extended thinking. The system operates on a weekly cycle (Saturday screening) and daily cycle (Mon-Fri analysis).
+## System overview
 
-**Core Philosophy:**
-- Separate screening from deep analysis (4-phase approach)
-- Maintain comprehensive stock profiles to avoid redundant research
-- Human-in-the-loop for trade execution (approval queue)
-- Sector diversification constraints (0-3 per sub-sector)
-- Market regime adaptation (VIX-based)
+Whiskie is a Node.js trading system built around four connected layers:
 
-**Tech Stack:**
-- **AI**: Claude Opus 4.6 via Quatarly API (extended thinking enabled)
-- **Backend**: Node.js + Express
-- **Database**: PostgreSQL on Railway
-- **Data**: FMP (primary), Tradier (quotes/execution), Yahoo Finance (short interest), Tavily (news)
-- **Deployment**: Railway with auto-deploy from main branch
+1. **Universe + screening** — build `stock_universe`, then score names into `saturday_watchlist`
+2. **Research context** — maintain reusable stock profiles and recent market/news context
+3. **Daily decisioning** — run a 4-phase analysis pipeline during the trading week
+4. **Execution controls** — queue trades for approval, execute approved trades, reconcile orders, and monitor exits
 
----
+Primary modules:
 
-## Saturday Watchlist System
+- `src/index.js` — orchestration, cron scheduling, API server, daily analysis flow
+- `src/fundamental-screener.js` — weekly long/short screening
+- `src/pre-ranking.js` — live candidate filtering and scoring
+- `src/weekly-opus-review.js` — Sunday pathway review and activation
+- `src/stock-profiles.js` — reusable research dossiers
+- `src/trade-approval.js` — approval queue lifecycle
+- `src/trade-executor.js` — execution of approved trades
+- `src/dashboard.js` — web UI for approvals and monitoring
 
-The Saturday watchlist is the **single source of truth** for weekly stock candidates. It replaces the deprecated separate watchlists (value_watchlist, quality_watchlist, overvalued_watchlist).
+## Universe construction
 
-### Saturday 10:00 AM ET - Stock Universe Refresh
+The live universe is populated by `scripts/populate-universe-v2.js`.
 
-**Purpose**: Repopulate the stock universe with fresh data from FMP
+### Core rules
 
-**Process:**
-1. Cron job triggers `populate-universe-v2.js`
-2. Fetches stocks from FMP company-screener API
-3. Filters: $7B+ market cap, actively trading, no ETFs
-4. Groups by industry, takes top 7 per industry by market cap
-5. Populates `stock_universe` table (~377 stocks)
+- fetch FMP company screener results with market cap `>= $7B`
+- keep active US-listed equities only
+- exclude ETFs and funds
+- group by industry and keep the top `7` by market cap
 
-**Key Configuration:**
-```javascript
-MIN_MARKET_CAP = 7_000_000_000  // $7B
-STOCKS_PER_INDUSTRY = 7
-RATE_LIMIT_DELAY = 400ms  // 150 calls/min
+### Growth expansion bucket
+
+The same script also adds a second universe bucket for growth-oriented names:
+
+- market cap between `$1B` and `$10B`
+- sectors limited to `Technology`, `Healthcare`, and `Consumer Cyclical`
+- minimum volume threshold applied in the script
+
+### Current output model
+
+Rows are written to `stock_universe` with fields such as:
+
+- `symbol`
+- `sector`
+- `industry`
+- `market_cap`
+- `market_cap_tier`
+- `avg_daily_volume`
+- `is_growth_candidate`
+- `universe_bucket`
+- `status`
+
+Avoid hardcoding a fixed universe count in docs. The size now varies with current screen results and deduplication between the core and growth buckets.
+
+## Weekly screening and watchlist lifecycle
+
+### Saturday screening
+
+`src/fundamental-screener.js` loads active names from `stock_universe`, screens them, and updates `saturday_watchlist`.
+
+Current behavior:
+
+- old `active` and `pending` watchlist rows are expired first
+- passing long and short candidates are inserted with `status='pending'`
+- Sunday Opus review decides which pending names become `active`
+
+### Watchlist states
+
+The current watchlist lifecycle is:
+
+- `pending` — produced by weekly screening and awaiting Sunday review
+- `active` — selected by the weekly Opus review for daily use
+- `expired` — superseded by newer weekly runs
+
+### Sunday Opus review
+
+`src/weekly-opus-review.js`:
+
+- reads pending watchlist rows grouped by pathway
+- analyzes the top `20` names per pathway by fundamental score
+- activates the top `7` per pathway
+- stores `opus_conviction` and `opus_reasoning`
+
+This is the live implementation and replaces older docs that described top-15 activation.
+
+## Fundamental screener behavior
+
+The screener is a combined long/short pass over the current `stock_universe`.
+
+### Shared baseline filters
+
+- minimum price: `$5`
+- minimum dollar volume: `$5M`
+- long avg volume floor: `250k` shares/day
+- short avg volume floor: `500k` shares/day
+- short market cap floor: `$2B`
+- short dollar volume floor: `$20M`
+
+### Long pathways
+
+Current implemented long pathways:
+
+- `deepValue`
+- `highGrowth`
+- `inflection`
+- `cashMachine`
+- `qarp`
+- `qualityCompounder`
+- `turnaround`
+
+Current thresholds:
+
+- `LONG_THRESHOLD = 48`
+- `SHORT_THRESHOLD = 65`
+
+See `FUNDAMENTAL_SCREENER_METRICS.md` for the current pathway rules and gating logic.
+
+## Pre-ranking
+
+`src/pre-ranking.js` is the live Phase 1 candidate filter.
+
+### Inputs
+
+- active `saturday_watchlist` names
+- active `stock_universe` names
+
+Watchlist names are merged ahead of the rest of the universe so they keep priority.
+
+### Live filters
+
+Current live quote filters in code:
+
+- minimum dollar volume: `$50M`
+- maximum spread: `0.5%`
+- minimum price: `$5`
+
+### Earnings window handling
+
+The pre-ranker builds an earnings map for names with earnings from `-3` to `+7` days relative to today.
+
+That means:
+
+- recent post-earnings names can still qualify
+- upcoming earnings are visible during ranking
+
+### Output shape
+
+The current implementation returns:
+
+- top `80` long candidates
+- top `40` short candidates
+
+It also preserves pathway/source context where available.
+
+### Momentum bypass logic
+
+These pathways can bypass some momentum-style filtering pressure because the code explicitly treats them as slower-moving fundamental setups:
+
+- `deepValue`
+- `cashMachine`
+- `qarp`
+- `qualityCompounder`
+
+## Daily 4-phase analysis pipeline
+
+The weekday analysis flow is orchestrated in `src/index.js`.
+
+### Phase 1 — Pre-ranking
+
+- fetches and filters live candidates
+- builds long and short candidate sets
+
+### Phase 2 — Long analysis
+
+- Opus deep analysis of long candidates
+- current thinking budget in code: `35,000`
+
+### Phase 3 — Short analysis
+
+- Opus deep analysis of short candidates
+- current thinking budget in code: `35,000`
+
+### Phase 4 — Portfolio construction
+
+- combines Phase 2 and Phase 3 outputs into final trade recommendations
+- current thinking budget in code: `45,000`
+
+### Trade output contract
+
+The parser expects the current exact command prefixes:
+
+```text
+EXECUTE_BUY: SYMBOL | QTY | ENTRY | STOP | TARGET | PATHWAY | INTENT
+EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 ```
 
-**Why top 7 per industry?**
-- Ensures sector diversification
-- Captures industry leaders + challengers
-- Avoids over-concentration in mega-cap tech
-- ~377 stocks is manageable for weekly screening
+The richer Phase 4 output also includes thesis, catalysts, fundamentals, risk, stop, and holding metadata that feed the approval queue.
 
-### Saturday 3:00 PM ET - Fundamental Screening
+## Stock profiles
 
-**Purpose**: Screen all 377 stocks and populate saturday_watchlist with intent/pathway tags
+Profiles live in `stock_profiles` and are used to reduce repeated research work.
 
-**Process:**
-1. Runs `fundamentalScreener.runWeeklyScreen('full')`
-2. Single pass over all stocks (parallel processing, batch size 5)
-3. Evaluates 6 long pathways + 3 short pathways
-4. Scores each stock (0-100 scale)
-5. Inserts passing stocks into `saturday_watchlist` with:
-   - `intent`: 'long' or 'short'
-   - `pathway`: specific strategy (e.g., 'deepValue', 'overvalued')
-   - `status`: 'active' (used for daily filtering)
-   - `score`: pathway score
-   - `reasoning`: why it passed
+### Current behavior in code
 
-**Long Pathways** (pass if ANY pathway ≥38):
-1. **deepValue**: Low P/E, low PEG, high FCF yield
-2. **highGrowth**: >30% revenue growth (ignore valuation)
-3. **inflection**: Q-over-Q acceleration, margin expansion
-4. **cashMachine**: FCF yield >8%, growing FCF
-5. **qarp**: Quality at reasonable price (ROE + growth + valuation)
-6. **turnaround**: Margin recovery, revenue stabilization
+- `src/stock-profiles.js` generally treats profiles older than `14` days as stale
+- the Sunday bulk profile builder in `src/index.js` currently skips profiles newer than `12` days
+- new names get a full profile build
+- stale names get an incremental or deeper refresh depending on context
 
-**Short Pathways** (must hit ALL three criteria ≥50):
-1. **overvalued**: Extreme valuation (PEG >3 AND P/E >50, sector-adjusted)
-2. **deteriorating**: Decelerating growth OR margin compression
-3. **overextended**: Technical weakness + negative momentum
+Because the code has both 12-day and 14-day checks in different flows, docs should describe that nuance instead of claiming a single universal threshold.
 
-**Sector-Adjusted Scoring:**
-- Each sector has different ideal/high thresholds (see `sector-config.js`)
-- Example: P/E of 20 is good for Tech, acceptable for Utilities, poor for Financials
-- Prevents false positives from applying uniform thresholds across sectors
+## Trade approval and execution
 
-**Output:**
-- `saturday_watchlist` table populated with 30-60 stocks
-- Each stock tagged with intent, pathway, score, reasoning
-- Used as primary input for daily analysis
+The live approval flow uses `trade_approvals`.
 
----
+### Current status values
 
-## 4-Phase Analysis System
+- `pending`
+- `approved`
+- `rejected`
+- `executed`
+- `expired`
 
-The 4-phase system separates fast screening (Phase 1) from deep analysis (Phases 2-3) and portfolio construction (Phase 4).
+### Current data captured
 
-### Phase 1: Pre-Ranking
+The table stores more than basic order details. It also records metadata such as:
 
-**Purpose**: Filter saturday_watchlist down to top candidates for Opus analysis
+- `pathway`
+- `intent`
+- `investment_thesis`
+- `strategy_type`
+- `catalysts`
+- `fundamentals`
+- `technical_setup`
+- `risk_factors`
+- `holding_period`
+- stop and target metadata
 
-**Process** (`pre-ranking.js`):
-1. Gets stocks from `saturday_watchlist` WHERE status = 'active'
-2. Merges with full universe (watchlist stocks get priority)
-3. Batch fetches live quotes from Tradier
-4. Filters by:
-   - Min $50M daily dollar volume
-   - Max 0.5% bid-ask spread
-   - Min $5 price
-5. Scores by:
-   - Volume surge (2x+ average)
-   - Price momentum (intraday change)
-   - Sector strength (relative to SPY)
-   - Technical signals (breakouts, breakdowns)
-6. Returns top 15-20 longs + 15-20 shorts
+### Legacy note
 
-**Why pre-ranking?**
-- Opus analysis is expensive (50k token thinking budget)
-- Pre-ranking ensures Opus focuses on highest-probability candidates
-- Live filters catch illiquid/wide-spread stocks that passed Saturday screening
+`src/db.js` still contains legacy `pending_approvals` schema/helpers, but the current app flow routes through `trade_approvals` and `src/trade-approval.js`.
 
-### Phase 2: Long Analysis
+### Execution loop
 
-**Purpose**: Deep Opus analysis of long candidates
+During market hours, `src/index.js` runs:
 
-**Process** (`opus-screener.js`):
-1. For each long candidate:
-   - Fetches/updates stock profile (if >12 days old)
-   - Gets latest fundamentals from FMP
-   - Searches recent news via Tavily
-   - Builds comprehensive prompt with profile + fundamentals + news
-2. Calls Claude Opus with:
-   - Model: `claude-opus-4-6-thinking`
-   - Extended thinking: enabled
-   - Thinking budget: 50,000 tokens
-   - Temperature: 1.0 (for thinking), 0.1 (for output)
-3. Opus evaluates:
-   - Business quality and moats
-   - Valuation (absolute + relative to sector)
-   - Growth trajectory and catalysts
-   - Risk factors and thesis validity
-   - Entry/exit prices, position sizing
-4. Outputs structured recommendation with conviction score
+- approved trade processing every `30` minutes
+- pathway exit monitoring every `30` minutes
+- order reconciliation hourly
+- approval expiration hourly
 
-**Why extended thinking?**
-- 50k token budget allows thorough reasoning
-- Opus can explore multiple angles, weigh trade-offs
-- Takes 3-7 minutes per stock but produces higher-quality analysis
-- Critical for avoiding value traps and identifying hidden risks
+## Risk management defaults
 
-### Phase 3: Short Analysis
+Current default limits in `src/risk-manager.js` are environment-overridable, but the code defaults are:
 
-**Purpose**: Deep Opus analysis of short candidates
+- max position size: `12%`
+- max short position size: `10%`
+- min cash reserve: `10%`
+- max sector allocation: `30%`
+- max total short exposure: `20%`
+- max portfolio drawdown: `20%`
+- max daily trades: `7`
 
-**Process**: Same as Phase 2 but evaluates:
-- Overvaluation severity (P/E, PEG, EV/Sales relative to sector)
-- Deteriorating fundamentals (revenue deceleration, margin compression)
-- Technical weakness (below 200 EMA, negative momentum)
-- Short safety (float, borrow availability, meme stock risk)
-- Catalyst timing (earnings, lockup expiration, regulatory events)
+The portfolio-construction prompt also applies strategy guidance for position count, sector spread, and sub-sector concentration.
 
-**Short-Specific Considerations:**
-- Negative PEG is a **valuation signal** (not filtered out)
-- Higher volume requirements (500k shares/day vs 250k for longs)
-- Meme stock filter (max 15% short float)
-- Borrow cost and availability checks
+## Cron schedule
 
-### Phase 4: Portfolio Construction
+All schedules are configured for `America/New_York`.
 
-**Purpose**: Build final portfolio with sector constraints and risk management
+### Weekdays
 
-**Process**:
-1. Receives ranked candidates from Phases 2-3
-2. Calls Claude Opus with:
-   - Thinking budget: 20,000 tokens (less than Phases 2-3)
-   - Current portfolio state
-   - Sector exposure limits
-   - VIX regime (affects position sizing)
-3. Opus constructs portfolio considering:
-   - **0-3 stocks per sub-sector** (combined longs + shorts)
-   - Conviction vs diversification balance
-   - Correlation with existing positions
-   - Sector rotation signals
-   - Risk-adjusted position sizing
-4. Outputs trade recommendations in parseable format:
-   ```
-   EXECUTE_BUY: SYMBOL | QTY | ENTRY | STOP | TARGET
-   EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET
-   ```
-
-**Why 0-3 per sub-sector?**
-- 0 = skip weak sectors entirely
-- 1-2 = moderate conviction
-- 3 = maximum conviction (but still diversified)
-- Applies to longs AND shorts combined (prevents over-concentration)
-
----
-
-## Stock Profile System
-
-Stock profiles are comprehensive research dossiers that avoid redundant analysis.
-
-### Profile Structure
-
-Stored in `stock_profiles` table:
-- `symbol`: Stock ticker
-- `business_model`: What the company does, revenue model
-- `moats`: Competitive advantages and barriers to entry
-- `competitive_advantages`: Specific strengths vs competitors
-- `competitive_landscape`: Industry dynamics, key competitors
-- `management_quality`: Leadership assessment
-- `valuation_framework`: How to value this specific business
-- `fundamentals`: Financial metrics (JSON)
-- `risks`: Key risks and concerns
-- `catalysts`: Upcoming events or trends
-- `key_metrics_to_watch`: 3-5 metrics specific to this stock (JSON)
-- `last_updated`: Timestamp for staleness check
-- `profile_version`: Increments on each update
-
-### Profile Lifecycle
-
-**Initial Build** (first time analyzing a stock):
-- Deep research with 20k token thinking budget
-- Comprehensive profile covering all fields
-- Takes 3-5 minutes
-
-**Incremental Update** (profile <12 days old):
-- Quick refresh with latest fundamentals
-- Updates only changed fields
-- Takes 30-60 seconds
-
-**Stale Refresh** (profile >12 days old):
-- Deeper refresh, re-evaluates thesis
-- Updates all fields with fresh data
-- Takes 2-3 minutes
-
-**Why 12-day threshold?**
-- Balances freshness with efficiency
-- Most stocks don't change materially in 12 days
-- Earnings typically quarterly (90 days)
-- 12 days = ~2 weeks, catches post-earnings updates
-
-### Key Metrics System
-
-Each profile includes `key_metrics_to_watch` - 3-5 metrics specific to that stock:
-
-**Example (AAPL):**
-```json
-{
-  "Operating Margin Trend": "32.4% current vs 31.6% prior quarter - expansion despite 40% revenue growth suggests pricing power intact",
-  "Greater China Revenue Growth": "20% of revenue ($80B+) faces existential risk from Huawei resurgence",
-  "Free Cash Flow Conversion Rate": "Currently 95% FCF/Operating Cash Flow with $124B annual FCF supports $15B dividend",
-  "Revenue Growth Rate (quarterly YoY)": "40% acceleration in Q1 FY2026 is exceptional and unsustainable",
-  "Services Revenue as % of Total Revenue": "Currently 22% with 90%+ gross margins - path to 30% mix justifies multiple expansion"
-}
-```
-
-**Why key metrics?**
-- Focuses Opus analysis on what matters most for each stock
-- Avoids generic analysis (e.g., "monitor revenue growth")
-- Tailored to business model (SaaS vs hardware vs commodity)
-- Updated during profile refreshes
-
----
-
-## Trade Approval Queue
-
-Human-in-the-loop system for trade execution.
-
-### Workflow
-
-1. **Generation**: Phase 4 outputs trade recommendations
-2. **Parsing**: `trade-approval.js` extracts trades from Opus output
-3. **Queueing**: Trades inserted into `trade_approvals` table with status 'pending_approval'
-4. **Notification**: Email sent to user with trade details
-5. **Review**: User reviews via web UI at `/approvals`
-6. **Decision**: User approves or rejects with optional feedback
-7. **Execution**: Approved trades executed by `trade-executor.js` (runs every 45 min during market hours)
-8. **Learning**: Rejected trades logged for future learning
-
-### Trade Format
-
-Must match this exact format for parsing:
-```
-EXECUTE_BUY: AAPL | 50 | 175.00 | 165.00 | 195.00
-EXECUTE_SHORT: TSLA | 30 | 250.00 | 275.00 | 200.00
-```
-
-Fields: `ACTION | SYMBOL | QTY | ENTRY | STOP | TARGET`
-
-### Approval Expiration
-
-- Pending approvals auto-expire after 24 hours
-- Prevents stale trades from executing
-- Hourly cron job checks for expired approvals
-
-### Why approval queue?
-
-- **Safety**: Prevents runaway trading
-- **Learning**: Rejection feedback improves future recommendations
-- **Oversight**: Human judgment on market conditions, news, timing
-- **Compliance**: Audit trail for all trades
-
----
-
-## Cron Schedule
-
-All times in America/New_York timezone.
-
-### Daily (Mon-Fri)
-
-| Time | Job | Description |
-|------|-----|-------------|
-| 7:00 AM | Corporate Actions | Check for splits, dividends, mergers |
-| 8:00 AM | Macro Regime | Detect VIX regime (low/medium/high/crisis) |
-| 9:00 AM | Pre-Market Scan | Gap analysis, overnight news |
-| 10:00 AM | Morning Analysis | 4-phase analysis + trim/tax/trailing checks |
-| 2:00 PM | Afternoon Analysis | 4-phase analysis + trim/tax/trailing checks |
-| 6:00 PM | Daily Summary | Portfolio metrics, P&L, risk report |
-| Every 45 min (9am-4pm) | Trade Execution | Process approved trades + pathway exit monitoring |
-| Hourly | Approval Expiration | Expire pending approvals >24h old |
+| Time | Job |
+|---|---|
+| 7:00 AM | Corporate actions check |
+| 8:00 AM | Macro regime detection |
+| 9:00 AM | Pre-market scan |
+| 10:00 AM | Morning daily analysis |
+| 2:00 PM | Afternoon daily analysis |
+| Every 30 min, 9 AM-4 PM | Approved trade processing + pathway exit monitor |
+| 4:30 PM | Structured exit review |
+| Hourly, 9 AM-4 PM | Order reconciliation |
+| 6:00 PM | Daily summary |
+| Hourly | Expire stale approvals |
 
 ### Weekly
 
-| Day | Time | Job | Description |
-|-----|------|-----|-------------|
-| Friday | 3:00 PM | Earnings Refresh | Update earnings calendar (Python script) |
-| Saturday | 10:00 AM | Universe Refresh | Repopulate stock_universe from FMP |
-| Saturday | 3:00 PM | Fundamental Screening | Populate saturday_watchlist (6 long + 3 short pathways) |
+| Time | Job |
+|---|---|
+| Friday 3:00 PM | Earnings calendar refresh |
+| Saturday 10:00 AM | Universe refresh |
+| Saturday 3:00 PM | Fundamental screening |
+| Sunday 1:00 PM | Weekly portfolio review |
+| Sunday 3:00 PM | Profile building for watchlist names |
+| Sunday 9:00 PM | Weekly Opus review |
 
-### Removed Jobs
+## Data sources and caching
 
-- **Biweekly Deep Research** (Sunday 10am): Removed - redundant with 12-day profile staleness check
-- **Batch Profile Builds**: Never implemented, removed from dashboard
+### FMP
 
----
+Current facts from `src/fmp.js`:
 
-## Data Sources
-
-### FMP (Financial Modeling Prep)
-
-**Primary data source** - comprehensive fundamentals with high rate limits
-
-**Configuration:**
-- 3 API keys with rotation (`FMP_API_KEY_1`, `FMP_API_KEY_2`, `FMP_API_KEY_3`)
-- 300 calls/minute per key = 900 calls/minute total
-- Unlimited daily calls
-- **CRITICAL**: Always use `/stable` endpoint (not `/api/v3`)
-
-**Key Endpoints:**
-- `/stable/ratios-ttm` - Current P/E, PEG, margins, ROE (TTM)
-- `/stable/key-metrics-ttm` - ROIC, Graham number, EV ratios (TTM)
-- `/stable/financial-growth?period=quarter` - True YoY growth rates
-- `/stable/income-statement?period=quarter` - Quarterly financials
-- `/stable/balance-sheet-statement?period=quarter` - Balance sheet
-- `/stable/cash-flow-statement?period=quarter` - Cash flow
-- `/stable/technical-indicators/ema` - 50/200 EMA
-- `/stable/technical-indicators/rsi` - RSI(14)
-- `/stable/earning-calendar` - Upcoming earnings dates
-- `/stable/company-screener` - Pre-filtered stock universe
-
-**Rate Limiting:**
-- 500ms delay between calls in batch operations
-- Automatic key rotation on rate limit errors
-- No caching (FMP is fast enough without it)
-
-**Why no caching?**
-- FMP rate limits are generous (900 calls/min)
-- Real-time data is critical for trading decisions
-- Cache invalidation complexity not worth it
-- Simpler architecture without cache layer
+- `/stable` endpoints are the intended API surface
+- minimum call spacing is `400ms`
+- repeated requests are cached in-memory for `30 minutes`
 
 ### Tradier
 
-**Real-time quotes and order execution**
+Used for:
 
-**Configuration:**
-- Paper trading sandbox vs production (controlled by `NODE_ENV`)
-- `TRADIER_API_KEY` and `TRADIER_ACCOUNT_ID` in `.env`
-
-**Key Operations:**
-- `getQuote(symbol)` - Real-time quote
-- `getQuotes(symbols)` - Batch quotes (faster)
-- `placeOrder()` - Market/limit orders
-- `placeOCOOrder()` - One-cancels-other (stop-loss + take-profit)
-- `cancelOrder()` - Cancel pending order
-- `getPositions()` - Current positions
-- `getOrders()` - Order history
-
-**OCO Orders:**
-- Automatically placed after trade execution
-- Stop-loss protects downside
-- Take-profit locks in gains
-- One triggers, other cancels
+- quotes
+- history
+- ETB status
+- order placement and management
 
 ### Tavily
 
-**News search for fundamental analysis**
-
-**Configuration:**
-- `TAVILY_API_KEY` in `.env`
-- Used during stock profile generation
-- Searches recent news (last 7 days)
-
-**Usage:**
-```javascript
-const news = await tavily.search(`${symbol} stock news earnings`, {
-  days: 7,
-  max_results: 5
-});
-```
+Used for external news context in research flows.
 
 ### Yahoo Finance
 
-**Short interest data** (FMP doesn't provide this)
+Used selectively where FMP coverage is incomplete.
 
-**Usage:**
-- Fallback for historical data
-- Rate-limited, use sparingly
-- Short float percentage
-- Days to cover
+### Cache-module note
 
----
+`src/fmp-cache.js` still exists as a tiered cache module, but the live client behavior documented above is the one currently used by the core screening flow.
 
-## Database Schema
+## API surface
 
-### Core Tables
+Current routes defined in `src/index.js` include:
 
-**stock_universe**
-- Curated universe of ~377 stocks
-- Populated weekly (Saturday 10am)
-- Fields: symbol, company_name, sector, industry, market_cap, market_cap_tier, price, avg_daily_volume, exchange
+### Health and status
 
-**saturday_watchlist**
-- Weekly screening results
-- Populated Saturday 3pm
-- Fields: symbol, intent ('long'/'short'), pathway (e.g., 'deepValue'), score, reasoning, status ('active'/'archived'), industry
+- `GET /health`
+- `GET /status`
 
-**stock_profiles**
-- Comprehensive research dossiers
-- Updated on-demand (12-day staleness check)
-- Fields: symbol, business_model, moats, competitive_advantages, fundamentals (JSON), risks, catalysts, key_metrics_to_watch (JSON), last_updated, profile_version
+### Analysis triggers
 
-**positions**
-- Current portfolio holdings
-- Fields: symbol, quantity, avg_cost_basis, current_value, unrealized_pnl, position_type ('long'/'short')
+- `POST /analyze`
+- `POST /weekly-review`
+- `POST /api/trigger-saturday-screening`
+- `POST /api/trigger-daily-analysis`
+- `POST /api/trigger-profile-build-watchlist`
+- `POST /api/trigger-weekly-portfolio-review`
+- `POST /api/trigger-weekly-opus-review`
+- `POST /api/trigger-premarket-scan`
+- `POST /api/update-etb-status`
+- `POST /api/trigger-eod-summary`
+- `POST /api/trigger-trade-executor`
 
-**position_lots**
-- Tax lot tracking for positions
-- Fields: symbol, quantity, cost_basis, entry_date, stop_loss, take_profit, oco_order_id, thesis, original_intent, current_intent
+### Chat
 
-**trades**
-- Historical trade log
-- Fields: symbol, action ('buy'/'sell'/'short'/'cover'), quantity, price, total_value, commission, intent, pathway, thesis
+- `POST /chat`
 
-**trade_approvals**
-- Pending trade approval queue
-- Fields: symbol, action, quantity, entry_price, stop_loss, take_profit, status ('pending_approval'/'approved'/'rejected'), reasoning, created_at, expires_at
+## Validation and testing
 
-**analyses**
-- Historical analysis results
-- Fields: analysis_type ('4phase'/'weekly'), candidates_analyzed, trades_generated, thinking_tokens_used, created_at
-
-### Indexes
-
-- `idx_saturday_watchlist_symbol` on saturday_watchlist(symbol)
-- `idx_saturday_watchlist_intent` on saturday_watchlist(intent)
-- `idx_saturday_watchlist_pathway` on saturday_watchlist(pathway)
-- `idx_saturday_watchlist_status` on saturday_watchlist(status)
-- `idx_stock_profiles_symbol` on stock_profiles(symbol)
-- `idx_position_lots_symbol` on position_lots(symbol)
-
----
-
-## Risk Management
-
-### Position Sizing
-
-**Max Position Size**: 15% of portfolio
-- Prevents over-concentration in single stock
-- Enforced in Phase 4 portfolio construction
-
-**Max Sector Allocation**: 25% of portfolio
-- Prevents sector concentration risk
-- Calculated across all positions in sector
-
-**Min Cash Reserve**: 3% of portfolio
-- Ensures liquidity for opportunities
-- Buffer for margin calls on shorts
-
-### Sector Constraints
-
-**0-3 stocks per sub-sector** (combined longs + shorts)
-- 0 = skip weak sectors entirely
-- 1-2 = moderate conviction
-- 3 = maximum conviction
-- Enforced in Phase 4 portfolio construction
-
-**Why sub-sector (not sector)?**
-- Sector too broad (e.g., "Technology" includes software, hardware, semiconductors)
-- Sub-sector captures true correlation (e.g., "Cloud Software" vs "Semiconductors")
-- Prevents false diversification
-
-### VIX Regime Detection
-
-**Regimes** (detected daily at 8am):
-- **Low** (VIX <15): Normal risk-taking, full position sizes
-- **Medium** (VIX 15-25): Moderate caution, 75% position sizes
-- **High** (VIX 25-35): Defensive, 50% position sizes, favor quality
-- **Crisis** (VIX >35): Maximum defense, 25% position sizes, cash heavy
-
-**Impact on Portfolio:**
-- Position sizing adjusted by regime multiplier
-- Stop-losses tightened in high VIX
-- Sector limits more conservative in crisis
-- Short exposure increased in high VIX (hedging)
-
-### Trading Limits
-
-**Max Trades Per Day**: 3
-- Prevents overtrading
-- Enforces discipline
-
-**Max Portfolio Drawdown**: 20%
-- Circuit breaker for risk management
-- Halts new trades if exceeded
-- Triggers portfolio review
-
-### Correlation Analysis
-
-- Monitors correlation between positions
-- Warns if portfolio correlation >0.7
-- Suggests diversification opportunities
-- Runs during daily summary (6pm)
-
----
-
-## Deployment
-
-### Railway Configuration
-
-**Environment:**
-- Node.js runtime
-- PostgreSQL addon (database)
-- Auto-deploy from `main` branch
-
-**Build:**
-- Build command: (none, uses package.json)
-- Start command: `npm start`
-- Port: 8080
-
-**Environment Variables:**
-- All variables from `.env.example`
-- Set in Railway dashboard
-- Secrets encrypted at rest
-
-**Logs:**
-- View via Railway dashboard
-- Or: `railway logs` (CLI)
-
-**Database:**
-- PostgreSQL 14+
-- Managed by Railway
-- Automatic backups
-- Connection pooling (max 20 connections)
-
-### Manual Deploy
+`package.json` does not provide a working `npm test` target.
+Current checks are run directly with Node scripts from `test/`, for example:
 
 ```bash
-git push origin main  # Triggers Railway deploy
+node test/test-4phase.js
+node test/test-analysis.js
+node test/test-fmp.js
+node test/test-full-analysis.js
+node test/test-yahoo-finance.js
 ```
 
-**Deploy Process:**
-1. Railway detects push to main
-2. Pulls latest code
-3. Installs dependencies (`npm install`)
-4. Restarts service
-5. Health check on `/health` endpoint
-6. Old instance terminated after new instance healthy
+## Historical docs
 
-**Rollback:**
-```bash
-git revert <commit-hash>
-git push origin main
-```
+The following files remain useful as historical context only and should not be treated as the live system spec:
 
-### Monitoring
-
-**Health Check:**
-- Endpoint: `GET /health`
-- Returns: `{ status: 'ok', uptime: <seconds> }`
-
-**Cron Status:**
-- Dashboard: `https://whiskie-production.up.railway.app/cron-status`
-- Shows last 7 days of cron executions
-- Success/failure rates per job
-
-**Email Alerts:**
-- Sent via Resend API
-- Triggers: cron failures, analysis errors, trade execution errors
-- Recipient: `ALERT_EMAIL` from `.env`
-
----
-
-## API Endpoints
-
-### Dashboard
-
-- `GET /` - Main dashboard (portfolio, positions, recent trades)
-- `GET /approvals` - Trade approval queue UI
-- `GET /cron-status` - Cron job execution history
-
-### Trade Approvals
-
-- `POST /api/approvals/:id/approve` - Approve pending trade
-- `POST /api/approvals/:id/reject` - Reject pending trade (with feedback)
-
-### Manual Triggers
-
-- `POST /analyze` - Trigger 4-phase analysis manually
-- `POST /api/trigger-premarket-scan` - Trigger pre-market scan
-- `POST /api/trigger-daily-analysis` - Trigger daily analysis
-- `POST /api/trigger-eod-summary` - Trigger end-of-day summary
-- `POST /api/trigger-saturday-screening` - Trigger Saturday screening
-- `POST /weekly-review` - Trigger weekly portfolio review
-
-### Health
-
-- `GET /health` - Health check endpoint
-
----
-
-## Key Design Decisions
-
-### Why 4-phase analysis?
-
-Separates fast screening (Phase 1) from deep analysis (Phases 2-3), allowing different thinking budgets per phase. Phase 4 synthesizes into final portfolio with sector constraints.
-
-### Why stock profiles?
-
-First analysis of a stock is deep (20k tokens), subsequent analyses reference the profile for fast incremental updates. Avoids redundant research. 12-day staleness check keeps profiles current.
-
-### Why 0-3 per sub-sector?
-
-Prevents over-concentration in single industries while allowing flexibility. 0 = skip weak sectors, 3 = max conviction. Applies across both longs AND shorts combined.
-
-### Why FMP + Yahoo Finance?
-
-FMP provides comprehensive fundamentals with generous rate limits (900 calls/min). Yahoo provides free short interest data. Complementary strengths, cost-effective.
-
-### Why trade approval queue?
-
-Human oversight before execution prevents runaway trading. Allows rejection with feedback for learning. Critical safety mechanism.
-
-### Why extended thinking?
-
-Opus with extended thinking (50k token budget) produces more thorough analysis than standard calls. Used in Phases 2, 3, 4 where deep reasoning is critical. Takes 3-7 minutes but worth it.
-
-### Why Saturday 10am universe refresh?
-
-Ensures stock universe stays current with market cap changes, delistings, new IPOs. Weekly cadence balances freshness with API cost. Top 7 per industry maintains sector balance.
-
-### Why single saturday_watchlist?
-
-Simpler than managing 3 separate watchlists (value, quality, overvalued). Intent/pathway tags provide same information. Easier to query and maintain.
-
----
-
-## Troubleshooting
-
-### Trades not appearing in approval queue
-
-- Check Phase 4 output format matches: `EXECUTE_BUY: SYMBOL | QTY | ENTRY | STOP | TARGET`
-- Verify parser in `trade-approval.js` function `extractTradeRecommendations()`
-- Check logs for parsing errors
-
-### FMP rate limits hit
-
-- System auto-rotates between 3 keys (300 calls each = 900/min)
-- Check usage: `fmp.getUsageStats()`
-- If still hitting limits, add more keys or reduce analysis frequency
-
-### Database connection issues
-
-- Verify `DATABASE_URL` in `.env`
-- Check Railway database is running
-- Connection pool settings in `db.js` (max: 20, timeout: 2s)
-
-### Analysis too fast (not using full thinking budget)
-
-- Stock profiles reduce redundant research (by design)
-- First-time stocks get full deep dive
-- Check `enableThinking` and `thinkingBudget` parameters in claude.js calls
-
-### Port 8080 already in use
-
-```bash
-lsof -ti:8080 | xargs kill
-```
-
-### Cron jobs not running
-
-- Check Railway logs for errors
-- Verify timezone is 'America/New_York'
-- Check cron expressions in `src/index.js`
-
----
-
-## Future Enhancements
-
-**Potential Improvements:**
-- Options strategies (covered calls, protective puts)
-- Earnings play automation (pre/post earnings analysis)
-- Sector rotation signals (momentum-based rebalancing)
-- Machine learning for entry/exit timing
-- Backtesting framework for strategy validation
-- Multi-timeframe analysis (daily + weekly + monthly)
-- Social sentiment integration (Twitter, Reddit, StockTwits)
-- Insider trading tracking (Form 4 filings)
-- Short squeeze detection (high short interest + positive catalysts)
-
-**Not Planned:**
-- Intraday trading (system designed for swing/position trading)
-- Crypto/forex (equity-focused)
-- Penny stocks (min $5 price, $500M market cap)
-- Leveraged ETFs (too volatile for risk management)
+- `IMPLEMENTATION_PLAN.md`
+- `FINAL_IMPLEMENTATION_PLAN.md`
+- `PATHWAY_ANALYSIS.md`
+- `PATHWAY_REVIEW_RESPONSE.md`
+- `docs/WHISKIE_INVESTMENT_STRATEGY.md`
+- `docs/BETA_PLAY_STRATEGY.md`
+- `docs/fundamental_screener_criteria.md`
