@@ -4,13 +4,104 @@ import { stripThinkingBlocks } from './utils.js';
 
 const router = express.Router();
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizeText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'object') {
+    if (typeof value.summary === 'string') return value.summary.trim();
+    return JSON.stringify(value, null, 2);
+  }
+  return String(value).trim();
+}
+
+function parseListValue(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeText(item)).filter(Boolean);
+  }
+
+  const text = normalizeText(value);
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text);
+    if (Array.isArray(parsed)) {
+      return parsed.map(item => normalizeText(item)).filter(Boolean);
+    }
+  } catch {}
+
+  return text
+    .split(/\s*[;\n]\s*/)
+    .map(item => item.replace(/^\-\s*/, '').trim())
+    .filter(Boolean);
+}
+
+function formatStructuredText(value) {
+  const text = normalizeText(value);
+  if (!text) return '';
+
+  return text
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => `<div>${escapeHtml(line)}</div>`)
+    .join('');
+}
+
+function renderList(items, type = 'bullet') {
+  if (!items.length) return '';
+
+  if (type === 'links') {
+    return `<div class="detail-chips">${items.map(item => {
+      const safe = escapeHtml(item);
+      const isUrl = /^https?:\/\//i.test(item);
+      return isUrl
+        ? `<a class="news-link" href="${safe}" target="_blank" rel="noopener noreferrer">${safe}</a>`
+        : `<span class="detail-chip">${safe}</span>`;
+    }).join('')}</div>`;
+  }
+
+  return `<ul class="detail-list">${items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
+}
+
+function renderMetricGrid(items) {
+  const validItems = items.filter(item => normalizeText(item.value));
+  if (!validItems.length) return '';
+
+  return `<div class="metric-grid">${validItems.map(item => `
+    <div class="metric-card">
+      <div class="metric-label">${escapeHtml(item.label)}</div>
+      <div class="metric-value">${escapeHtml(normalizeText(item.value))}</div>
+    </div>
+  `).join('')}</div>`;
+}
+
+function renderDetailSection(title, content) {
+  if (!content) return '';
+  return `
+    <div class="detail-section">
+      <div class="detail-section-title">${escapeHtml(title)}</div>
+      <div class="detail-section-body">${content}</div>
+    </div>
+  `;
+}
+
 /**
  * Convert markdown to HTML for display
  */
 function markdownToHtml(text) {
   if (!text) return '';
 
-  let html = text;
+  let html = escapeHtml(text);
 
   // Remove JSON code blocks (they're redundant with the formatted content above)
   html = html.replace(/```json[\s\S]*?```/g, '');
@@ -82,6 +173,151 @@ function markdownToHtml(text) {
   }).join('\n');
 
   return html;
+}
+
+function formatTradeAction(action) {
+  return String(action || '')
+    .replace(/_/g, ' ')
+    .trim()
+    .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function formatCurrency(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? `$${num.toFixed(2)}` : 'Market';
+}
+
+function renderPhase4Analysis(text) {
+  const cleaned = stripThinkingBlocks(text || '');
+  if (!cleaned) return '';
+
+  const escaped = escapeHtml(cleaned);
+  const sections = [];
+
+  const portfolioSummaryMatch = cleaned.match(/\*\*PORTFOLIO SUMMARY:\*\*([\s\S]*?)(?=\n\*\*[A-Z ]+:\*\*|$)/i);
+  if (portfolioSummaryMatch) {
+    const metrics = portfolioSummaryMatch[1]
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.startsWith('- '))
+      .map(line => {
+        const content = line.slice(2);
+        const idx = content.indexOf(':');
+        if (idx === -1) return null;
+        return { label: content.slice(0, idx).trim(), value: content.slice(idx + 1).trim() };
+      })
+      .filter(Boolean);
+
+    if (metrics.length) {
+      sections.push(renderDetailSection('Portfolio Summary', renderMetricGrid(metrics)));
+    }
+  }
+
+  const riskMetricsMatch = cleaned.match(/\*\*RISK METRICS:\*\*([\s\S]*?)(?=\n\*\*[A-Z ]+:\*\*|$)/i);
+  if (riskMetricsMatch) {
+    const metrics = riskMetricsMatch[1]
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.startsWith('- '))
+      .map(line => {
+        const content = line.slice(2);
+        const idx = content.indexOf(':');
+        if (idx === -1) return null;
+        return { label: content.slice(0, idx).trim(), value: content.slice(idx + 1).trim() };
+      })
+      .filter(Boolean);
+
+    if (metrics.length) {
+      sections.push(renderDetailSection('Risk Metrics', renderMetricGrid(metrics)));
+    }
+  }
+
+  const commandPattern = /EXECUTE_(BUY|SHORT):\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)(?:\s*\|\s*([^\|\n]+)\s*\|\s*([^\n]+))?/g;
+  const trades = [];
+  let match;
+  while ((match = commandPattern.exec(cleaned)) !== null) {
+    trades.push({
+      type: match[1] === 'BUY' ? 'buy' : 'short',
+      symbol: match[2],
+      quantity: match[3],
+      entry: match[4],
+      stop: match[5],
+      target: match[6],
+      pathway: match[7]?.trim(),
+      intent: match[8]?.trim()
+    });
+  }
+
+  if (trades.length) {
+    const tradeCards = trades.map(trade => {
+      const escapedSymbol = trade.symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const blockPattern = new RegExp(`EXECUTE_${trade.type === 'buy' ? 'BUY' : 'SHORT'}:\\s*${escapedSymbol}[^\n]*\n([\s\S]*?)(?=\nEXECUTE_(?:BUY|SHORT):|$)`);
+      const blockMatch = cleaned.match(blockPattern);
+      const block = blockMatch ? blockMatch[1] : '';
+      const extract = (label) => {
+        const fieldMatch = block.match(new RegExp(`${label}:\\s*(.+)`, 'i'));
+        return fieldMatch ? fieldMatch[1].trim() : '';
+      };
+      const overrideDecision = extract('OVERRIDE_PHASE2_DECISION');
+      const overrideSymbol = extract('OVERRIDE_SYMBOL');
+      const overrideReason = extract('OVERRIDE_REASON');
+
+      return `
+      <div class="compact-trade-card ${trade.type}">
+        <div class="compact-trade-header">
+          <div class="compact-trade-title">${trade.type === 'buy' ? 'Buy' : 'Short'} ${escapeHtml(trade.symbol)}</div>
+          <div class="compact-trade-badge">${trade.pathway ? escapeHtml(trade.pathway) : 'unclassified'}</div>
+        </div>
+        ${overrideDecision && overrideDecision.toUpperCase() === 'YES' ? `
+          <div class="override-banner">
+            <div class="override-label">Phase 4 Override</div>
+            ${renderMetricGrid([
+              { label: 'Override Decision', value: overrideDecision },
+              { label: 'Replaced Symbol', value: overrideSymbol && overrideSymbol.toUpperCase() !== 'NONE' ? overrideSymbol : 'None' }
+            ])}
+            ${overrideReason && overrideReason.toUpperCase() !== 'NONE' ? `<div class="detail-section-body">${formatStructuredText(overrideReason)}</div>` : ''}
+          </div>
+        ` : ''}
+        <div class="compact-trade-metrics">
+          <div>
+            <div class="compact-trade-metric-label">Quantity</div>
+            <div class="compact-trade-metric-value">${escapeHtml(trade.quantity)}</div>
+          </div>
+          <div>
+            <div class="compact-trade-metric-label">Entry</div>
+            <div class="compact-trade-metric-value">$${escapeHtml(trade.entry)}</div>
+          </div>
+          <div>
+            <div class="compact-trade-metric-label">Stop</div>
+            <div class="compact-trade-metric-value">$${escapeHtml(trade.stop)}</div>
+          </div>
+          <div>
+            <div class="compact-trade-metric-label">Target</div>
+            <div class="compact-trade-metric-value">$${escapeHtml(trade.target)}</div>
+          </div>
+          <div>
+            <div class="compact-trade-metric-label">Intent</div>
+            <div class="compact-trade-metric-value">${escapeHtml(trade.intent || 'n/a')}</div>
+          </div>
+        </div>
+      </div>
+    `;
+    }).join('');
+
+    sections.push(`
+      <div class="phase4-section">
+        <div class="phase4-section-title">Execution Commands</div>
+        ${tradeCards}
+      </div>
+    `);
+  }
+
+  const rationaleMatch = cleaned.match(/\*\*RATIONALE:\*\*([\s\S]*?)$/i);
+  if (rationaleMatch) {
+    sections.push(renderDetailSection('Rationale', formatStructuredText(rationaleMatch[1])));
+  }
+
+  return sections.length ? sections.join('') : `<pre style="white-space: pre-wrap; color: #d0d0d0;">${escaped}</pre>`;
 }
 
 /**
@@ -602,7 +838,9 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
           }
 
           const cleanedRecommendation = stripThinkingBlocks(a.recommendation || 'No recommendation');
-          const htmlContent = markdownToHtml(cleanedRecommendation);
+          const htmlContent = a.decision_type === 'deep-analysis'
+            ? renderPhase4Analysis(cleanedRecommendation)
+            : markdownToHtml(cleanedRecommendation);
           return `
             <details>
               <summary>
@@ -1005,6 +1243,155 @@ router.get('/approvals', async (req, res) => {
       margin-left: 18px;
       margin-top: 8px;
     }
+    .detail-block strong {
+      color: #fff;
+    }
+    .compact-trade-card {
+      background: #0f1425;
+      border: 1px solid #2a2f4a;
+      border-left-width: 4px;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 14px 0;
+    }
+    .compact-trade-card.buy { border-left-color: #10b981; }
+    .compact-trade-card.short { border-left-color: #ef4444; }
+    .compact-trade-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .compact-trade-title {
+      font-weight: 700;
+      color: #fff;
+      font-size: 1rem;
+    }
+    .compact-trade-badge {
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(102, 126, 234, 0.15);
+      color: #a5b4fc;
+    }
+    .compact-trade-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+    }
+    .compact-trade-metric-label {
+      color: #8b93b5;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .compact-trade-metric-value {
+      color: #e5e7eb;
+      font-weight: 600;
+    }
+    .phase4-section {
+      background: #0f1425;
+      border: 1px solid #2a2f4a;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 16px 0;
+    }
+    .phase4-section-title {
+      color: #fff;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin: 10px 0 16px;
+    }
+    .metric-card {
+      background: #11182b;
+      border: 1px solid #2a2f4a;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .metric-label {
+      color: #8b93b5;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+    .metric-value {
+      color: #fff;
+      font-weight: 600;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .detail-section {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #2a2f4a;
+    }
+    .detail-section-title {
+      color: #fff;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .detail-section-body {
+      color: #d0d0d0;
+      line-height: 1.6;
+    }
+    .detail-list {
+      margin: 0 0 0 18px;
+      padding: 0;
+    }
+    .detail-list li {
+      margin-bottom: 6px;
+    }
+    .detail-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .detail-chip, .news-link {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #11182b;
+      border: 1px solid #2a2f4a;
+      color: #cbd5e1;
+      text-decoration: none;
+      font-size: 0.9rem;
+      word-break: break-all;
+    }
+    .news-link:hover {
+      border-color: #667eea;
+      color: #fff;
+    }
+    .override-banner {
+      background: rgba(245, 158, 11, 0.14);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 15px;
+    }
+    .override-label {
+      color: #fbbf24;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .reasoning-copy {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     .actions {
       display: flex;
       gap: 10px;
@@ -1082,84 +1469,104 @@ router.get('/approvals', async (req, res) => {
         <h2>✅ No pending approvals</h2>
         <p>All trades have been reviewed</p>
       </div>
-    ` : pending.map(trade => `
+    ` : pending.map(trade => {
+      const catalysts = parseListValue(trade.catalysts);
+      const newsLinks = parseListValue(trade.news_links);
+      const fundamentals = formatStructuredText(trade.fundamentals);
+      const technicalSetup = formatStructuredText(trade.technical_setup);
+      const riskFactors = formatStructuredText(trade.risk_factors);
+      const overrideDecision = normalizeText(trade.override_phase2_decision).toUpperCase();
+      const overrideSymbol = normalizeText(trade.override_symbol);
+      const overrideReason = normalizeText(trade.override_reason);
+      const hasOverride = overrideDecision === 'YES';
+
+      return `
       <div class="trade-card">
         <div class="trade-header">
-          <div class="trade-symbol">${trade.symbol}</div>
+          <div class="trade-symbol">${escapeHtml(trade.symbol)}</div>
           <div class="trade-action ${trade.action.includes('buy') ? 'action-buy' : 'action-sell'}">
-            ${trade.action.toUpperCase()}
+            ${escapeHtml(formatTradeAction(trade.action))}
           </div>
         </div>
 
         <div class="trade-details">
           <div class="detail-item">
             <div class="detail-label">Quantity</div>
-            <div class="detail-value">${trade.quantity} shares</div>
+            <div class="detail-value">${escapeHtml(trade.quantity)} shares</div>
           </div>
           <div class="detail-item">
             <div class="detail-label">Entry Price</div>
-            <div class="detail-value">$${trade.entry_price ? parseFloat(trade.entry_price).toFixed(2) : 'Market'}</div>
+            <div class="detail-value">${formatCurrency(trade.entry_price)}</div>
           </div>
           ${trade.stop_loss ? `
           <div class="detail-item">
             <div class="detail-label">Stop Loss</div>
-            <div class="detail-value">$${parseFloat(trade.stop_loss).toFixed(2)}</div>
+            <div class="detail-value">${formatCurrency(trade.stop_loss)}</div>
           </div>
           ` : ''}
           ${trade.take_profit ? `
           <div class="detail-item">
             <div class="detail-label">Take Profit</div>
-            <div class="detail-value">$${parseFloat(trade.take_profit).toFixed(2)}</div>
+            <div class="detail-value">${formatCurrency(trade.take_profit)}</div>
           </div>
           ` : ''}
           ${trade.pathway ? `
           <div class="detail-item">
             <div class="detail-label">Pathway</div>
-            <div class="detail-value">${trade.pathway}</div>
+            <div class="detail-value">${escapeHtml(trade.pathway)}</div>
           </div>
           ` : ''}
           ${trade.intent ? `
           <div class="detail-item">
             <div class="detail-label">Intent</div>
-            <div class="detail-value">${trade.intent}</div>
+            <div class="detail-value">${escapeHtml(trade.intent)}</div>
           </div>
           ` : ''}
         </div>
 
+        ${hasOverride ? `
+        <div class="override-banner">
+          <div class="override-label">Phase 4 Override</div>
+          ${renderMetricGrid([
+            { label: 'Override Decision', value: overrideDecision || 'YES' },
+            { label: 'Replaced Symbol', value: overrideSymbol || 'None' }
+          ])}
+          ${overrideReason ? `<div class="detail-section-body">${formatStructuredText(overrideReason)}</div>` : ''}
+        </div>
+        ` : ''}
+
         <div class="reasoning">
           <strong>Reasoning:</strong><br>
-          ${trade.reasoning}
+          <div class="reasoning-copy">${escapeHtml(trade.reasoning || '')}</div>
         </div>
 
         ${(trade.investment_thesis || trade.strategy_type || trade.holding_period || trade.confidence || trade.growth_potential || trade.stop_type || trade.target_type) ? `
         <div class="detail-block">
           <strong>Trade Thesis & Plan</strong>
-          <ul>
-            ${trade.investment_thesis ? `<li><strong>Thesis:</strong> ${trade.investment_thesis}</li>` : ''}
-            ${trade.strategy_type ? `<li><strong>Strategy:</strong> ${trade.strategy_type}</li>` : ''}
-            ${trade.holding_period ? `<li><strong>Holding Period:</strong> ${trade.holding_period}</li>` : ''}
-            ${trade.confidence ? `<li><strong>Confidence:</strong> ${trade.confidence}</li>` : ''}
-            ${trade.growth_potential ? `<li><strong>Growth Potential:</strong> ${trade.growth_potential}</li>` : ''}
-            ${trade.stop_type ? `<li><strong>Stop Type:</strong> ${trade.stop_type}</li>` : ''}
-            ${trade.stop_reason ? `<li><strong>Stop Reason:</strong> ${trade.stop_reason}</li>` : ''}
-            ${trade.target_type ? `<li><strong>Target Type:</strong> ${trade.target_type}</li>` : ''}
-            ${trade.trailing_stop_pct ? `<li><strong>Trailing Stop %:</strong> ${trade.trailing_stop_pct}%</li>` : ''}
-            ${trade.rebalance_threshold_pct ? `<li><strong>Rebalance Threshold %:</strong> ${trade.rebalance_threshold_pct}%</li>` : ''}
-            ${trade.max_holding_days ? `<li><strong>Max Hold Days:</strong> ${trade.max_holding_days}</li>` : ''}
-          </ul>
+          ${renderMetricGrid([
+            { label: 'Strategy', value: trade.strategy_type },
+            { label: 'Holding Period', value: trade.holding_period },
+            { label: 'Confidence', value: trade.confidence },
+            { label: 'Growth Potential', value: trade.growth_potential },
+            { label: 'Stop Type', value: trade.stop_type },
+            { label: 'Target Type', value: trade.target_type },
+            { label: 'Trailing Stop %', value: trade.trailing_stop_pct ? `${trade.trailing_stop_pct}%` : '' },
+            { label: 'Rebalance Threshold %', value: trade.rebalance_threshold_pct ? `${trade.rebalance_threshold_pct}%` : '' },
+            { label: 'Max Hold Days', value: trade.max_holding_days }
+          ])}
+          ${trade.investment_thesis ? renderDetailSection('Thesis', formatStructuredText(trade.investment_thesis)) : ''}
+          ${trade.stop_reason ? renderDetailSection('Stop Reason', formatStructuredText(trade.stop_reason)) : ''}
         </div>
         ` : ''}
 
-        ${(trade.catalysts || trade.news_links || trade.fundamentals || trade.risk_factors || trade.technical_setup) ? `
+        ${(catalysts.length || newsLinks.length || fundamentals || riskFactors || technicalSetup) ? `
         <div class="detail-block">
           <strong>Supporting Detail</strong>
-          <ul>
-            ${trade.technical_setup ? `<li><strong>Technical:</strong> ${trade.technical_setup}</li>` : ''}
-            ${trade.risk_factors ? `<li><strong>Risks:</strong> ${trade.risk_factors}</li>` : ''}
-            ${trade.fundamentals ? `<li><strong>Fundamentals:</strong> ${typeof trade.fundamentals === 'string' ? trade.fundamentals : JSON.stringify(trade.fundamentals)}</li>` : ''}
-            ${trade.catalysts ? `<li><strong>Catalysts:</strong> ${Array.isArray(trade.catalysts) ? trade.catalysts.join('; ') : JSON.stringify(trade.catalysts)}</li>` : ''}
-            ${trade.news_links ? `<li><strong>News:</strong> ${Array.isArray(trade.news_links) ? trade.news_links.join(', ') : JSON.stringify(trade.news_links)}</li>` : ''}
-          </ul>
+          ${technicalSetup ? renderDetailSection('Technical Setup', technicalSetup) : ''}
+          ${riskFactors ? renderDetailSection('Risks', riskFactors) : ''}
+          ${fundamentals ? renderDetailSection('Fundamentals', fundamentals) : ''}
+          ${catalysts.length ? renderDetailSection('Catalysts', renderList(catalysts)) : ''}
+          ${newsLinks.length ? renderDetailSection('News', renderList(newsLinks, 'links')) : ''}
         </div>
         ` : ''}
 
@@ -1176,7 +1583,8 @@ router.get('/approvals', async (req, res) => {
           Expires: ${new Date(trade.expires_at).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET
         </div>
       </div>
-    `).join('')}
+    `;
+    }).join('')}
   </div>
 
   <script>

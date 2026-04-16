@@ -2191,6 +2191,9 @@ EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 THESIS: [1 sentence]
 PATHWAY: [pathway]
 STRATEGY: [strategy type]
+OVERRIDE_PHASE2_DECISION: YES/NO
+OVERRIDE_SYMBOL: [ticker or NONE]
+OVERRIDE_REASON: [reason or NONE]
 CATALYSTS: [semicolon-separated catalysts]
 FUNDAMENTALS: [key metrics summary]
 TECHNICAL: [technical setup]
@@ -2573,7 +2576,10 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
               trailingStopPct: rec.trailingStopPct ?? null,
               rebalanceThresholdPct: rec.rebalanceThresholdPct ?? null,
               maxHoldingDays: rec.maxHoldingDays ?? null,
-              fundamentalStopConditions: rec.fundamentalStopConditions || null
+              fundamentalStopConditions: rec.fundamentalStopConditions || null,
+              overridePhase2Decision: rec.overridePhase2Decision || null,
+              overrideSymbol: rec.overrideSymbol || null,
+              overrideReason: rec.overrideReason || null
             }, true);  // skipEmail = true for batch
 
             submittedTrades.push({
@@ -2942,11 +2948,16 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
       }
 
       // Fallback to regex parsing
-      const detailBlocks = new Map();
+      const detailBlocks = [];
       const blockPattern = /(EXECUTE_(?:BUY|SHORT):[^\n]+)([\s\S]*?)(?=EXECUTE_(?:BUY|SHORT):|$)/g;
       let blockMatch;
       while ((blockMatch = blockPattern.exec(analysisText)) !== null) {
-        detailBlocks.set(blockMatch[1].trim(), blockMatch[2].trim());
+        detailBlocks.push({
+          command: blockMatch[1].trim(),
+          body: blockMatch[2].trim(),
+          startIndex: blockMatch.index,
+          endIndex: blockMatch.index + blockMatch[0].length
+        });
       }
 
       // Find all trade markers first to extract reasoning between them
@@ -2967,7 +2978,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
           pathway: match[6] && match[6] !== 'null' ? match[6] : null,
           intent: match[7] || 'momentum',
           rawCommand,
-          block: detailBlocks.get(rawCommand) || '',
+          block: detailBlocks.find(block => block.command === rawCommand && block.startIndex <= match.index && block.endIndex >= match.index)?.body || '',
           index: match.index,
           endIndex: match.index + match[0].length
         });
@@ -2987,7 +2998,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
           pathway: match[6] && match[6] !== 'null' ? match[6] : null,
           intent: match[7] || 'momentum_short',
           rawCommand,
-          block: detailBlocks.get(rawCommand) || '',
+          block: detailBlocks.find(block => block.command === rawCommand && block.startIndex <= match.index && block.endIndex >= match.index)?.body || '',
           index: match.index,
           endIndex: match.index + match[0].length
         });
@@ -3061,6 +3072,9 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
         const catalysts = extractField('CATALYSTS');
         const fundamentals = extractField('FUNDAMENTALS');
         const fundamentalStopConditions = extractField('FUNDAMENTAL_STOP_CONDITIONS');
+        const overridePhase2Decision = extractField('OVERRIDE_PHASE2_DECISION');
+        const overrideSymbol = extractField('OVERRIDE_SYMBOL');
+        const overrideReason = extractField('OVERRIDE_REASON');
 
         // Get sector for symbol
         const sector = await this.getSector(trade.symbol);
@@ -3093,7 +3107,10 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
           trailingStopPct: trailingStopPct && trailingStopPct !== 'NONE' ? parseFloat(trailingStopPct) : null,
           rebalanceThresholdPct: rebalanceThresholdPct && rebalanceThresholdPct !== 'NONE' ? parseFloat(rebalanceThresholdPct) : null,
           maxHoldingDays: maxHoldDays && maxHoldDays !== 'NONE' ? parseInt(maxHoldDays) : null,
-          fundamentalStopConditions: fundamentalStopConditions ? { summary: fundamentalStopConditions } : null
+          fundamentalStopConditions: fundamentalStopConditions ? { summary: fundamentalStopConditions } : null,
+          overridePhase2Decision: overridePhase2Decision && overridePhase2Decision !== 'NONE' ? overridePhase2Decision : null,
+          overrideSymbol: overrideSymbol && overrideSymbol !== 'NONE' ? overrideSymbol : null,
+          overrideReason: overrideReason && overrideReason !== 'NONE' ? overrideReason : null
         });
       }
 

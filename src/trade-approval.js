@@ -56,6 +56,9 @@ class TradeApprovalManager {
         rebalance_threshold_pct DECIMAL(5, 2),
         max_holding_days INTEGER,
         fundamental_stop_conditions JSONB,
+        override_phase2_decision VARCHAR(10),
+        override_symbol VARCHAR(10),
+        override_reason TEXT,
         status VARCHAR(20) DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         expires_at TIMESTAMP,
@@ -88,7 +91,10 @@ class TradeApprovalManager {
       ADD COLUMN IF NOT EXISTS trailing_stop_pct DECIMAL(5, 2),
       ADD COLUMN IF NOT EXISTS rebalance_threshold_pct DECIMAL(5, 2),
       ADD COLUMN IF NOT EXISTS max_holding_days INTEGER,
-      ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB
+      ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB,
+      ADD COLUMN IF NOT EXISTS override_phase2_decision VARCHAR(10),
+      ADD COLUMN IF NOT EXISTS override_symbol VARCHAR(10),
+      ADD COLUMN IF NOT EXISTS override_reason TEXT
     `);
 
     console.log('✅ Trade approval table initialized');
@@ -127,7 +133,10 @@ class TradeApprovalManager {
       trailingStopPct,
       rebalanceThresholdPct,
       maxHoldingDays,
-      fundamentalStopConditions
+      fundamentalStopConditions,
+      overridePhase2Decision,
+      overrideSymbol,
+      overrideReason
     } = trade;
 
     // Calculate expiration (24 hours from now)
@@ -142,8 +151,9 @@ class TradeApprovalManager {
         catalysts, fundamentals, technical_setup, risk_factors, holding_period,
         confidence, growth_potential, news_links, stop_type, stop_reason,
         has_fixed_target, target_type, trailing_stop_pct, rebalance_threshold_pct,
-        max_holding_days, fundamental_stop_conditions, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+        max_holding_days, fundamental_stop_conditions, override_phase2_decision,
+        override_symbol, override_reason, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
        RETURNING id`,
       [symbol, action, quantity, entryPrice, stopLoss, takeProfit,
        orderType, pathway, intent, reasoning, investmentThesis || null, strategyType || null,
@@ -156,6 +166,9 @@ class TradeApprovalManager {
        targetType || null, trailingStopPct ?? null, rebalanceThresholdPct ?? null,
        maxHoldingDays ?? null,
        fundamentalStopConditions ? JSON.stringify(fundamentalStopConditions) : null,
+       overridePhase2Decision || null,
+       overrideSymbol || null,
+       overrideReason || null,
        expiresAt]
     );
 
