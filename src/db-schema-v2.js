@@ -66,6 +66,25 @@ export async function initDatabaseV2() {
         entry_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         stop_loss DECIMAL(10, 2),
         take_profit DECIMAL(10, 2),
+        pathway VARCHAR(50),
+        intent VARCHAR(50),
+        peak_price DECIMAL(10, 2),
+        trailing_stop_activated BOOLEAN DEFAULT FALSE,
+        trailing_stop_distance DECIMAL(8, 4),
+        strategy_type VARCHAR(50),
+        holding_period VARCHAR(50),
+        confidence VARCHAR(20),
+        growth_potential VARCHAR(50),
+        stop_type VARCHAR(20),
+        stop_reason TEXT,
+        target_type VARCHAR(20),
+        has_fixed_target BOOLEAN,
+        trailing_stop_pct DECIMAL(5, 2),
+        rebalance_threshold_pct DECIMAL(5, 2),
+        max_holding_days INTEGER,
+        fundamental_stop_conditions JSONB,
+        catalysts JSONB,
+        news_links JSONB,
         thesis TEXT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -92,6 +111,19 @@ export async function initDatabaseV2() {
         last_reviewed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         original_intent VARCHAR(50),
         current_intent VARCHAR(50),
+        pathway VARCHAR(50),
+        strategy_type VARCHAR(50),
+        holding_period VARCHAR(50),
+        confidence VARCHAR(20),
+        growth_potential VARCHAR(50),
+        stop_type VARCHAR(20),
+        target_type VARCHAR(20),
+        trailing_stop_pct DECIMAL(5, 2),
+        rebalance_threshold_pct DECIMAL(5, 2),
+        max_holding_days INTEGER,
+        fundamental_stop_conditions JSONB,
+        catalysts JSONB,
+        news_links JSONB,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -136,6 +168,8 @@ export async function initDatabaseV2() {
         is_actively_trading BOOLEAN DEFAULT TRUE,
         shortable BOOLEAN DEFAULT FALSE,
         last_etb_check TIMESTAMP,
+        is_growth_candidate BOOLEAN DEFAULT FALSE,
+        universe_bucket VARCHAR(30) DEFAULT 'core',
         added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         status VARCHAR(20) DEFAULT 'active'
@@ -156,6 +190,10 @@ export async function initDatabaseV2() {
     `);
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_stock_universe_status ON stock_universe(status);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_growth_candidate ON stock_universe(is_growth_candidate);
     `);
 
     // ============================================
@@ -317,20 +355,41 @@ export async function initDatabaseV2() {
       CREATE TABLE IF NOT EXISTS trade_approvals (
         id SERIAL PRIMARY KEY,
         symbol VARCHAR(10) NOT NULL,
-        action VARCHAR(10) NOT NULL,
+        action VARCHAR(20) NOT NULL,
         quantity INTEGER NOT NULL,
         entry_price DECIMAL(10, 2),
         stop_loss DECIMAL(10, 2),
         take_profit DECIMAL(10, 2),
+        order_type VARCHAR(20),
+        pathway VARCHAR(50),
+        intent VARCHAR(50),
         reasoning TEXT,
-        status VARCHAR(20) DEFAULT 'pending_approval',
+        investment_thesis TEXT,
+        strategy_type VARCHAR(50),
+        catalysts JSONB,
+        fundamentals JSONB,
+        technical_setup TEXT,
+        risk_factors TEXT,
+        holding_period VARCHAR(50),
+        confidence VARCHAR(20),
+        growth_potential VARCHAR(50),
+        news_links JSONB,
+        stop_type VARCHAR(20),
+        stop_reason TEXT,
+        has_fixed_target BOOLEAN,
+        target_type VARCHAR(20),
+        trailing_stop_pct DECIMAL(5, 2),
+        rebalance_threshold_pct DECIMAL(5, 2),
+        max_holding_days INTEGER,
+        fundamental_stop_conditions JSONB,
+        status VARCHAR(20) DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP,
         approved_at TIMESTAMP,
         rejected_at TIMESTAMP,
         executed_at TIMESTAMP,
         rejection_reason TEXT,
-        order_id VARCHAR(50),
-        expires_at TIMESTAMP
+        order_id VARCHAR(50)
       );
     `);
 

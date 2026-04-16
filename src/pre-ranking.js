@@ -19,6 +19,29 @@ class PreRanking {
   constructor() {
     this.MIN_VOLUME_SURGE = 1.5;  // 1.5x average volume
     this.TARGET_CANDIDATES = 120;  // Target 100-150 stocks
+    this.MOMENTUM_BYPASS_PATHWAYS = new Set([
+      'deepValue',
+      'cashMachine',
+      'qarp',
+      'qualityCompounder'
+    ]);
+    this.SHORT_MOMENTUM_CONFIG = {
+      deteriorating: {
+        direction: 'negative',
+        minMove: 0.02,
+        minVolumeSurge: 1.5
+      },
+      overvalued: {
+        direction: 'either',
+        minMove: 0.02,
+        minVolumeSurge: 1.5
+      },
+      overextended: {
+        direction: 'positive',
+        minMove: 0.03,
+        minVolumeSurge: 2.0
+      }
+    };
   }
 
   /**
@@ -288,6 +311,8 @@ class PreRanking {
     // Get sector-specific momentum thresholds
     const sectorConfig = getSectorConfig(stock.sector);
     const momentumThresholds = sectorConfig.momentum;
+    const bypassMomentum = stock.source === 'watchlist' && this.MOMENTUM_BYPASS_PATHWAYS.has(stock.pathway);
+    const shortMomentumConfig = this.SHORT_MOMENTUM_CONFIG[stock.pathway] || this.SHORT_MOMENTUM_CONFIG.overvalued;
 
     // Check earnings calendar
     const earningsInfo = earningsMap.get(stock.symbol);
@@ -309,12 +334,19 @@ class PreRanking {
       // Tavily news in daily analysis will catch "good earnings but stock down" opportunities
 
       // Check if meets sector-adjusted momentum threshold
-      const meetsThreshold = Math.abs(change / 100) >= momentumThresholds.minMove &&
-                            volumeSurge >= momentumThresholds.minVolumeSurge;
+      const meetsThreshold = bypassMomentum || (
+        Math.abs(change / 100) >= momentumThresholds.minMove &&
+        volumeSurge >= momentumThresholds.minVolumeSurge
+      );
 
       if (!meetsThreshold) {
         // Doesn't meet sector-specific momentum threshold
         return null;
+      }
+
+      if (bypassMomentum) {
+        score += 12;
+        reasons.push(`momentum bypass for ${stock.pathway}`);
       }
 
       // Positive momentum (sector-adjusted scoring)
@@ -350,9 +382,17 @@ class PreRanking {
 
     // SHORT SCORING
     if (change < 0) {
-      // Check if meets sector-adjusted momentum threshold
-      const meetsThreshold = Math.abs(change / 100) >= momentumThresholds.minMove &&
-                            volumeSurge >= momentumThresholds.minVolumeSurge;
+      let meetsThreshold;
+      if (shortMomentumConfig.direction === 'negative') {
+        meetsThreshold = (change / 100) <= -shortMomentumConfig.minMove &&
+          volumeSurge >= shortMomentumConfig.minVolumeSurge;
+      } else if (shortMomentumConfig.direction === 'positive') {
+        meetsThreshold = (change / 100) >= shortMomentumConfig.minMove &&
+          volumeSurge >= shortMomentumConfig.minVolumeSurge;
+      } else {
+        meetsThreshold = Math.abs(change / 100) >= shortMomentumConfig.minMove &&
+          volumeSurge >= shortMomentumConfig.minVolumeSurge;
+      }
 
       if (!meetsThreshold) {
         // Doesn't meet sector-specific momentum threshold
@@ -391,6 +431,8 @@ class PreRanking {
       } else if (sectorData.strength < 0) {
         score += 10;
       }
+
+      reasons.push(`${stock.pathway || 'short'} momentum rule: ${shortMomentumConfig.direction}`);
 
       direction = 'short';
     }

@@ -56,6 +56,7 @@ export async function initDatabase() {
         cost_basis DECIMAL(10, 2) NOT NULL,
         current_price DECIMAL(10, 2),
         sector VARCHAR(50),
+        industry VARCHAR(100),
         stock_type VARCHAR(30),
         position_type VARCHAR(10) DEFAULT 'long',
         entry_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -64,6 +65,25 @@ export async function initDatabase() {
         trimmed_3 BOOLEAN DEFAULT FALSE,
         stop_loss DECIMAL(10, 2),
         take_profit DECIMAL(10, 2),
+        pathway VARCHAR(50),
+        intent VARCHAR(50),
+        peak_price DECIMAL(10, 2),
+        trailing_stop_activated BOOLEAN DEFAULT FALSE,
+        trailing_stop_distance DECIMAL(8, 4),
+        strategy_type VARCHAR(50),
+        holding_period VARCHAR(50),
+        confidence VARCHAR(20),
+        growth_potential VARCHAR(50),
+        stop_type VARCHAR(20),
+        stop_reason TEXT,
+        target_type VARCHAR(20),
+        has_fixed_target BOOLEAN,
+        trailing_stop_pct DECIMAL(5, 2),
+        rebalance_threshold_pct DECIMAL(5, 2),
+        max_holding_days INTEGER,
+        fundamental_stop_conditions JSONB,
+        catalysts JSONB,
+        news_links JSONB,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -209,6 +229,19 @@ export async function initDatabase() {
         last_reviewed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         original_intent VARCHAR(50),
         current_intent VARCHAR(50),
+        pathway VARCHAR(50),
+        strategy_type VARCHAR(50),
+        holding_period VARCHAR(50),
+        confidence VARCHAR(20),
+        growth_potential VARCHAR(50),
+        stop_type VARCHAR(20),
+        target_type VARCHAR(20),
+        trailing_stop_pct DECIMAL(5, 2),
+        rebalance_threshold_pct DECIMAL(5, 2),
+        max_holding_days INTEGER,
+        fundamental_stop_conditions JSONB,
+        catalysts JSONB,
+        news_links JSONB,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -260,7 +293,44 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS trim_history JSONB,
       ADD COLUMN IF NOT EXISTS oco_order_id VARCHAR(50),
       ADD COLUMN IF NOT EXISTS order_modification_history JSONB,
-      ADD COLUMN IF NOT EXISTS asset_class VARCHAR(50);
+      ADD COLUMN IF NOT EXISTS asset_class VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS industry VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS pathway VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS intent VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS peak_price DECIMAL(10, 2),
+      ADD COLUMN IF NOT EXISTS trailing_stop_activated BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS trailing_stop_distance DECIMAL(8, 4),
+      ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS holding_period VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS confidence VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS growth_potential VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS stop_reason TEXT,
+      ADD COLUMN IF NOT EXISTS target_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS has_fixed_target BOOLEAN,
+      ADD COLUMN IF NOT EXISTS trailing_stop_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS rebalance_threshold_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS max_holding_days INTEGER,
+      ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB,
+      ADD COLUMN IF NOT EXISTS catalysts JSONB,
+      ADD COLUMN IF NOT EXISTS news_links JSONB;
+    `);
+
+    await client.query(`
+      ALTER TABLE position_lots
+      ADD COLUMN IF NOT EXISTS pathway VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS holding_period VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS confidence VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS growth_potential VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS target_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS trailing_stop_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS rebalance_threshold_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS max_holding_days INTEGER,
+      ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB,
+      ADD COLUMN IF NOT EXISTS catalysts JSONB,
+      ADD COLUMN IF NOT EXISTS news_links JSONB;
     `);
 
     // Stock universe table - all stocks Whiskie analyzes (FMP-aligned)
@@ -282,6 +352,8 @@ export async function initDatabase() {
         shortable BOOLEAN DEFAULT FALSE,
         last_etb_check TIMESTAMP,
         bid_ask_spread DECIMAL(5, 4),
+        is_growth_candidate BOOLEAN DEFAULT FALSE,
+        universe_bucket VARCHAR(30) DEFAULT 'core',
         added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         removed_date TIMESTAMP,
         status VARCHAR(20) DEFAULT 'active'
@@ -302,6 +374,16 @@ export async function initDatabase() {
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_stock_universe_status ON stock_universe(status);
+    `);
+
+    await client.query(`
+      ALTER TABLE stock_universe
+      ADD COLUMN IF NOT EXISTS is_growth_candidate BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS universe_bucket VARCHAR(30) DEFAULT 'core';
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_growth_candidate ON stock_universe(is_growth_candidate);
     `);
 
     // ETF watchlist table - track ETFs for hedging/exposure (separate from stock screening)
@@ -488,6 +570,87 @@ export async function initDatabase() {
 
     await client.query(`
       UPDATE quality_watchlist SET price = current_price WHERE price IS NULL;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS trade_approvals (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        action VARCHAR(20) NOT NULL,
+        quantity INTEGER NOT NULL,
+        entry_price DECIMAL(10, 2),
+        stop_loss DECIMAL(10, 2),
+        take_profit DECIMAL(10, 2),
+        order_type VARCHAR(20),
+        pathway VARCHAR(50),
+        intent VARCHAR(50),
+        reasoning TEXT,
+        investment_thesis TEXT,
+        strategy_type VARCHAR(50),
+        catalysts JSONB,
+        fundamentals JSONB,
+        technical_setup TEXT,
+        risk_factors TEXT,
+        holding_period VARCHAR(50),
+        confidence VARCHAR(20),
+        growth_potential VARCHAR(50),
+        news_links JSONB,
+        stop_type VARCHAR(20),
+        stop_reason TEXT,
+        has_fixed_target BOOLEAN,
+        target_type VARCHAR(20),
+        trailing_stop_pct DECIMAL(5, 2),
+        rebalance_threshold_pct DECIMAL(5, 2),
+        max_holding_days INTEGER,
+        fundamental_stop_conditions JSONB,
+        status VARCHAR(20) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP,
+        approved_at TIMESTAMP,
+        rejected_at TIMESTAMP,
+        executed_at TIMESTAMP,
+        rejection_reason TEXT
+      );
+    `);
+
+    await client.query(`
+      ALTER TABLE trade_approvals
+      ADD COLUMN IF NOT EXISTS order_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS pathway VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS intent VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS investment_thesis TEXT,
+      ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS catalysts JSONB,
+      ADD COLUMN IF NOT EXISTS fundamentals JSONB,
+      ADD COLUMN IF NOT EXISTS technical_setup TEXT,
+      ADD COLUMN IF NOT EXISTS risk_factors TEXT,
+      ADD COLUMN IF NOT EXISTS holding_period VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS confidence VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS growth_potential VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS news_links JSONB,
+      ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS stop_reason TEXT,
+      ADD COLUMN IF NOT EXISTS has_fixed_target BOOLEAN,
+      ADD COLUMN IF NOT EXISTS target_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS trailing_stop_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS rebalance_threshold_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS max_holding_days INTEGER,
+      ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB;
+    `);
+
+    await client.query(`
+      ALTER TABLE trade_approvals
+      ALTER COLUMN status SET DEFAULT 'pending';
+    `);
+
+    await client.query(`
+      UPDATE trade_approvals
+      SET status = 'pending'
+      WHERE status = 'pending_approval';
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_trade_approvals_status ON trade_approvals(status);
     `);
 
     // Trend learning tables
@@ -754,7 +917,7 @@ export async function logTrade(trade) {
         trade.action,
         trade.quantity,
         trade.price,
-        trade.quantity * trade.price,
+        Math.abs(trade.quantity * trade.price),
         trade.orderId,
         trade.status,
         trade.reasoning
@@ -773,20 +936,43 @@ export async function logTrade(trade) {
 export async function upsertPosition(position) {
   try {
     const result = await pool.query(
-      `INSERT INTO positions (symbol, quantity, cost_basis, current_price, sector, stock_type, stop_loss, take_profit, pathway, intent, peak_price)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO positions (
+         symbol, quantity, cost_basis, current_price, sector, industry, stock_type,
+         stop_loss, take_profit, pathway, intent, peak_price, position_type,
+         strategy_type, holding_period, confidence, growth_potential, stop_type,
+         stop_reason, target_type, has_fixed_target, trailing_stop_pct,
+         rebalance_threshold_pct, max_holding_days, fundamental_stop_conditions,
+         catalysts, news_links
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
        ON CONFLICT (symbol)
        DO UPDATE SET
          quantity = $2,
          cost_basis = $3,
          current_price = $4,
          sector = $5,
-         stock_type = $6,
-         stop_loss = $7,
-         take_profit = $8,
-         pathway = $9,
-         intent = $10,
-         peak_price = $11,
+         industry = $6,
+         stock_type = $7,
+         stop_loss = $8,
+         take_profit = $9,
+         pathway = $10,
+         intent = $11,
+         peak_price = $12,
+         position_type = $13,
+         strategy_type = $14,
+         holding_period = $15,
+         confidence = $16,
+         growth_potential = $17,
+         stop_type = $18,
+         stop_reason = $19,
+         target_type = $20,
+         has_fixed_target = $21,
+         trailing_stop_pct = $22,
+         rebalance_threshold_pct = $23,
+         max_holding_days = $24,
+         fundamental_stop_conditions = $25,
+         catalysts = $26,
+         news_links = $27,
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [
@@ -795,12 +981,28 @@ export async function upsertPosition(position) {
         position.cost_basis,
         position.current_price,
         position.sector,
+        position.industry || null,
         position.stock_type,
         position.stop_loss,
         position.take_profit,
         position.pathway || null,
         position.intent || null,
-        position.peak_price || position.current_price
+        position.peak_price || position.current_price,
+        position.position_type || (position.quantity < 0 ? 'short' : 'long'),
+        position.strategy_type || null,
+        position.holding_period || null,
+        position.confidence || null,
+        position.growth_potential || null,
+        position.stop_type || null,
+        position.stop_reason || null,
+        position.target_type || null,
+        position.has_fixed_target ?? null,
+        position.trailing_stop_pct ?? null,
+        position.rebalance_threshold_pct ?? null,
+        position.max_holding_days ?? null,
+        position.fundamental_stop_conditions ? JSON.stringify(position.fundamental_stop_conditions) : null,
+        position.catalysts ? JSON.stringify(position.catalysts) : null,
+        position.news_links ? JSON.stringify(position.news_links) : null
       ]
     );
     return result.rows[0];
@@ -815,7 +1017,7 @@ export async function upsertPosition(position) {
  */
 export async function getPositions() {
   try {
-    const result = await pool.query('SELECT * FROM positions WHERE quantity > 0 ORDER BY symbol');
+    const result = await pool.query('SELECT * FROM positions WHERE quantity != 0 ORDER BY symbol');
     return result.rows;
   } catch (error) {
     console.error('Error fetching positions:', error);
@@ -1273,8 +1475,11 @@ export async function createPositionLot(lot) {
       `INSERT INTO position_lots (
         symbol, lot_type, quantity, cost_basis, current_price,
         entry_date, stop_loss, take_profit, oco_order_id, thesis,
-        days_to_long_term, original_intent, current_intent
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        days_to_long_term, original_intent, current_intent, position_type,
+        pathway, strategy_type, holding_period, confidence, growth_potential,
+        stop_type, target_type, trailing_stop_pct, rebalance_threshold_pct,
+        max_holding_days, fundamental_stop_conditions, catalysts, news_links
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
       RETURNING *`,
       [
         lot.symbol,
@@ -1289,7 +1494,21 @@ export async function createPositionLot(lot) {
         lot.thesis || null,
         lot.lot_type === 'long-term' ? 365 : null,
         lot.original_intent || null,
-        lot.current_intent || lot.original_intent || null
+        lot.current_intent || lot.original_intent || null,
+        lot.position_type || (lot.quantity < 0 ? 'short' : 'long'),
+        lot.pathway || null,
+        lot.strategy_type || null,
+        lot.holding_period || null,
+        lot.confidence || null,
+        lot.growth_potential || null,
+        lot.stop_type || null,
+        lot.target_type || null,
+        lot.trailing_stop_pct ?? null,
+        lot.rebalance_threshold_pct ?? null,
+        lot.max_holding_days ?? null,
+        lot.fundamental_stop_conditions ? JSON.stringify(lot.fundamental_stop_conditions) : null,
+        lot.catalysts ? JSON.stringify(lot.catalysts) : null,
+        lot.news_links ? JSON.stringify(lot.news_links) : null
       ]
     );
     return result.rows[0];
@@ -1423,8 +1642,11 @@ export async function updateDaysHeld() {
 export async function upsertStockUniverse(stock) {
   try {
     const result = await pool.query(
-      `INSERT INTO stock_universe (symbol, company_name, sector, industry, market_cap, market_cap_tier, price, shortable, last_etb_check)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO stock_universe (
+         symbol, company_name, sector, industry, market_cap, market_cap_tier,
+         price, shortable, last_etb_check, is_growth_candidate, universe_bucket
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (symbol)
        DO UPDATE SET
          company_name = $2,
@@ -1435,6 +1657,8 @@ export async function upsertStockUniverse(stock) {
          price = $7,
          shortable = $8,
          last_etb_check = $9,
+         is_growth_candidate = $10,
+         universe_bucket = $11,
          status = 'active'
        RETURNING *`,
       [
@@ -1446,7 +1670,9 @@ export async function upsertStockUniverse(stock) {
         stock.market_cap_tier || 'large',
         stock.price,
         stock.shortable || false,
-        stock.last_etb_check || null
+        stock.last_etb_check || null,
+        stock.is_growth_candidate || false,
+        stock.universe_bucket || 'core'
       ]
     );
     return result.rows[0];

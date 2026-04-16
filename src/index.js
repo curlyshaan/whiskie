@@ -45,6 +45,7 @@ import { runTrailingStopCheck, updateTrailingStops } from './trailing-stops.js';
 import { runEarningsDayAnalysis } from './earnings-analysis.js';
 import { runWeeklyReview } from './weekly-review.js';
 import stockProfiles from './stock-profiles.js';
+import catalystResearch, { detectCatalysts } from './catalyst-research.js';
 
 dotenv.config();
 
@@ -408,6 +409,17 @@ class WhiskieBot {
           await pathwayExitMonitor.checkPathwayExits();
         } catch (error) {
           console.error('❌ Error in 30-minute monitoring cycle:', error);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Daily structured exit review after market close
+      cron.schedule('30 16 * * 1-5', async () => {
+        try {
+          await pathwayExitMonitor.checkPathwayExits();
+        } catch (error) {
+          console.error('❌ Error in daily exit review:', error);
         }
       }, {
         timezone: 'America/New_York'
@@ -1466,10 +1478,13 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         'deepValue': 'value_dip',
         'cashMachine': 'value_dip',
         'qarp': 'value_dip',
+        'qualityCompounder': 'fundamental_hold',
         'highGrowth': 'growth',
         'inflection': 'growth_momentum',
         'turnaround': 'turnaround',
-        'overvalued': 'short_overvalued'
+        'overvalued': 'short_overvalued',
+        'deteriorating': 'short_deteriorating',
+        'overextended': 'short_overextended'
       };
 
       // Map pre-ranked candidates with pathway info from saturday_watchlist
@@ -1724,6 +1739,28 @@ ${trendContext}`;
       console.log(`✅ Fetched ${Object.keys(fullMarketData).length} total quotes`);
       console.log('');
 
+      // Fetch technical indicators for all candidates
+      console.log('📊 Fetching technical indicators for all candidates...');
+      const technicalData = {};
+      let techCount = 0;
+
+      for (const symbol of allCandidates) {
+        try {
+          const indicators = await fmp.getTechnicalIndicators(symbol);
+          if (indicators) {
+            technicalData[symbol] = indicators;
+            techCount++;
+          }
+          // 500ms delay to stay under rate limits
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } catch (error) {
+          console.warn(`   ⚠️ Failed to fetch technicals for ${symbol}: ${error.message}`);
+        }
+      }
+
+      console.log(`✅ Fetched technical indicators for ${techCount}/${allCandidates.length} candidates`);
+      console.log('');
+
       // Get market regime for allocation guidance
       console.log('📈 Detecting market regime...');
       const marketRegime = await riskManager.getMarketRegime();
@@ -1813,6 +1850,15 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
       // Get learning insights from weekly reviews
       const learningInsights = await learningFeedback.getRecentInsights(30);
       const learningContext = learningInsights || '';
+      const catalystResearchBySymbol = {};
+      for (const candidate of candidates.longs) {
+        catalystResearchBySymbol[candidate.symbol] = await catalystResearch.researchCatalysts(candidate.symbol, candidate.pathway);
+      }
+
+      let catalystContext = '\n\n**CATALYST RESEARCH RESULTS:**\n';
+      Object.entries(catalystResearchBySymbol).forEach(([symbol, results]) => {
+        catalystContext += `\n${symbol}:\n${JSON.stringify(results, null, 2)}\n`;
+      });
 
       const phase2Question = `You are managing a $100k portfolio. You are in PHASE 2: LONG ANALYSIS.
 
@@ -1828,7 +1874,9 @@ ${candidates.longs.map(c => {
   const changeStr = change >= 0 ? `+${change}` : `${change}`;
   const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
   const scoreTag = c.score ? ` (score: ${c.score})` : '';
-  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
+  const tech = technicalData[c.symbol];
+  const techStr = tech ? ` | EMA50: $${tech.ema50.toFixed(2)} (${tech.aboveEma50 ? 'above' : 'below'}), EMA200: $${tech.ema200.toFixed(2)} (${tech.aboveEma200 ? 'above' : 'below'}), RSI: ${tech.rsi.toFixed(1)} (${tech.rsiBand})` : ' | Technicals: N/A';
+  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${techStr}${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
 }).join('\n')}
 ${stockProfileContext}
 ${recentAnalysisContext}
@@ -1851,10 +1899,11 @@ ${assetClassContext}
 **Your Task:** Analyze each candidate and provide BUY or PASS decisions.
 
 **Analysis Framework (for each stock):**
-1. Fundamental Analysis: Business quality, revenue/earnings growth, valuation, balance sheet, management
-2. Technical Analysis: Price vs moving averages, support/resistance, volume, RSI/MACD, chart patterns
-3. Catalyst Analysis: Earnings, product launches, sector trends, insider activity, news flow
-4. Risk/Reward: Entry price, stop loss, target price, R/R ratio (minimum 2:1), position size
+1. Growth Potential: Can this stock 2x-3x over 12-24 months? Addressable market, acceleration, margin expansion, moat
+2. Fundamental Analysis: Business quality, revenue/earnings growth, valuation, balance sheet, management
+3. Technical Analysis: Price vs moving averages, support/resistance, volume, RSI/MACD, chart patterns
+4. Catalyst Analysis: Use the provided Tavily results to identify dated catalysts, probability, and impact
+5. Risk/Reward: Entry price, stop loss, target price, R/R ratio (minimum 2:1), position size
 
 **Decision Criteria:**
 - BUY: Strong fundamentals + favorable technicals + clear catalyst + R/R > 2:1
@@ -1876,6 +1925,8 @@ STOP: $[price] ([X]% risk)
 TARGET: $[price] ([X]% upside)
 POSITION_SIZE: [X]% of portfolio ($[amount])
 CONVICTION: High/Medium
+GROWTH_POTENTIAL: 2x-3x / 50-100% / 20-50% / <20%
+CATALYSTS: [dated catalysts]
 REASONING: [2-3 sentences]
 
 [If PASS:]
@@ -1892,6 +1943,7 @@ TOTAL_BUY_RECOMMENDATIONS: [count]
 SUB-SECTOR_BREAKDOWN: [list count per sub-sector]
 TOTAL_CAPITAL_ALLOCATED: $[amount] ([X]% of portfolio)
 
+${catalystContext}
 ${historyContext}`;
 
       const phase2Start = Date.now();
@@ -1980,7 +2032,9 @@ ${candidates.shorts.map(c => {
   const changeStr = change >= 0 ? `+${change}` : `${change}`;
   const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
   const scoreTag = c.score ? ` (score: ${c.score})` : '';
-  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
+  const tech = technicalData[c.symbol];
+  const techStr = tech ? ` | EMA50: $${tech.ema50.toFixed(2)} (${tech.aboveEma50 ? 'above' : 'below'}), EMA200: $${tech.ema200.toFixed(2)} (${tech.aboveEma200 ? 'above' : 'below'}), RSI: ${tech.rsi.toFixed(1)} (${tech.rsiBand})` : ' | Technicals: N/A';
+  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${techStr}${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
 }).join('\n')}
 ${shortProfileContext}
 ${shortRecentAnalysisContext}
@@ -2130,23 +2184,32 @@ ${historyContext}`;
       const phase4Question = `You are managing a $100k portfolio. You are in PHASE 4: PORTFOLIO CONSTRUCTION.
 
 **CRITICAL OUTPUT FORMAT REQUIREMENT:**
-You MUST output trades in this EXACT format for the parser to work:
+For each final trade, output a block in this exact structure:
 
-EXECUTE_BUY: AVGO | 26 | 373.96 | 355.00 | 420.00 | deepValue | value_dip
-EXECUTE_BUY: TSM | 26 | 377.12 | 360.00 | 415.00 | highGrowth | growth
+EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
+THESIS: [1 sentence]
+PATHWAY: [pathway]
+STRATEGY: [strategy type]
+CATALYSTS: [semicolon-separated catalysts]
+FUNDAMENTALS: [key metrics summary]
+TECHNICAL: [technical setup]
+RISKS: [main risks]
+STOP_TYPE: technical/fundamental/catastrophic
+STOP_REASON: [reason]
+TARGET_TYPE: fixed/trailing/timeboxed
+TRAILING_STOP_PCT: [number or NONE]
+REBALANCE_THRESHOLD_PCT: [number or NONE]
+MAX_HOLD_DAYS: [number or NONE]
+HOLDING: [holding period]
+CONFIDENCE: High/Medium/Low
+GROWTH_POTENTIAL: 2x-3x / 50-100% / 20-50% / <20%
+NEWS: [URLs or NONE]
 
-EXECUTE_SHORT: NET | 45 | 177.72 | 186.60 | 151.06 | overvalued | short_overvalued
-EXECUTE_SHORT: NOW | 95 | 84.23 | 88.44 | 71.60 | null | momentum_short
+Do the same for shorts using EXECUTE_SHORT.
 
 **CRITICAL STOP-LOSS RULES:**
-- LONGS: Stop BELOW entry (e.g., entry $100, stop $95)
-- SHORTS: Stop ABOVE entry (e.g., entry $100, stop $105) - you lose money when price RISES
-
-IMPORTANT: Each trade MUST start with "EXECUTE_BUY:" or "EXECUTE_SHORT:" on the SAME line as the trade data.
-DO NOT use table format. DO NOT add "shares" or "$" symbols. DO NOT add column headers.
-Format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
-- PATHWAY: Original Saturday screening pathway (deepValue, highGrowth, etc.) or "null" if intraday discovery
-- INTENT: Current trade intent based on setup (value_dip, growth, momentum, short_overvalued, etc.)
+- LONGS: Stop BELOW entry
+- SHORTS: Stop ABOVE entry
 
 **PHASE 2 LONG ANALYSIS RESULTS:**
 ${phase2Analysis.analysis}
@@ -2199,6 +2262,12 @@ ${candidates.shorts.map(c => {
 
 ${marketRegimeContext}
 ${assetClassContext}
+
+**Target allocation guidelines (flexible):**
+- Fundamental holds (deepValue, cashMachine, qarp, qualityCompounder): 50-70%
+- Growth/momentum (highGrowth, inflection, turnaround): 20-40%
+- Shorts (overvalued, deteriorating, overextended): 0-20%
+- You may deviate if opportunity quality or market regime strongly supports it, but explain why.
 
 **Your Task:** Construct final portfolio with 12-14 positions total.
 
@@ -2270,7 +2339,17 @@ Include PATHWAY (from Saturday screening or "null") and INTENT (current trade ra
 **RATIONALE:**
 [2-3 sentences explaining portfolio construction logic, market regime consideration, and key risk/reward thesis]
 
-${historyContext}`;
+${historyContext}
+
+**CRITICAL REMINDER - OUTPUT FORMAT:**
+Your EXECUTE commands MUST use this EXACT format (the parser is strict):
+
+EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
+EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
+
+DO NOT use "LONG" or "SHORT" - you MUST use "EXECUTE_BUY:" or "EXECUTE_SHORT:" as the prefix.
+DO NOT add dollar signs, "shares", or any other text in the pipe-separated values.
+Each EXECUTE command must be on its own line with the prefix on the SAME line as the data.`;
 
       const phase4Start = Date.now();
       const analysis = await claude.deepAnalysis(
@@ -2475,7 +2554,25 @@ ${historyContext}`;
               orderType: 'limit',
               pathway: rec.pathway || null,
               intent: rec.intent || 'momentum',
-              reasoning: detailedReasoning
+              reasoning: detailedReasoning,
+              investmentThesis: rec.investmentThesis || detailedReasoning,
+              strategyType: rec.strategyType || null,
+              catalysts: rec.catalysts || detectCatalysts(news),
+              fundamentals: rec.fundamentals || null,
+              technicalSetup: rec.technicalSetup || null,
+              riskFactors: rec.riskFactors || null,
+              holdingPeriod: rec.holdingPeriod || null,
+              confidence: rec.confidence || null,
+              growthPotential: rec.growthPotential || null,
+              newsLinks: rec.newsLinks || null,
+              stopType: rec.stopType || null,
+              stopReason: rec.stopReason || null,
+              hasFixedTarget: rec.hasFixedTarget ?? (rec.targetType === 'fixed'),
+              targetType: rec.targetType || null,
+              trailingStopPct: rec.trailingStopPct ?? null,
+              rebalanceThresholdPct: rec.rebalanceThresholdPct ?? null,
+              maxHoldingDays: rec.maxHoldingDays ?? null,
+              fundamentalStopConditions: rec.fundamentalStopConditions || null
             }, true);  // skipEmail = true for batch
 
             submittedTrades.push({
@@ -2485,7 +2582,10 @@ ${historyContext}`;
               entryPrice: rec.entryPrice,
               stopLoss: rec.stopLoss,
               takeProfit: rec.takeProfit,
-              reasoning: rec.reasoning
+              reasoning: rec.reasoning,
+              strategyType: rec.strategyType || null,
+              holdingPeriod: rec.holdingPeriod || null,
+              confidence: rec.confidence || null
             });
             approvalIds.push(approvalId);
 
@@ -2841,6 +2941,13 @@ ${historyContext}`;
       }
 
       // Fallback to regex parsing
+      const detailBlocks = new Map();
+      const blockPattern = /(EXECUTE_(?:BUY|SHORT):[^\n]+)([\s\S]*?)(?=EXECUTE_(?:BUY|SHORT):|$)/g;
+      let blockMatch;
+      while ((blockMatch = blockPattern.exec(analysisText)) !== null) {
+        detailBlocks.set(blockMatch[1].trim(), blockMatch[2].trim());
+      }
+
       // Find all trade markers first to extract reasoning between them
       const allTradeMatches = [];
 
@@ -2848,6 +2955,7 @@ ${historyContext}`;
       const buyPattern = /EXECUTE_BUY:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)(?:\s*\|\s*([a-zA-Z_]+)\s*\|\s*([a-zA-Z_]+))?/gi;
       let match;
       while ((match = buyPattern.exec(analysisText)) !== null) {
+        const rawCommand = match[0].trim();
         allTradeMatches.push({
           type: 'long',
           symbol: match[1],
@@ -2857,6 +2965,8 @@ ${historyContext}`;
           takeProfit: parseFloat(match[5]),
           pathway: match[6] && match[6] !== 'null' ? match[6] : null,
           intent: match[7] || 'momentum',
+          rawCommand,
+          block: detailBlocks.get(rawCommand) || '',
           index: match.index,
           endIndex: match.index + match[0].length
         });
@@ -2865,6 +2975,7 @@ ${historyContext}`;
       // Parse EXECUTE_SHORT (with optional pathway and intent)
       const shortPattern = /EXECUTE_SHORT:\s*([A-Z]{1,5})\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)(?:\s*\|\s*([a-zA-Z_]+)\s*\|\s*([a-zA-Z_]+))?/gi;
       while ((match = shortPattern.exec(analysisText)) !== null) {
+        const rawCommand = match[0].trim();
         allTradeMatches.push({
           type: 'short',
           symbol: match[1],
@@ -2874,6 +2985,8 @@ ${historyContext}`;
           takeProfit: parseFloat(match[5]),
           pathway: match[6] && match[6] !== 'null' ? match[6] : null,
           intent: match[7] || 'momentum_short',
+          rawCommand,
+          block: detailBlocks.get(rawCommand) || '',
           index: match.index,
           endIndex: match.index + match[0].length
         });
@@ -2934,6 +3047,20 @@ ${historyContext}`;
 
         console.log(`   ✅ VALIDATED ${trade.symbol}: ${trade.type.toUpperCase()} passed all checks`);
 
+        const block = trade.block || '';
+        const extractField = (label) => {
+          const fieldMatch = block.match(new RegExp(`${label}:\\s*(.+)`, 'i'));
+          return fieldMatch ? fieldMatch[1].trim() : null;
+        };
+
+        const trailingStopPct = extractField('TRAILING_STOP_PCT');
+        const rebalanceThresholdPct = extractField('REBALANCE_THRESHOLD_PCT');
+        const maxHoldDays = extractField('MAX_HOLD_DAYS');
+        const newsLinks = extractField('NEWS');
+        const catalysts = extractField('CATALYSTS');
+        const fundamentals = extractField('FUNDAMENTALS');
+        const fundamentalStopConditions = extractField('FUNDAMENTAL_STOP_CONDITIONS');
+
         // Get sector for symbol
         const sector = await this.getSector(trade.symbol);
 
@@ -2947,7 +3074,25 @@ ${historyContext}`;
           assetClass: sector,
           pathway: trade.pathway || null,
           intent: trade.intent || (trade.type === 'long' ? 'momentum' : 'momentum_short'),
-          reasoning: reasoning || `${trade.type === 'long' ? 'Long' : 'Short'} position in ${trade.symbol}`
+          reasoning: reasoning || `${trade.type === 'long' ? 'Long' : 'Short'} position in ${trade.symbol}`,
+          investmentThesis: extractField('THESIS'),
+          strategyType: extractField('STRATEGY'),
+          catalysts: catalysts ? catalysts.split(/\s*;\s*/).filter(Boolean) : [],
+          fundamentals: fundamentals ? { summary: fundamentals } : null,
+          technicalSetup: extractField('TECHNICAL'),
+          riskFactors: extractField('RISKS'),
+          holdingPeriod: extractField('HOLDING'),
+          confidence: extractField('CONFIDENCE'),
+          growthPotential: extractField('GROWTH_POTENTIAL'),
+          newsLinks: newsLinks && newsLinks !== 'NONE' ? newsLinks.split(/\s*[,;]\s*/).filter(Boolean) : [],
+          stopType: extractField('STOP_TYPE'),
+          stopReason: extractField('STOP_REASON'),
+          hasFixedTarget: (extractField('TARGET_TYPE') || '').toLowerCase() === 'fixed',
+          targetType: extractField('TARGET_TYPE'),
+          trailingStopPct: trailingStopPct && trailingStopPct !== 'NONE' ? parseFloat(trailingStopPct) : null,
+          rebalanceThresholdPct: rebalanceThresholdPct && rebalanceThresholdPct !== 'NONE' ? parseFloat(rebalanceThresholdPct) : null,
+          maxHoldingDays: maxHoldDays && maxHoldDays !== 'NONE' ? parseInt(maxHoldDays) : null,
+          fundamentalStopConditions: fundamentalStopConditions ? { summary: fundamentalStopConditions } : null
         });
       }
 

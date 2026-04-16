@@ -194,10 +194,16 @@ class FundamentalScreener {
       const sector = normalizeSectorName(fundamentals.sector);
       const sectorConfig = getSectorConfig(sector);
       const metrics = this.extractMetrics(fundamentals, price, dollarVolume);
+      const growthPotential = this.scoreGrowthPotential(metrics);
 
       // Score long pathways (each pathway checks its own market cap requirement)
-      const longResult = this.scoreLong(metrics, sector, sectorConfig, marketCap);
-      const shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
+      let longResult = this.scoreLong(metrics, sector, sectorConfig, marketCap);
+      let shortResult = this.scoreShort(metrics, sector, sectorConfig, quote);
+
+      if (longResult && ['highGrowth', 'inflection', 'turnaround', 'qualityCompounder'].includes(longResult.pathway)) {
+        longResult.score += Math.round(growthPotential.score * 0.2);
+        longResult.reasons.push(`Growth potential ${growthPotential.potential}`);
+      }
 
       // Apply volume filters after scoring
       if (longResult && avgVolume < this.MIN_AVG_VOLUME_SHARES_LONG) {
@@ -228,7 +234,9 @@ class FundamentalScreener {
         longPathway: longResult?.pathway || null,
         longReasons: longResult?.reasons || [],
         shortScore: shortResult?.score || null,
+        shortPathway: shortResult?.pathway || null,
         shortReasons: shortResult?.reasons || [],
+        growthPotential,
         metrics
       };
 
@@ -261,6 +269,7 @@ class FundamentalScreener {
       revenueGrowthQ: fundamentals.revenueGrowthQ || 0,
       revenueGrowthPrevQ: fundamentals.revenueGrowthPrevQ || 0,
       operatingMargin: fundamentals.operatingMargin || 0,
+      operatingMarginPrev: fundamentals.operatingMarginPrev || fundamentals.operatingMarginPrevQ || 0,
       operatingMarginQ: fundamentals.operatingMarginQ || 0,
       operatingMarginPrevQ: fundamentals.operatingMarginPrevQ || 0,
       profitMargin: fundamentals.profitMargin || 0,
@@ -276,6 +285,7 @@ class FundamentalScreener {
       accrualRatio,  // FIX #4: Earnings quality check
 
       // NEW: Liquidity metrics
+      currentRatio: fundamentals.currentRatio || 0,
       quickRatio: fundamentals.quickRatio || 0,
       cashRatio: fundamentals.cashRatio || 0,
 
@@ -296,6 +306,64 @@ class FundamentalScreener {
     };
   }
 
+  scoreGrowthPotential(metrics, profile = {}, news = []) {
+    let score = 0;
+    const reasons = [];
+
+    const avgGrowthBase = metrics.revenueGrowthPrevQ || 0;
+    if (metrics.revenueGrowth > avgGrowthBase * 1.2 && metrics.revenueGrowth > 0.20) {
+      score += 20;
+      reasons.push('Revenue accelerating');
+    }
+
+    if (metrics.operatingMarginQ > metrics.operatingMarginPrevQ + 0.03) {
+      score += 15;
+      reasons.push('Margin expansion');
+    }
+
+    if (metrics.marketCap < 5_000_000_000 && metrics.revenueGrowth > 0.30) {
+      score += 25;
+      reasons.push('Small-cap high-growth');
+    }
+
+    if ((profile.insiderBuying || 0) > (profile.insiderSelling || 0) * 2) {
+      score += 15;
+      reasons.push('Strong insider buying');
+    }
+
+    const catalysts = this.detectCatalysts(news);
+    if (catalysts.length > 0) {
+      score += 15;
+      reasons.push(`Catalysts: ${catalysts.join(', ')}`);
+    }
+
+    return {
+      score,
+      potential: score > 70 ? '2x-3x' : score > 50 ? '50-100%' : score > 30 ? '20-50%' : '<20%',
+      reasons
+    };
+  }
+
+  detectCatalysts(news = []) {
+    const catalysts = [];
+    const catalystKeywords = {
+      'FDA approval': /FDA (approval|cleared|granted)/i,
+      'Product launch': /launch(ing|ed)? (new )?product/i,
+      'Earnings beat': /beat (earnings|estimates)/i,
+      'Partnership': /(partnership|collaboration|deal) with/i,
+      'Acquisition': /(acquir(e|ing|ed)|bought)/i,
+      'Expansion': /(expand(ing|ed)|entering) (new )?(market|region)/i
+    };
+
+    for (const [catalyst, regex] of Object.entries(catalystKeywords)) {
+      if (news.some(article => regex.test(`${article.title || ''} ${article.description || ''}`))) {
+        catalysts.push(catalyst);
+      }
+    }
+
+    return catalysts;
+  }
+
   // ─────────────────────────────────────────────
   // LONG SCORING - 6 independent pathways
   // ─────────────────────────────────────────────
@@ -306,7 +374,7 @@ class FundamentalScreener {
       highGrowth:       this.scoreHighGrowth(metrics, sectorConfig, marketCap),
       inflection:       this.scoreInflection(metrics, sectorConfig, marketCap),
       cashMachine:      this.scoreCashMachine(metrics, marketCap),
-      qarp:             this.scoreQARP(metrics, marketCap),
+      qarp:             this.scoreQARP(metrics, marketCap, sectorConfig),
       qualityCompounder: this.scoreQualityCompounder(metrics, sectorConfig, marketCap),
       turnaround:       this.scoreTurnaround(metrics, marketCap),
     };
@@ -463,19 +531,21 @@ class FundamentalScreener {
     const reasons = [];
     let qualityScore = 0;  // Track quality/balance sheet points
 
-    // High growth - tiered scoring to capture 18-25% growers in current macro
-    if (metrics.revenueGrowth >= 0.50) {
+    const sectorGrowthMin = sectorConfig.revenueGrowthMin || 0.10;
+
+    // High growth - sector-relative tiers
+    if (metrics.revenueGrowth >= sectorGrowthMin * 3.0) {
       score += 45;
-      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (exceptional)`);
-    } else if (metrics.revenueGrowth >= 0.30) {
+      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (3x sector min)`);
+    } else if (metrics.revenueGrowth >= sectorGrowthMin * 2.0) {
       score += 35;
-      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (strong)`);
-    } else if (metrics.revenueGrowth >= 0.20) {
+      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (2x sector min)`);
+    } else if (metrics.revenueGrowth >= sectorGrowthMin * 1.5) {
       score += 25;
-      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (solid)`);
-    } else if (metrics.revenueGrowth >= 0.15) {
+      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (1.5x sector min)`);
+    } else if (metrics.revenueGrowth >= sectorGrowthMin) {
       score += 15;
-      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth`);
+      reasons.push(`${(metrics.revenueGrowth * 100).toFixed(0)}% revenue growth (meets sector min)`);
     }
 
     if (metrics.earningsGrowth >= 0.40) {
@@ -598,8 +668,8 @@ class FundamentalScreener {
     if (metrics.quickRatio > 1.5) balanceScore += 8;
     if (metrics.currentRatio > 2.0) balanceScore += 8;
 
-    if (balanceScore < 15) {
-      return { score: 0, reasons: ['Inflection requires balance sheet score ≥15 (low debt + liquidity)'] };
+    if (balanceScore < 10) {
+      return { score: 0, reasons: ['Inflection requires balance sheet score ≥10 (low debt + liquidity)'] };
     }
 
     score = revenueScore + marginScore + fcfScore + valuationScore;
@@ -695,13 +765,15 @@ class FundamentalScreener {
     return { score, reasons };
   }
 
-  scoreQARP(metrics, marketCap) {
+  scoreQARP(metrics, marketCap, sectorConfig = getSectorConfig('Technology')) {
     // Market cap requirement: $2B minimum (quality verification)
     if (marketCap < this.MARKET_CAP_REQUIREMENTS.qarp) return { score: 0, reasons: [] };
 
     // P/E ceiling - reject expensive stocks (QARP = Quality at REASONABLE Price)
-    if (metrics.peRatio > 35) {
-      return { score: 0, reasons: ['P/E >35 - too expensive for QARP'] };
+    const sectorPE = sectorConfig.peRange || { ideal: 20, high: 30 };
+    const qarpCeiling = Math.min(sectorPE.ideal * 1.2, sectorPE.high);
+    if (metrics.peRatio > qarpCeiling) {
+      return { score: 0, reasons: [`P/E ${metrics.peRatio.toFixed(1)} > ${qarpCeiling.toFixed(1)} (sector ceiling)`] };
     }
 
     // Accrual ratio check - reject if earnings not backed by cash
@@ -992,8 +1064,8 @@ class FundamentalScreener {
     }
 
     // Require BOTH operational AND financial improvement
-    if (operationalScore < 20 || financialScore < 15) {
-      return { score: 0, reasons: ['Turnaround requires both operational improvement (≥20 pts) AND financial improvement (≥15 pts)'] };
+    if (operationalScore < 15 && financialScore < 12) {
+      return { score: 0, reasons: ['Turnaround requires operational ≥15 OR financial ≥12'] };
     }
 
     return { score, reasons };
@@ -1022,13 +1094,22 @@ class FundamentalScreener {
     if (deteriorationScore < 20) return null;
 
     // CRITERIA 3: Meme stock / squeeze safety check
-    const safetyPassed = this.shortSafetyCheck(metrics, reasons);
+    let shortPathway = 'overvalued';
+    if (deteriorationScore > valuationScore * 1.3) {
+      shortPathway = 'deteriorating';
+    } else if (valuationScore > deteriorationScore * 1.3) {
+      shortPathway = 'overvalued';
+    } else if (metrics.peRatio > (sectorConfig.peRange?.high || 40) * 1.6) {
+      shortPathway = 'overextended';
+    }
+
+    const safetyPassed = this.shortSafetyCheck(metrics, reasons, shortPathway);
     if (!safetyPassed) return null;
 
     const totalScore = valuationScore + deteriorationScore + accrualBonus;
     if (totalScore < this.SHORT_THRESHOLD) return null;
 
-    return { score: totalScore, reasons };
+    return { score: totalScore, reasons, pathway: shortPathway };
   }
 
   scoreShortValuation(metrics, sectorConfig, reasons) {
@@ -1117,7 +1198,7 @@ class FundamentalScreener {
     return score;
   }
 
-  shortSafetyCheck(metrics, reasons) {
+  shortSafetyCheck(metrics, reasons, pathway = 'overvalued') {
     // Must be large enough to short safely
     if (metrics.marketCap < this.MIN_SHORT_MARKET_CAP) {
       reasons.push(`⚠️ Market cap too small for short ($${(metrics.marketCap / 1e9).toFixed(1)}B < $2B)`);
@@ -1131,9 +1212,13 @@ class FundamentalScreener {
     }
 
     // Short float check - high short float = squeeze risk (meme stock indicator)
-    if (metrics.shortFloat && metrics.shortFloat > this.MAX_SHORT_FLOAT) {
-      reasons.push(`⚠️ Short float ${(metrics.shortFloat * 100).toFixed(0)}% - squeeze/meme risk`);
-      return false;
+    if (pathway === 'overvalued' || pathway === 'overextended') {
+      if (metrics.shortFloat && metrics.shortFloat > this.MAX_SHORT_FLOAT) {
+        reasons.push(`⚠️ Short float ${(metrics.shortFloat * 100).toFixed(0)}% - squeeze/meme risk`);
+        return false;
+      }
+    } else if (pathway === 'deteriorating' && metrics.shortFloat && metrics.shortFloat > 0.20) {
+      reasons.push(`High short float ${(metrics.shortFloat * 100).toFixed(0)}% - market consensus`);
     }
 
     // Note: IV check happens at execution time in short-manager.js (80% IV cap)

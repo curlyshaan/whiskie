@@ -993,6 +993,18 @@ router.get('/approvals', async (req, res) => {
       color: #d0d0d0;
       line-height: 1.6;
     }
+    .detail-block {
+      background: #0f1425;
+      padding: 15px;
+      border-radius: 5px;
+      margin-bottom: 15px;
+      color: #d0d0d0;
+      line-height: 1.5;
+    }
+    .detail-block ul {
+      margin-left: 18px;
+      margin-top: 8px;
+    }
     .actions {
       display: flex;
       gap: 10px;
@@ -1118,6 +1130,38 @@ router.get('/approvals', async (req, res) => {
           <strong>Reasoning:</strong><br>
           ${trade.reasoning}
         </div>
+
+        ${(trade.investment_thesis || trade.strategy_type || trade.holding_period || trade.confidence || trade.growth_potential || trade.stop_type || trade.target_type) ? `
+        <div class="detail-block">
+          <strong>Trade Thesis & Plan</strong>
+          <ul>
+            ${trade.investment_thesis ? `<li><strong>Thesis:</strong> ${trade.investment_thesis}</li>` : ''}
+            ${trade.strategy_type ? `<li><strong>Strategy:</strong> ${trade.strategy_type}</li>` : ''}
+            ${trade.holding_period ? `<li><strong>Holding Period:</strong> ${trade.holding_period}</li>` : ''}
+            ${trade.confidence ? `<li><strong>Confidence:</strong> ${trade.confidence}</li>` : ''}
+            ${trade.growth_potential ? `<li><strong>Growth Potential:</strong> ${trade.growth_potential}</li>` : ''}
+            ${trade.stop_type ? `<li><strong>Stop Type:</strong> ${trade.stop_type}</li>` : ''}
+            ${trade.stop_reason ? `<li><strong>Stop Reason:</strong> ${trade.stop_reason}</li>` : ''}
+            ${trade.target_type ? `<li><strong>Target Type:</strong> ${trade.target_type}</li>` : ''}
+            ${trade.trailing_stop_pct ? `<li><strong>Trailing Stop %:</strong> ${trade.trailing_stop_pct}%</li>` : ''}
+            ${trade.rebalance_threshold_pct ? `<li><strong>Rebalance Threshold %:</strong> ${trade.rebalance_threshold_pct}%</li>` : ''}
+            ${trade.max_holding_days ? `<li><strong>Max Hold Days:</strong> ${trade.max_holding_days}</li>` : ''}
+          </ul>
+        </div>
+        ` : ''}
+
+        ${(trade.catalysts || trade.news_links || trade.fundamentals || trade.risk_factors || trade.technical_setup) ? `
+        <div class="detail-block">
+          <strong>Supporting Detail</strong>
+          <ul>
+            ${trade.technical_setup ? `<li><strong>Technical:</strong> ${trade.technical_setup}</li>` : ''}
+            ${trade.risk_factors ? `<li><strong>Risks:</strong> ${trade.risk_factors}</li>` : ''}
+            ${trade.fundamentals ? `<li><strong>Fundamentals:</strong> ${typeof trade.fundamentals === 'string' ? trade.fundamentals : JSON.stringify(trade.fundamentals)}</li>` : ''}
+            ${trade.catalysts ? `<li><strong>Catalysts:</strong> ${Array.isArray(trade.catalysts) ? trade.catalysts.join('; ') : JSON.stringify(trade.catalysts)}</li>` : ''}
+            ${trade.news_links ? `<li><strong>News:</strong> ${Array.isArray(trade.news_links) ? trade.news_links.join(', ') : JSON.stringify(trade.news_links)}</li>` : ''}
+          </ul>
+        </div>
+        ` : ''}
 
         <div class="actions">
           <button class="btn btn-approve" onclick="approveTrade(${trade.id})">

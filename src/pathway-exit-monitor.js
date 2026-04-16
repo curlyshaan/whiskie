@@ -2,6 +2,7 @@ import * as db from './db.js';
 import tradier from './tradier.js';
 import pathwayStrategies from './pathway-exit-strategies.js';
 import email from './email.js';
+import fmp from './fmp.js';
 
 /**
  * Pathway Exit Monitor
@@ -52,6 +53,11 @@ class PathwayExitMonitor {
         const action = await this.checkPositionExits(position);
         if (action) {
           actions.push(action);
+        }
+
+        const extraActions = await this.checkStructuredExitRules(position);
+        if (extraActions.length > 0) {
+          actions.push(...extraActions);
         }
       } catch (error) {
         console.error(`   ❌ Error checking ${position.symbol}:`, error.message);
@@ -185,6 +191,81 @@ class PathwayExitMonitor {
     return null;
   }
 
+  async checkStructuredExitRules(position) {
+    const actions = [];
+    const quote = await tradier.getQuote(position.symbol);
+    if (!quote) return actions;
+
+    const currentPrice = quote.last || quote.close;
+    const isShort = position.quantity < 0;
+
+    if (position.max_holding_days && position.entry_date) {
+      const daysHeld = Math.floor((Date.now() - new Date(position.entry_date).getTime()) / (1000 * 60 * 60 * 24));
+      if (daysHeld > position.max_holding_days) {
+        actions.push({
+          type: 'time_stop_exit',
+          symbol: position.symbol,
+          pathway: position.pathway,
+          quantity: Math.abs(position.quantity),
+          currentPrice,
+          reason: `Max holding days exceeded (${daysHeld}/${position.max_holding_days})`,
+          position
+        });
+      }
+    }
+
+    if (!isShort && position.rebalance_threshold_pct && position.current_price && position.quantity) {
+      const basisValue = position.cost_basis * Math.abs(position.quantity);
+      const currentValue = currentPrice * Math.abs(position.quantity);
+      const gainPct = basisValue > 0 ? ((currentValue - basisValue) / basisValue) * 100 : 0;
+      if (gainPct >= position.rebalance_threshold_pct) {
+        actions.push({
+          type: 'rebalance_trim',
+          symbol: position.symbol,
+          pathway: position.pathway,
+          quantity: Math.max(1, Math.floor(Math.abs(position.quantity) * 0.2)),
+          currentPrice,
+          reason: `Rebalance threshold reached (${gainPct.toFixed(1)}% >= ${position.rebalance_threshold_pct}%)`,
+          position
+        });
+      }
+    }
+
+    if (position.stop_type === 'fundamental' && position.fundamental_stop_conditions) {
+      const fundamentals = await fmp.getFundamentals(position.symbol);
+      const conditions = typeof position.fundamental_stop_conditions === 'string'
+        ? JSON.parse(position.fundamental_stop_conditions)
+        : position.fundamental_stop_conditions;
+
+      if (fundamentals && conditions) {
+        if (conditions.operating_margin_min && fundamentals.operatingMargin < conditions.operating_margin_min) {
+          actions.push({
+            type: 'fundamental_exit',
+            symbol: position.symbol,
+            pathway: position.pathway,
+            quantity: Math.abs(position.quantity),
+            currentPrice,
+            reason: `Operating margin ${fundamentals.operatingMargin} < ${conditions.operating_margin_min}`,
+            position
+          });
+        }
+        if (conditions.debt_to_equity_max && fundamentals.debtToEquity > conditions.debt_to_equity_max) {
+          actions.push({
+            type: 'fundamental_exit',
+            symbol: position.symbol,
+            pathway: position.pathway,
+            quantity: Math.abs(position.quantity),
+            currentPrice,
+            reason: `Debt/Equity ${fundamentals.debtToEquity} > ${conditions.debt_to_equity_max}`,
+            position
+          });
+        }
+      }
+    }
+
+    return actions;
+  }
+
   /**
    * Execute pathway exit actions
    */
@@ -197,12 +278,15 @@ class PathwayExitMonitor {
 
         switch (action.type) {
           case 'trim':
+          case 'rebalance_trim':
             result = await this.executeTrim(action);
             break;
           case 'activate_trailing_stop':
             result = await this.activateTrailingStop(action);
             break;
           case 'trailing_stop_triggered':
+          case 'fundamental_exit':
+          case 'time_stop_exit':
             result = await this.executeTrailingStopExit(action);
             break;
           default:

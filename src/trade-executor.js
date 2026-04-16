@@ -110,6 +110,8 @@ class TradeExecutor {
           approval.take_profit
         );
 
+        await this.createPositionLots(approval, result.order.id);
+
         // Mark as executed
         await tradeApproval.markExecuted(approval.id, result.order.id);
 
@@ -171,7 +173,7 @@ class TradeExecutor {
 
     // Determine lot type based on intent
     let lotType = 'swing';
-    if (approval.intent === 'value_momentum' || approval.intent === 'quality_dip') {
+    if (approval.intent === 'value_momentum' || approval.intent === 'quality_dip' || approval.intent === 'fundamental_hold') {
       lotType = 'long-term';
     }
 
@@ -189,7 +191,19 @@ class TradeExecutor {
       original_intent: approval.intent,
       current_intent: approval.intent,
       pathway: approval.pathway,
-      intent: approval.intent
+      intent: approval.intent,
+      strategy_type: approval.strategy_type,
+      holding_period: approval.holding_period,
+      confidence: approval.confidence,
+      growth_potential: approval.growth_potential,
+      stop_type: approval.stop_type,
+      target_type: approval.target_type,
+      trailing_stop_pct: approval.trailing_stop_pct,
+      rebalance_threshold_pct: approval.rebalance_threshold_pct,
+      max_holding_days: approval.max_holding_days,
+      fundamental_stop_conditions: approval.fundamental_stop_conditions,
+      catalysts: approval.catalysts,
+      news_links: approval.news_links
     });
 
     // Also create aggregate position with pathway info
@@ -204,7 +218,21 @@ class TradeExecutor {
       take_profit: approval.take_profit,
       pathway: approval.pathway,
       intent: approval.intent,
-      peak_price: approval.entry_price
+      peak_price: approval.entry_price,
+      strategy_type: approval.strategy_type,
+      holding_period: approval.holding_period,
+      confidence: approval.confidence,
+      growth_potential: approval.growth_potential,
+      stop_type: approval.stop_type,
+      stop_reason: approval.stop_reason,
+      target_type: approval.target_type,
+      has_fixed_target: approval.has_fixed_target,
+      trailing_stop_pct: approval.trailing_stop_pct,
+      rebalance_threshold_pct: approval.rebalance_threshold_pct,
+      max_holding_days: approval.max_holding_days,
+      fundamental_stop_conditions: approval.fundamental_stop_conditions,
+      catalysts: approval.catalysts,
+      news_links: approval.news_links
     });
   }
 }

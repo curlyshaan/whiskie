@@ -38,6 +38,24 @@ class TradeApprovalManager {
         pathway VARCHAR(50),
         intent VARCHAR(50),
         reasoning TEXT,
+        investment_thesis TEXT,
+        strategy_type VARCHAR(50),
+        catalysts JSONB,
+        fundamentals JSONB,
+        technical_setup TEXT,
+        risk_factors TEXT,
+        holding_period VARCHAR(50),
+        confidence VARCHAR(20),
+        growth_potential VARCHAR(50),
+        news_links JSONB,
+        stop_type VARCHAR(20),
+        stop_reason TEXT,
+        has_fixed_target BOOLEAN,
+        target_type VARCHAR(20),
+        trailing_stop_pct DECIMAL(5, 2),
+        rebalance_threshold_pct DECIMAL(5, 2),
+        max_holding_days INTEGER,
+        fundamental_stop_conditions JSONB,
         status VARCHAR(20) DEFAULT 'pending',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         expires_at TIMESTAMP,
@@ -48,10 +66,29 @@ class TradeApprovalManager {
       )
     `);
 
-    // Add pathway column if it doesn't exist (for existing databases)
+    // Backfill columns for existing databases
     await db.query(`
       ALTER TABLE trade_approvals
-      ADD COLUMN IF NOT EXISTS pathway VARCHAR(50)
+      ADD COLUMN IF NOT EXISTS pathway VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS intent VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS investment_thesis TEXT,
+      ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS catalysts JSONB,
+      ADD COLUMN IF NOT EXISTS fundamentals JSONB,
+      ADD COLUMN IF NOT EXISTS technical_setup TEXT,
+      ADD COLUMN IF NOT EXISTS risk_factors TEXT,
+      ADD COLUMN IF NOT EXISTS holding_period VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS confidence VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS growth_potential VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS news_links JSONB,
+      ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS stop_reason TEXT,
+      ADD COLUMN IF NOT EXISTS has_fixed_target BOOLEAN,
+      ADD COLUMN IF NOT EXISTS target_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS trailing_stop_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS rebalance_threshold_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS max_holding_days INTEGER,
+      ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB
     `);
 
     console.log('✅ Trade approval table initialized');
@@ -72,7 +109,25 @@ class TradeApprovalManager {
       orderType = 'limit',
       pathway,
       intent,
-      reasoning
+      reasoning,
+      investmentThesis,
+      strategyType,
+      catalysts,
+      fundamentals,
+      technicalSetup,
+      riskFactors,
+      holdingPeriod,
+      confidence,
+      growthPotential,
+      newsLinks,
+      stopType,
+      stopReason,
+      hasFixedTarget,
+      targetType,
+      trailingStopPct,
+      rebalanceThresholdPct,
+      maxHoldingDays,
+      fundamentalStopConditions
     } = trade;
 
     // Calculate expiration (24 hours from now)
@@ -83,11 +138,25 @@ class TradeApprovalManager {
     const result = await db.query(
       `INSERT INTO trade_approvals
        (symbol, action, quantity, entry_price, stop_loss, take_profit,
-        order_type, pathway, intent, reasoning, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        order_type, pathway, intent, reasoning, investment_thesis, strategy_type,
+        catalysts, fundamentals, technical_setup, risk_factors, holding_period,
+        confidence, growth_potential, news_links, stop_type, stop_reason,
+        has_fixed_target, target_type, trailing_stop_pct, rebalance_threshold_pct,
+        max_holding_days, fundamental_stop_conditions, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
        RETURNING id`,
       [symbol, action, quantity, entryPrice, stopLoss, takeProfit,
-       orderType, pathway, intent, reasoning, expiresAt]
+       orderType, pathway, intent, reasoning, investmentThesis || null, strategyType || null,
+       catalysts ? JSON.stringify(catalysts) : null,
+       fundamentals ? JSON.stringify(fundamentals) : null,
+       technicalSetup || null, riskFactors || null, holdingPeriod || null,
+       confidence || null, growthPotential || null,
+       newsLinks ? JSON.stringify(newsLinks) : null,
+       stopType || null, stopReason || null, hasFixedTarget ?? null,
+       targetType || null, trailingStopPct ?? null, rebalanceThresholdPct ?? null,
+       maxHoldingDays ?? null,
+       fundamentalStopConditions ? JSON.stringify(fundamentalStopConditions) : null,
+       expiresAt]
     );
 
     const approvalId = result.rows[0].id;

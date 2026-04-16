@@ -12,6 +12,8 @@ const pool = new Pool({
 
 const FMP_API_KEY = process.env.FMP_API_KEY_1;
 const MIN_MARKET_CAP = 7_000_000_000; // 7B
+const GROWTH_MIN_MARKET_CAP = 1_000_000_000; // 1B
+const GROWTH_MAX_MARKET_CAP = 10_000_000_000; // 10B
 const STOCKS_PER_INDUSTRY = 7; // Top 7 per industry
 const RATE_LIMIT_DELAY = 400; // 400ms = 150 calls/min (under 300/min limit)
 
@@ -57,6 +59,29 @@ async function fetchStocksFromFMP() {
     console.error('❌ Error fetching from FMP:', error.message);
     throw error;
   }
+}
+
+async function fetchGrowthStocksFromFMP() {
+  console.log('🚀 Fetching growth-focused expansion universe...');
+  const url = `https://financialmodelingprep.com/stable/company-screener?marketCapMoreThan=${GROWTH_MIN_MARKET_CAP}&marketCapLowerThan=${GROWTH_MAX_MARKET_CAP}&exchange=NASDAQ,NYSE&sector=Technology,Healthcare,Consumer%20Cyclical&volumeMoreThan=500000&limit=1000&apikey=${FMP_API_KEY}`;
+
+  const response = await fetch(url);
+  const data = await response.json();
+
+  if (!Array.isArray(data)) {
+    throw new Error('FMP growth screener returned non-array response');
+  }
+
+  const filtered = data.filter(stock =>
+    !stock.isEtf &&
+    !stock.isFund &&
+    stock.isActivelyTrading &&
+    ['Technology', 'Healthcare', 'Consumer Cyclical'].includes(stock.sector) &&
+    (stock.volume || 0) >= 500000
+  );
+
+  console.log(`   ✅ Growth expansion candidates: ${filtered.length}`);
+  return filtered;
 }
 
 /**
@@ -137,8 +162,9 @@ async function populateDatabase(stocks) {
         await client.query(
           `INSERT INTO stock_universe
            (symbol, company_name, sector, industry, market_cap, market_cap_tier,
-            price, avg_daily_volume, exchange, country, is_etf, is_actively_trading, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+            price, avg_daily_volume, exchange, country, is_etf, is_actively_trading, status,
+            is_growth_candidate, universe_bucket)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
           [
             stock.symbol,
             stock.companyName,
@@ -152,7 +178,9 @@ async function populateDatabase(stocks) {
             stock.country || 'US',
             stock.isEtf || false,
             stock.isActivelyTrading !== false,
-            'active'
+            'active',
+            stock.is_growth_candidate || false,
+            stock.universe_bucket || 'core'
           ]
         );
 
@@ -228,10 +256,37 @@ async function main() {
     const allStocks = await fetchStocksFromFMP();
 
     // Step 2: Select top N per industry
-    const selectedStocks = selectTopStocksPerIndustry(allStocks, STOCKS_PER_INDUSTRY);
+    const selectedStocks = selectTopStocksPerIndustry(allStocks, STOCKS_PER_INDUSTRY)
+      .map(stock => ({ ...stock, is_growth_candidate: false, universe_bucket: 'core' }));
 
-    // Step 3: Populate database
-    await populateDatabase(selectedStocks);
+    // Step 3: Expand with growth-focused universe
+    const growthStocks = await fetchGrowthStocksFromFMP();
+    const normalizedGrowthStocks = growthStocks.map(stock => ({
+      ...stock,
+      is_growth_candidate: true,
+      universe_bucket: 'growth_expansion'
+    }));
+
+    const deduped = new Map();
+    [...selectedStocks, ...normalizedGrowthStocks].forEach(stock => {
+      const existing = deduped.get(stock.symbol);
+      if (!existing) {
+        deduped.set(stock.symbol, stock);
+        return;
+      }
+
+      deduped.set(stock.symbol, {
+        ...existing,
+        ...stock,
+        is_growth_candidate: existing.is_growth_candidate || stock.is_growth_candidate,
+        universe_bucket: existing.universe_bucket === 'growth_expansion' || stock.universe_bucket === 'growth_expansion'
+          ? 'growth_expansion'
+          : existing.universe_bucket
+      });
+    });
+
+    // Step 4: Populate database
+    await populateDatabase([...deduped.values()]);
 
     console.log('\n═══════════════════════════════════════');
     console.log('✅ UNIVERSE POPULATION COMPLETE');
