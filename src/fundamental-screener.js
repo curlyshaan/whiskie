@@ -48,6 +48,7 @@ class FundamentalScreener {
     this.LONG_THRESHOLD = 48;               // Raised from 38 to improve selectivity (62% pass rate too high)
     this.SHORT_THRESHOLD = 65;              // Raised from 50 to match long threshold increase
     this.MAX_SHORT_FLOAT = 0.15;            // Max 15% short float (reduced from 20%)
+    this.EXCLUDE_GROWTH_UNIVERSE = true;    // Temporarily disable growth-universe names; keep flag for easy re-enable
     this.debugCounter = 0;                  // Track stocks for debug logging
   }
 
@@ -175,19 +176,21 @@ class FundamentalScreener {
       const quote = await fmp.getQuote(stock.symbol);
       if (!quote) return null;
 
-      const price = quote.price || quote.previousClose || quote.close || 0;
-      const volume = quote.averageVolume || 0;
-      const dollarVolume = volume * price;
+      const fundamentals = await fmp.getFundamentals(stock.symbol);
+      // Skip if no fundamentals (likely an ETF or non-equity security)
+      if (!fundamentals) return null;
+
+      const price = Number(stock.price || quote.price || quote.previousClose || quote.close || fundamentals.price || 0);
+      const avgVolume = Number(stock.avgDailyVolume || fundamentals.avgVolume || quote.averageVolume || quote.volume || 0);
+      const dollarVolume = avgVolume * price;
 
       // Basic quality filters
       if (price < this.MIN_PRICE) return null;
       if (dollarVolume < this.MIN_DOLLAR_VOLUME) return null;
 
-      const fundamentals = await fmp.getFundamentals(stock.symbol);
       // Skip if no fundamentals (likely an ETF or non-equity security)
       if (!fundamentals) return null;
 
-      const avgVolume = fundamentals.avgVolume || 0;
       const marketCap = fundamentals.marketCap || 0;
 
       const sector = normalizeSectorName(fundamentals.sector);
@@ -1281,14 +1284,22 @@ class FundamentalScreener {
 
     // Query stock_universe table (populated from FMP)
     const result = await db.query(
-      'SELECT symbol, sector, industry FROM stock_universe WHERE status = $1 ORDER BY market_cap DESC',
-      ['active']
+      `SELECT symbol, sector, industry, price, avg_daily_volume, is_growth_candidate, universe_bucket
+       FROM stock_universe
+       WHERE status = $1
+         AND ($2 = FALSE OR COALESCE(is_growth_candidate, FALSE) = FALSE)
+       ORDER BY market_cap DESC`,
+      ['active', this.EXCLUDE_GROWTH_UNIVERSE]
     );
 
     const stocks = result.rows.map(row => ({
       symbol: row.symbol,
       sector: row.sector,
-      industry: row.industry
+      industry: row.industry,
+      price: Number(row.price || 0),
+      avgDailyVolume: Number(row.avg_daily_volume || 0),
+      isGrowthCandidate: row.is_growth_candidate,
+      universeBucket: row.universe_bucket
     }));
 
     console.log(`   ✅ Loaded ${stocks.length} stocks from universe`);

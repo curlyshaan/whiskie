@@ -24,6 +24,7 @@ class PreRanking {
       'qarp',
       'qualityCompounder'
     ]);
+    this.EXCLUDE_GROWTH_UNIVERSE = true; // Temporarily disable growth-universe names; easy to re-enable later
     this.SHORT_MOMENTUM_CONFIG = {
       deteriorating: {
         direction: 'negative',
@@ -260,8 +261,12 @@ class PreRanking {
    */
   async getAllStocks() {
     const result = await db.query(
-      'SELECT symbol, sector, industry FROM stock_universe WHERE status = $1 ORDER BY market_cap DESC',
-      ['active']
+      `SELECT symbol, sector, industry
+       FROM stock_universe
+       WHERE status = $1
+         AND ($2 = FALSE OR COALESCE(is_growth_candidate, FALSE) = FALSE)
+       ORDER BY market_cap DESC`,
+      ['active', this.EXCLUDE_GROWTH_UNIVERSE]
     );
     return result.rows.map(row => ({
       symbol: row.symbol,

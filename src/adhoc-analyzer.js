@@ -427,6 +427,13 @@ router.post('/analyze', async (req, res) => {
     const watchlistStatus = inWatchlist ? watchlistCheck.rows[0].status : null;
     const watchlistPathway = inWatchlist ? watchlistCheck.rows[0].pathway : null;
     const opusConviction = inWatchlist ? watchlistCheck.rows[0].opus_conviction : null;
+    
+    // Check if there's an active position with thesis management
+    const positionCheck = await db.query(
+      'SELECT * FROM active_positions WHERE symbol = $1 AND status = $2',
+      [symbol, 'open']
+    );
+    const positionDetails = positionCheck.rows.length > 0 ? positionCheck.rows[0] : null;
 
     // Step 3: Get stock profile
     const profileCheck = await db.query(
@@ -488,7 +495,8 @@ router.post('/analyze', async (req, res) => {
       optionsData,
       inUniverse,
       inWatchlist,
-      watchlistStatus
+      watchlistStatus,
+      positionDetails
     });
 
     // Step 9: Call Opus with extended thinking
@@ -559,7 +567,8 @@ function buildOpusPrompt(data) {
     optionsData,
     inUniverse,
     inWatchlist,
-    watchlistStatus
+    watchlistStatus,
+    positionDetails
   } = data;
 
   let prompt = `You are analyzing ${symbol} for a ${intent} position.
@@ -585,6 +594,19 @@ CURRENT POSITION DETAILS:
     const targetDistance = ((parseFloat(takeProfit) - currentPrice) / currentPrice * 100).toFixed(2);
     prompt += `
 - Take Profit: $${takeProfit} (${Math.abs(targetDistance)}% ${targetDistance > 0 ? 'above' : 'below'} current)`;
+  }
+  
+  if (positionDetails) {
+    prompt += `
+
+ACTIVE POSITION MANAGEMENT:
+- Pathway: ${positionDetails.pathway || 'N/A'}
+- Thesis State: ${positionDetails.thesis_state || 'N/A'}
+- Holding Posture: ${positionDetails.holding_posture || 'N/A'}
+- Base Target: $${positionDetails.base_target || 'N/A'}
+- Thesis Flex Target: $${positionDetails.thesis_flex_target || 'N/A'}
+- Trailing Stop: $${positionDetails.trailing_stop || 'N/A'}
+- Reassessment Date: ${positionDetails.thesis_reassessment_date || 'N/A'}`;
   }
 
   prompt += `
