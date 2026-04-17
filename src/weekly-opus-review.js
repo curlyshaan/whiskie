@@ -181,21 +181,19 @@ class WeeklyOpusReview {
       );
       const profile = profileResult.rows[0];
 
-      // Get latest fundamentals from FMP
-      const [ratios, keyMetrics, quote] = await Promise.all([
+      // Get latest fundamentals/context from FMP
+      const [ratios, keyMetrics, quote, bundle] = await Promise.all([
         fmp.getRatiosTTM(stock.symbol),
         fmp.getKeyMetricsTTM(stock.symbol),
-        fmp.getQuote(stock.symbol)
+        fmp.getQuote(stock.symbol),
+        fmp.getDeepAnalysisBundle(stock.symbol)
       ]);
 
-      // Search recent news
-      const news = await tavily.search(`${stock.symbol} stock news earnings`, {
-        days: 7,
-        max_results: 3
-      });
+      // Structured recent news/context
+      const news = await tavily.searchStructuredStockContext(stock.symbol, { maxResults: 5 });
 
       // Build Opus prompt
-      const prompt = this.buildAnalysisPrompt(stock, pathway, profile, ratios, keyMetrics, quote, news);
+      const prompt = this.buildAnalysisPrompt(stock, pathway, profile, ratios, keyMetrics, quote, news, bundle);
 
       // Call Opus with extended thinking
       const messages = [{ role: 'user', content: prompt }];
@@ -246,7 +244,7 @@ class WeeklyOpusReview {
   /**
    * Build Opus analysis prompt
    */
-  buildAnalysisPrompt(stock, pathway, profile, ratios, keyMetrics, quote, news) {
+  buildAnalysisPrompt(stock, pathway, profile, ratios, keyMetrics, quote, news, bundle) {
     const intent = stock.intent;
     const metrics = typeof stock.metrics === 'string' ? JSON.parse(stock.metrics) : stock.metrics;
 
@@ -271,22 +269,30 @@ SATURDAY SCREENING RESULTS:
 `;
     }
 
-    // Add fundamentals
+    // Add fundamentals + technical context
     prompt += `CURRENT FUNDAMENTALS:
 - P/E (TTM): ${ratios?.peRatioTTM?.toFixed(2) || 'N/A'}
 - PEG (TTM): ${ratios?.priceToEarningsGrowthRatioTTM?.toFixed(2) || 'N/A'}
 - PEG (Forward): ${ratios?.forwardPriceToEarningsGrowthRatioTTM?.toFixed(2) || 'N/A'}
-- Revenue Growth (YoY): ${(metrics?.revenueGrowthQ * 100)?.toFixed(1) || 'N/A'}%
-- Operating Margin: ${(ratios?.operatingMargin * 100)?.toFixed(1) || 'N/A'}%
-- ROE: ${(ratios?.returnOnEquity * 100)?.toFixed(1) || 'N/A'}%
+- Revenue Growth (YoY): ${(bundle?.signals?.revenueGrowth * 100)?.toFixed(1) || (metrics?.revenueGrowthQ * 100)?.toFixed(1) || 'N/A'}%
+- Operating Margin: ${(bundle?.signals?.operatingMargin * 100)?.toFixed(1) || 'N/A'}%
+- ROE: ${(bundle?.signals?.roe * 100)?.toFixed(1) || 'N/A'}%
+- ROIC: ${(bundle?.signals?.roic * 100)?.toFixed(1) || 'N/A'}%
 - FCF Yield: ${(keyMetrics?.freeCashFlowYield * 100)?.toFixed(1) || 'N/A'}%
-- Current Price: $${quote?.price || stock.price}
+- Current Price: $${bundle?.signals?.currentPrice || quote?.price || stock.price}
+- Sector / Industry: ${bundle?.signals?.sector || stock.sector || 'Unknown'} / ${bundle?.signals?.industry || stock.industry || 'Unknown'}
+
+TECHNICAL CONTEXT:
+- Above 50MA: ${bundle?.signals?.isAbove50MA ?? 'N/A'}
+- Above 200MA: ${bundle?.signals?.isAbove200MA ?? 'N/A'}
+- Distance from 200MA: ${bundle?.signals?.ma200Distance ?? 'N/A'}%
+- Technical Summary: ${bundle?.technicals ? JSON.stringify(bundle.technicals.technicalSignal || {}, null, 2) : 'N/A'}
 
 `;
 
     // Add recent news
     if (news && news.length > 0) {
-      prompt += `RECENT NEWS:\n`;
+      prompt += `RECENT NEWS (structured search):\n`;
       news.forEach((item, i) => {
         prompt += `${i + 1}. ${item.title}\n   ${item.snippet}\n\n`;
       });

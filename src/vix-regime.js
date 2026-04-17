@@ -1,4 +1,4 @@
-import tradier from './tradier.js';
+import fmp from './fmp.js';
 import email from './email.js';
 
 /**
@@ -8,12 +8,12 @@ import email from './email.js';
 class VixRegime {
 
   /**
-   * Fetch current VIX level from Tradier
+   * Fetch current VIX level from FMP
    */
   async getCurrentVix() {
     try {
-      const quote = await tradier.getQuote('VIX');
-      return parseFloat(quote.last || quote.close || 20);
+      const quote = await fmp.getQuote('VIX');
+      return parseFloat(quote.price || quote.previousClose || quote.close || 20);
     } catch (error) {
       console.warn('⚠️ Could not fetch VIX, defaulting to 20 (Normal regime)');
       return 20;

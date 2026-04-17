@@ -122,12 +122,21 @@ node test/test-yahoo-finance.js
 - `deteriorating`
 - `overextended`
 
+## Strategy-aware management facts to preserve
+
+When changing trade-management logic, keep these invariants aligned across prompts, DB, and UI:
+
+- `thesis_state` and `holding_posture` are first-class persisted fields
+- `flexible_fundamental` means the position should not rely on a rigid take-profit ceiling
+- weekly review, earnings review, and pathway exit monitoring must consume the latest persisted management state, not only entry metadata
+- structured Tavily searches are preferred over vague ticker-news prompts when feeding Opus review flows
+
 ## Data-source facts to preserve
 
 ### FMP
 
 - use `/stable` endpoints
-- current client enforces `400ms` spacing
+- current client uses controlled parallel quote fan-out instead of a fixed per-request sleep
 - current client keeps a `30-minute` in-memory cache
 
 ### Trade approval

@@ -1,0 +1,258 @@
+Proposed Target/Thesis Management Design for Whiskie
+
+Objective
+
+Refine Whiskie’s post-entry position management so that exit behavior matches the actual intent of the position.
+
+The key idea is:
+
+- not all positions should be managed the same way
+- a fundamental compounder like MSFT should not be treated like a short-term momentum trade
+- price targets, trims, trailing stops, and thesis updates should behave differently depending on strategy type
+
+Current concern
+
+Whiskie currently stores rich trade metadata at entry, including:
+
+- entry
+- stop
+- target
+- thesis
+- target type
+- trailing stop settings
+- rebalance threshold
+- holding period
+- fundamental stop conditions
+
+This is a strong foundation.
+
+However, the current system appears to be only partially dynamic after entry.
+
+Main concern
+There is not yet a fully unified workflow that consistently does this for all positions:
+
+1. re-underwrite the thesis after entry
+2. determine whether the thesis has strengthened, weakened, or broken
+3. adjust target/stop/trim logic based on the updated thesis
+4. persist the new logic so it affects future monitoring and exits
+
+As a result, positions may still behave too much like “set target once at entry and manage around it,” even when that is not appropriate.
+
+Core recommendation
+
+Whiskie should manage positions based on position intent / strategy type, not a single universal target model.
+
+Strategy-aware position management
+
+1. Fundamental holds
+Examples:
+- qualityCompounder
+- deepValue
+- cashMachine
+- qarp
+- some fundamental_hold intents
+
+Recommended management style:
+- thesis is primary
+- target is flexible, not rigid
+- price target should be revisited when thesis improves
+- trims and rebalancing should matter more than full exits
+- exits should usually happen because:
+  - thesis weakens
+  - valuation becomes extreme
+  - capital can be reallocated to a clearly better opportunity
+  - risk concentration becomes too high
+
+2. Growth / momentum trades
+Examples:
+- highGrowth
+- inflection
+- growth_momentum
+- tactical catalyst trades
+
+Recommended management style:
+- target is more explicit
+- target can still evolve, but less freely than a fundamental compounder
+- technical structure matters heavily
+- trailing stop and target-based exits are more appropriate
+- if momentum fades, Whiskie should reduce or exit faster
+
+3. Shorts
+Examples:
+- overvalued
+- deteriorating
+- overextended
+
+Recommended management style:
+- tactical and risk-tight
+- explicit stops are critical
+- explicit downside targets are important
+- thesis should be reviewed often because short setups can unwind quickly
+- do not allow “long-duration drift” without a strong re-underwritten case
+
+Desired system behavior
+
+A. Thesis state should become a first-class concept
+
+For each live position, Whiskie should classify the thesis as:
+
+- strengthening
+- unchanged
+- weakening
+- broken
+
+This should be updated during:
+- weekly review
+- earnings review
+- significant catalyst review
+- structured exit monitoring where relevant
+
+B. Target logic should depend on thesis state
+
+For fundamental holds
+If thesis is:
+- strengthening:
+  - allow target expansion or convert to a more flexible target model
+  - favor rebalance / trim logic instead of full exit
+- unchanged:
+  - maintain current target/trim plan
+- weakening:
+  - tighten target expectations
+  - tighten stop or reduce size
+- broken:
+  - exit
+
+For growth/momentum trades
+If thesis is:
+- strengthening:
+  - allow target revision upward, but still within technical discipline
+- unchanged:
+  - keep current structure
+- weakening:
+  - reduce quickly or tighten stops
+- broken:
+  - exit
+
+For shorts
+If thesis is:
+- strengthening:
+  - maintain or press within risk limits
+- unchanged:
+  - keep current target/stop
+- weakening:
+  - reduce or tighten stop quickly
+- broken:
+  - cover
+
+Price target philosophy
+
+Fundamental compounders like MSFT
+For stocks like MSFT, a rigid constant price target is usually not ideal.
+
+Recommended behavior:
+- use price targets as valuation/reward anchors, not hard ceilings
+- if execution improves, moat strengthens, or the growth runway expands, Whiskie should be able to revise the target upward
+- if the thesis is stronger than at entry, a trim/rebalance decision is often better than a full exit
+- the system should not force exit purely because the original target was hit if the thesis materially improved
+
+Tactical trades
+For shorter-duration ideas, target discipline should remain much stricter.
+
+Proposed operational model
+
+1. At trade entry
+Store:
+- strategy type
+- intent
+- initial thesis
+- target type:
+  - fixed
+  - flexible_fundamental
+  - trailing
+  - timeboxed
+- stop type
+- re-underwrite cadence
+
+2. During ongoing reviews
+Each review should output:
+- thesis state
+- whether target should be:
+  - kept
+  - raised
+  - lowered
+  - removed in favor of trailing/rebalance logic
+- whether stop should change
+- whether size should change
+
+3. Persist updates
+Updated fields should be written back to position / position-lot records so downstream systems use the latest logic.
+
+That includes:
+- updated thesis summary
+- updated target
+- updated target type
+- updated stop
+- updated conviction
+- updated rebalance threshold
+- updated holding posture
+
+4. Monitoring logic should consume updated fields
+Pathway exit monitoring, weekly review, and execution logic should use the latest persisted position-management data rather than relying too heavily on the original trade recommendation.
+
+Practical implementation principle
+
+Whiskie should evolve from:
+
+“entry recommendation with stored metadata”
+
+to:
+
+“ongoing strategy-aware position management system”
+
+That means:
+- the entry recommendation is only the starting point
+- the current thesis should always outrank stale entry assumptions
+- target behavior should be adaptive for long-duration fundamental names
+- target behavior should remain tighter for tactical names and shorts
+
+Benefits
+
+Better alignment with actual investing style
+This would make Whiskie behave more like a real portfolio manager rather than a static alert generator.
+
+Better handling of high-quality compounders
+Names like MSFT would no longer be forced into an overly rigid target model.
+
+Cleaner distinction between trade types
+The system would better separate:
+- compounders
+- value holds
+- growth trades
+- tactical trades
+- shorts
+
+More consistent post-entry behavior
+All downstream workflows would operate from the latest thesis, not only the original one.
+
+Summary recommendation
+
+Whiskie should adopt strategy-aware dynamic target and thesis management:
+
+- Fundamental holds:
+  - flexible targets
+  - thesis-driven updates
+  - trims/rebalance favored over rigid exits
+- Growth/momentum:
+  - more explicit technical + target discipline
+- Shorts:
+  - tactical, tighter-risk management
+- All positions:
+  - ongoing thesis classification
+  - persisted post-entry updates
+  - monitoring based on current thesis, not stale entry assumptions
+
+Review request framing
+
+For third-party review, the main question is:
+
+Should Whiskie’s current post-entry management evolve into a strategy-aware, thesis-updating framework where fundamental compounders use flexible targets and tactical trades/shorts use tighter explicit target discipline?

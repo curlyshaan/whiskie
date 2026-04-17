@@ -1,8 +1,10 @@
 import * as db from './db.js';
-import tradier from './tradier.js';
+import fmp from './fmp.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
 import email from './email.js';
+import tradier from './tradier.js';
+import thesisManager from './thesis-manager.js';
 
 /**
  * Earnings Day Analysis Module
@@ -30,8 +32,12 @@ export async function getPositionsWithUpcomingEarnings(daysAhead = 1) {
         const daysUntil = Math.floor((earningsDate - today) / (1000 * 60 * 60 * 24));
 
         if (daysUntil >= 0 && daysUntil <= daysAhead) {
-          const symbolLots = lots.filter(lot => lot.symbol === symbol && lot.quantity > 0);
-          const isShort = symbolLots.some(lot => lot.position_type === 'short');
+          const symbolLots = lots.filter(lot => lot.symbol === symbol);
+          const isShort = symbolLots.some(lot => lot.position_type === 'short' || lot.quantity < 0);
+
+          if (symbolLots.length === 0) {
+            continue;
+          }
 
           positionsWithEarnings.push({
             symbol,
@@ -67,13 +73,16 @@ export async function analyzeBeforeEarnings(position) {
     const newsText = tavily.formatResults(news);
 
     // Get current price
-    const quote = await tradier.getQuote(position.symbol);
-    const currentPrice = quote.last;
+    const quote = await fmp.getQuote(position.symbol);
+    const currentPrice = quote.price;
 
     // Calculate position details
-    const totalQuantity = position.lots.reduce((sum, lot) => sum + lot.quantity, 0);
-    const avgCostBasis = position.lots.reduce((sum, lot) => sum + (lot.quantity * lot.cost_basis), 0) / totalQuantity;
-    const gainPercent = ((currentPrice - avgCostBasis) / avgCostBasis * 100).toFixed(2);
+    const totalQuantity = position.lots.reduce((sum, lot) => sum + Math.abs(lot.quantity), 0);
+    const totalCost = position.lots.reduce((sum, lot) => sum + (Math.abs(lot.quantity) * lot.cost_basis), 0);
+    const avgCostBasis = totalQuantity > 0 ? totalCost / totalQuantity : 0;
+    const gainPercent = position.isShort
+      ? ((avgCostBasis - currentPrice) / avgCostBasis * 100).toFixed(2)
+      : ((currentPrice - avgCostBasis) / avgCostBasis * 100).toFixed(2);
 
     // Get thesis from first lot
     const thesis = position.lots[0]?.thesis || 'No thesis available';
@@ -144,6 +153,7 @@ Include your reasoning in 2-3 sentences.
       symbol: position.symbol,
       recommendation,
       reasoning: analysis.analysis,
+      thesisState: thesisManager.extractThesisState(analysis.analysis),
       currentPrice,
       gainPercent,
       totalQuantity,
@@ -168,6 +178,20 @@ Include your reasoning in 2-3 sentences.
 export async function executeEarningsDecision(analysis) {
   try {
     console.log(`\n💼 Executing earnings decision for ${analysis.symbol}: ${analysis.recommendation}`);
+
+    await thesisManager.persistPositionManagementUpdate(analysis.symbol, {
+      thesisSummary: analysis.reasoning,
+      thesisState: analysis.thesisState || 'unchanged',
+      holdingPosture: analysis.recommendation === 'SELL'
+        ? 'exit'
+        : analysis.recommendation === 'TRIM_50'
+          ? 'trim'
+          : analysis.recommendation === 'COVER'
+            ? 'cover'
+            : analysis.recommendation === 'COVER_50'
+              ? 'trim'
+              : 'hold'
+    });
 
     if (analysis.recommendation === 'HOLD') {
       console.log('✅ Holding through earnings');

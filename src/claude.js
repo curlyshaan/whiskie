@@ -257,7 +257,7 @@ ${JSON.stringify(portfolio, null, 2)}
 ${marketPricesText}
 
 **⚠️ CRITICAL INSTRUCTION:**
-The prices above are LIVE, REAL-TIME quotes from Tradier API as of RIGHT NOW.
+The prices above are LIVE, REAL-TIME quotes from the current market-data feed as of RIGHT NOW.
 DO NOT use prices from your training data. ONLY use the prices listed above.
 When recommending trades, use THESE EXACT PRICES.
 

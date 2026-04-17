@@ -1,9 +1,9 @@
 import tradier from './tradier.js';
+import fmp from './fmp.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
 import riskManager from './risk-manager.js';
 import * as db from './db.js';
-import fmp from './fmp.js';
 
 /**
  * Portfolio Analysis Engine
@@ -29,8 +29,8 @@ class AnalysisEngine {
       // Fetch current prices for each position
       for (const position of mergedPositions) {
         try {
-          const quote = await tradier.getQuote(position.symbol);
-          position.currentPrice = quote.last || quote.close || 0;
+          const quote = await fmp.getQuote(position.symbol);
+          position.currentPrice = quote.price || quote.previousClose || quote.close || 0;
         } catch (error) {
           console.warn(`⚠️ Failed to fetch price for ${position.symbol}:`, error.message);
           position.currentPrice = 0;
@@ -674,7 +674,7 @@ class AnalysisEngine {
       console.log(`📊 Evaluating ${symbol}...`);
 
       // Get quote
-      const quote = await tradier.getQuote(symbol);
+      const quote = await fmp.getQuote(symbol);
       if (!quote) {
         return { recommendation: 'SKIP', reason: 'No quote data available' };
       }
@@ -689,7 +689,7 @@ class AnalysisEngine {
       // Get fundamentals (if available)
       let fundamentals = null;
       try {
-        fundamentals = await tradier.getFundamentals(symbol);
+        fundamentals = await fmp.getFundamentals(symbol);
       } catch (err) {
         console.log(`No fundamentals available for ${symbol}`);
       }
@@ -704,7 +704,7 @@ class AnalysisEngine {
 
       return {
         symbol,
-        currentPrice: quote.last,
+        currentPrice: quote.price || quote.previousClose || quote.close || 0,
         analysis: analysis.analysis,
         technicals,
         news: formattedNews
@@ -723,8 +723,8 @@ class AnalysisEngine {
       console.log(`🔍 Evaluating sell decision for ${position.symbol}...`);
 
       // Get current price
-      const quote = await tradier.getQuote(position.symbol);
-      const currentPrice = quote.last;
+      const quote = await fmp.getQuote(position.symbol);
+      const currentPrice = quote.price;
 
       // Get news
       const news = await tavily.searchStockNews(position.symbol, 3);

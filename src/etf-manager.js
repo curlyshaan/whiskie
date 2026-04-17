@@ -1,5 +1,5 @@
 import * as db from './db.js';
-import tradier from './tradier.js';
+import fmp from './fmp.js';
 
 /**
  * ETF Manager
@@ -69,9 +69,9 @@ class ETFManager {
     for (const etf of this.CORE_ETFS) {
       try {
         // Get current price
-        const quote = await tradier.getQuote(etf.symbol);
-        const price = quote?.last || quote?.close || 0;
-        const volume = quote?.average_volume || 0;
+        const quote = await fmp.getQuote(etf.symbol);
+        const price = quote?.price || quote?.previousClose || quote?.close || 0;
+        const volume = quote?.averageVolume || 0;
 
         // Check if ETF already exists
         const existing = await db.query(
@@ -145,14 +145,14 @@ class ETFManager {
 
     if (symbols.length === 0) return;
 
-    const quotes = await tradier.getQuotes(symbols);
+    const quotes = await fmp.getQuotes(symbols);
     const quotesArray = Array.isArray(quotes) ? quotes : [quotes];
 
     for (const quote of quotesArray) {
       if (!quote || !quote.symbol) continue;
 
-      const price = quote.last || quote.close || 0;
-      const volume = quote.average_volume || 0;
+      const price = quote.price || quote.previousClose || quote.close || 0;
+      const volume = quote.averageVolume || 0;
 
       await db.query(
         `UPDATE etf_watchlist
@@ -167,9 +167,9 @@ class ETFManager {
    * Add custom ETF to watchlist
    */
   async addETF(symbol, name, category, purpose) {
-    const quote = await tradier.getQuote(symbol);
-    const price = quote?.last || quote?.close || 0;
-    const volume = quote?.average_volume || 0;
+    const quote = await fmp.getQuote(symbol);
+    const price = quote?.price || quote?.previousClose || quote?.close || 0;
+    const volume = quote?.averageVolume || 0;
 
     await db.query(
       `INSERT INTO etf_watchlist

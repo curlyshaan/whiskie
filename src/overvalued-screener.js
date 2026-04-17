@@ -1,4 +1,4 @@
-import tradier from './tradier.js';
+import fmp from './fmp.js';
 import * as db from './db.js';
 
 /**
@@ -25,14 +25,14 @@ class OvervaluedScreener {
    * Get market data for stock (used by Opus for overvalued analysis)
    */
   async getStockData(symbol) {
-    const quote = await tradier.getQuote(symbol);
+    const quote = await fmp.getQuote(symbol);
     if (!quote) return null;
 
-    const price = quote.last || quote.close;
-    const high52w = quote.week_52_high || 0;
-    const change = quote.change_percentage || 0;
+    const price = quote.price || quote.previousClose || quote.close;
+    const high52w = quote.yearHigh || 0;
+    const change = quote.changePercentage || 0;
     const volume = quote.volume || 0;
-    const avgVolume = quote.average_volume || 0;
+    const avgVolume = quote.averageVolume || 0;
     const bid = quote.bid || 0;
     const ask = quote.ask || 0;
 

@@ -31,6 +31,7 @@ import tradeExecutor from './trade-executor.js';
 import circuitBreaker from './circuit-breaker.js';
 import earningsGuard from './earnings-guard.js';
 import pathwayExitMonitor from './pathway-exit-monitor.js';
+import thesisManager from './thesis-manager.js';
 import portfolioRiskMetrics from './portfolio-risk-metrics.js';
 import learningFeedback from './learning-feedback.js';
 import orderReconciliation from './order-reconciliation.js';
@@ -833,12 +834,12 @@ class WhiskieBot {
         const symbols = portfolio.positions.map(p => p.symbol);
         let marketData = {};
         if (symbols.length > 0) {
-          const quotes = await tradier.getQuotes(symbols);
+          const quotes = await fmp.getQuotes(symbols);
           const quotesArray = Array.isArray(quotes) ? quotes : [quotes];
           quotesArray.forEach(q => {
             marketData[q.symbol] = {
-              price: q.last || q.close,
-              change_percentage: q.change_percentage || 0
+              price: q.price || q.previousClose || q.close,
+              change_percentage: q.changePercentage || 0
             };
           });
         }
@@ -1383,14 +1384,14 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
     if (!position) return;
 
     const sellQuantity = Math.floor(position.quantity * action.percentage);
-    const quote = await tradier.getQuote(symbol);
+    const quote = await fmp.getQuote(symbol);
 
     // Send email recommendation
     await email.sendTradeRecommendation({
       action: 'sell',
       symbol,
       quantity: sellQuantity,
-      price: quote.last,
+      price: quote.price || quote.previousClose || quote.close || 0,
       positionSize: action.percentage * 100,
       reasoning: action.reason,
       stopLoss: 0,
@@ -1452,16 +1453,16 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       ];
       const phase1Symbols = [...new Set([...portfolioSymbols, ...marketIndices, ...candidateSymbols])];
 
-      const phase1Quotes = await tradier.getQuotes(phase1Symbols.join(','));
+      const phase1Quotes = await fmp.getQuotes(phase1Symbols);
       const marketContext = {};
       const quoteArray = Array.isArray(phase1Quotes) ? phase1Quotes : [phase1Quotes];
 
       quoteArray.forEach(q => {
         if (q && q.symbol) {
           marketContext[q.symbol] = {
-            price: q.last,
+            price: q.price || q.previousClose || q.close,
             change: q.change,
-            change_percentage: q.change_percentage,
+            change_percentage: q.changePercentage || 0,
             volume: q.volume
           };
         }
@@ -1719,7 +1720,7 @@ ${trendContext}`;
       console.log('📊 Fetching prices for all candidates...');
       const allCandidates = [...candidates.longs.map(c => c.symbol), ...candidates.shorts.map(c => c.symbol)];
       const allSymbols = [...new Set([...portfolioSymbols, ...marketIndices, ...allCandidates])];
-      const phase2Quotes = await tradier.getQuotes(allSymbols.join(','));
+      const phase2Quotes = await fmp.getQuotes(allSymbols);
 
       const fullMarketData = {};
       const phase2Array = Array.isArray(phase2Quotes) ? phase2Quotes : [phase2Quotes];
@@ -1727,9 +1728,9 @@ ${trendContext}`;
       phase2Array.forEach(q => {
         if (q && q.symbol) {
           fullMarketData[q.symbol] = {
-            price: q.last,
+            price: q.price || q.previousClose || q.close,
             change: q.change,
-            change_percentage: q.change_percentage,
+            change_percentage: q.changePercentage || 0,
             volume: q.volume,
             bid: q.bid,
             ask: q.ask
@@ -1752,9 +1753,7 @@ ${trendContext}`;
             technicalData[symbol] = indicators;
             techCount++;
           }
-          // 500ms delay to stay under rate limits
-          await new Promise(resolve => setTimeout(resolve, 500));
-        } catch (error) {
+                  } catch (error) {
           console.warn(`   ⚠️ Failed to fetch technicals for ${symbol}: ${error.message}`);
         }
       }
@@ -2189,6 +2188,7 @@ For each final trade, output a block in this exact structure:
 
 EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 THESIS: [1 sentence]
+THESIS_STATE: strengthening/unchanged/weakening/broken
 PATHWAY: [pathway]
 STRATEGY: [strategy type]
 OVERRIDE_PHASE2_DECISION: YES/NO
@@ -2200,10 +2200,11 @@ TECHNICAL: [technical setup]
 RISKS: [main risks]
 STOP_TYPE: technical/fundamental/catastrophic
 STOP_REASON: [reason]
-TARGET_TYPE: fixed/trailing/timeboxed
+TARGET_TYPE: fixed/flexible_fundamental/trailing/timeboxed
 TRAILING_STOP_PCT: [number or NONE]
 REBALANCE_THRESHOLD_PCT: [number or NONE]
 MAX_HOLD_DAYS: [number or NONE]
+HOLDING_POSTURE: hold/rebalance/trim/exit/cover/trail/add
 HOLDING: [holding period]
 CONFIDENCE: High/Medium/Low
 GROWTH_POTENTIAL: 2x-3x / 50-100% / 20-50% / <20%
@@ -2548,19 +2549,26 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
           }
 
           try {
+            const managementPlan = thesisManager.buildEntryManagementPlan({
+              ...rec,
+              action: rec.type === 'short' ? 'sell_short' : 'buy'
+            });
+
             const approvalId = await tradeApproval.submitForApproval({
               symbol: rec.symbol,
               action: rec.type === 'short' ? 'sell_short' : 'buy',
               quantity: rec.quantity,
               entryPrice: rec.entryPrice,
-              stopLoss: rec.stopLoss,
-              takeProfit: rec.takeProfit,
+              stopLoss: managementPlan.stopLoss ?? rec.stopLoss,
+              takeProfit: managementPlan.takeProfit,
               orderType: 'limit',
               pathway: rec.pathway || null,
               intent: rec.intent || 'momentum',
               reasoning: detailedReasoning,
               investmentThesis: rec.investmentThesis || detailedReasoning,
               strategyType: rec.strategyType || null,
+              thesisState: managementPlan.thesisState,
+              holdingPosture: rec.holdingPosture || managementPlan.holdingPosture,
               catalysts: rec.catalysts || detectCatalysts(news),
               fundamentals: rec.fundamentals || null,
               technicalSetup: rec.technicalSetup || null,
@@ -2571,10 +2579,10 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
               newsLinks: rec.newsLinks || null,
               stopType: rec.stopType || null,
               stopReason: rec.stopReason || null,
-              hasFixedTarget: rec.hasFixedTarget ?? (rec.targetType === 'fixed'),
-              targetType: rec.targetType || null,
-              trailingStopPct: rec.trailingStopPct ?? null,
-              rebalanceThresholdPct: rec.rebalanceThresholdPct ?? null,
+              hasFixedTarget: managementPlan.hasFixedTarget,
+              targetType: managementPlan.targetType,
+              trailingStopPct: managementPlan.trailingStopPct,
+              rebalanceThresholdPct: managementPlan.rebalanceThresholdPct,
               maxHoldingDays: rec.maxHoldingDays ?? null,
               fundamentalStopConditions: rec.fundamentalStopConditions || null,
               overridePhase2Decision: rec.overridePhase2Decision || null,
@@ -3075,6 +3083,8 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
         const overridePhase2Decision = extractField('OVERRIDE_PHASE2_DECISION');
         const overrideSymbol = extractField('OVERRIDE_SYMBOL');
         const overrideReason = extractField('OVERRIDE_REASON');
+        const thesisState = extractField('THESIS_STATE');
+        const holdingPosture = extractField('HOLDING_POSTURE');
 
         // Get sector for symbol
         const sector = await this.getSector(trade.symbol);
@@ -3092,6 +3102,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
           reasoning: reasoning || `${trade.type === 'long' ? 'Long' : 'Short'} position in ${trade.symbol}`,
           investmentThesis: extractField('THESIS'),
           strategyType: extractField('STRATEGY'),
+          thesisState: thesisState || null,
           catalysts: catalysts ? catalysts.split(/\s*;\s*/).filter(Boolean) : [],
           fundamentals: fundamentals ? { summary: fundamentals } : null,
           technicalSetup: extractField('TECHNICAL'),
@@ -3107,6 +3118,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
           trailingStopPct: trailingStopPct && trailingStopPct !== 'NONE' ? parseFloat(trailingStopPct) : null,
           rebalanceThresholdPct: rebalanceThresholdPct && rebalanceThresholdPct !== 'NONE' ? parseFloat(rebalanceThresholdPct) : null,
           maxHoldingDays: maxHoldDays && maxHoldDays !== 'NONE' ? parseInt(maxHoldDays) : null,
+          holdingPosture: holdingPosture || null,
           fundamentalStopConditions: fundamentalStopConditions ? { summary: fundamentalStopConditions } : null,
           overridePhase2Decision: overridePhase2Decision && overridePhase2Decision !== 'NONE' ? overridePhase2Decision : null,
           overrideSymbol: overrideSymbol && overrideSymbol !== 'NONE' ? overrideSymbol : null,
@@ -3191,9 +3203,9 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
 
       // Fetch S&P 500 return for comparison
       try {
-        const spyQuote = await tradier.getQuote('SPY');
-        if (spyQuote && spyQuote.change_percentage) {
-          sp500Return = spyQuote.change_percentage / 100; // Convert to decimal
+        const spyQuote = await fmp.getQuote('SPY');
+        if (spyQuote && typeof spyQuote.changePercentage === "number") {
+          sp500Return = spyQuote.changePercentage / 100; // Convert to decimal
         }
       } catch (error) {
         console.error('Error fetching S&P 500 return:', error);
@@ -3273,8 +3285,8 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
       console.log(`\n💼 Executing ${action.toUpperCase()} ${quantity} ${symbol}...`);
 
       // Get current price
-      const quote = await tradier.getQuote(symbol);
-      const price = quote.last;
+      const quote = await fmp.getQuote(symbol);
+      const price = quote.price;
 
       // Validate trade
       const portfolio = await analysisEngine.getPortfolioState();

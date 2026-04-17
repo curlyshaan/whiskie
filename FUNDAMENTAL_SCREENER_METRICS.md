@@ -328,7 +328,7 @@ Current screening behavior:
 
 - stocks are processed in batches of `5`
 - there is a `10-second` delay between batches
-- `src/fmp.js` also enforces a `400ms` minimum interval and a `30-minute` in-memory cache
+- `src/fmp.js` uses controlled parallel quote fan-out and a `30-minute` in-memory cache
 
 ## Notes on source of truth
 

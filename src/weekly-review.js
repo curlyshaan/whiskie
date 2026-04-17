@@ -1,5 +1,5 @@
 import * as db from './db.js';
-import tradier from './tradier.js';
+import fmp from './fmp.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
 import email from './email.js';
@@ -8,6 +8,8 @@ import trendLearning from './trend-learning.js';
 import sectorRotation from './sector-rotation.js';
 import fundamentalScreener from './fundamental-screener.js';
 import { getWeeklyEarningsReport } from './earnings-analysis.js';
+import tradier from './tradier.js';
+import thesisManager from './thesis-manager.js';
 
 /**
  * Weekly Review Module
@@ -24,16 +26,16 @@ async function auditWatchlist() {
     const missed = [];
 
     for (const item of watchlist) {
-      const quote = await tradier.getQuote(item.symbol);
+      const quote = await fmp.getQuote(item.symbol);
       const daysOnWatchlist = Math.floor((Date.now() - new Date(item.added_date)) / 86400000);
 
       // Missed opportunity: price ran past target exit without buying
-      if (quote.last > item.target_exit_price) {
-        missed.push({ ...item, currentPrice: quote.last });
+      if (quote.price > item.target_exit_price) {
+        missed.push({ ...item, currentPrice: quote.price });
       }
       // Stale: on watchlist >30 days and price 10%+ above target entry
-      else if (daysOnWatchlist > 30 && quote.last > item.target_entry_price * 1.10) {
-        stale.push({ ...item, daysOnWatchlist, currentPrice: quote.last });
+      else if (daysOnWatchlist > 30 && quote.price > item.target_entry_price * 1.10) {
+        stale.push({ ...item, daysOnWatchlist, currentPrice: quote.price });
       }
     }
 
@@ -81,8 +83,8 @@ export async function reviewPosition(symbol, lots) {
     console.log(`\n🔍 Reviewing ${symbol}...`);
 
     // Get current price
-    const quote = await tradier.getQuote(symbol);
-    const currentPrice = quote.last;
+    const quote = await fmp.getQuote(symbol);
+    const currentPrice = quote.price;
 
     // Calculate aggregate metrics
     const totalQuantity = lots.reduce((sum, lot) => sum + lot.quantity, 0);
@@ -107,8 +109,8 @@ export async function reviewPosition(symbol, lots) {
       ? `${earning.earnings_date} (${earning.earnings_time})`
       : 'No upcoming earnings';
 
-    // Get recent news
-    const news = await tavily.searchNews(`${symbol} stock news`, 3);
+    // Get structured recent news/context
+    const news = await tavily.searchStructuredStockContext(symbol, { maxResults: 5 });
     const newsText = tavily.formatResults(news);
 
     // Build lot details
@@ -140,10 +142,16 @@ POSITION SUMMARY:
 - Investment thesis: ${thesis}
 - Next earnings: ${earningsInfo}
 
+LATEST FMP FUNDAMENTALS:
+${JSON.stringify(await fmp.getFundamentals(symbol), null, 2)}
+
+LATEST FMP TECHNICALS:
+${JSON.stringify(await fmp.getTechnicalIndicators(symbol), null, 2)}
+
 LOT DETAILS:
 ${lotDetails}
 
-RECENT NEWS:
+RECENT NEWS (structured search):
 ${newsText}
 
 QUESTIONS FOR WEEKLY STRATEGIC REVIEW:
@@ -157,9 +165,9 @@ QUESTIONS FOR WEEKLY STRATEGIC REVIEW:
 Provide specific recommendations with exact price levels.
 Format your response as:
 
-THESIS: [Valid/Broken/Weakening] - [explanation with forward-looking view]
+THESIS_STATE: [strengthening/unchanged/weakening/broken] - [explanation with forward-looking view]
 STOP-LOSS: [Keep current/Adjust to $X] - [reasoning based on volatility and upcoming catalysts]
-TAKE-PROFIT: [Keep current/Adjust to $X/Remove for trailing stop] - [reasoning]
+TAKE-PROFIT: [Keep current/Adjust to $X/Remove for trailing stop/Remove for flexible target] - [reasoning]
 POSITION ACTION: [Hold/Trim/Add/Exit] - [specific recommendation]
 FORWARD CATALYSTS: [List any upcoming events in next 4 weeks that matter]
 OTHER: [Any other strategic actions]
@@ -200,17 +208,22 @@ OTHER: [Any other strategic actions]
 function parseOpusRecommendations(analysisText, lots, currentPrice) {
   const recommendations = {
     thesisValid: true,
+    thesisState: thesisManager.extractThesisState(analysisText),
     adjustStopLoss: false,
     newStopLoss: null,
     adjustTakeProfit: false,
     newTakeProfit: null,
     trim: false,
     trimDetails: null,
-    otherActions: null
+    otherActions: null,
+    targetAction: null,
+    targetType: null,
+    actionDirective: thesisManager.extractActionDirective(analysisText)
   };
 
-  // Parse thesis
-  if (analysisText.includes('THESIS: Broken') || analysisText.includes('THESIS: Weakening')) {
+  // Parse thesis state (now using THESIS_STATE format)
+  const thesisStateLine = analysisText.match(/THESIS_STATE:\s*([^\n]+)/i)?.[1] || '';
+  if (thesisStateLine.toLowerCase().includes('broken') || thesisStateLine.toLowerCase().includes('weakening')) {
     recommendations.thesisValid = false;
   }
 
@@ -226,6 +239,23 @@ function parseOpusRecommendations(analysisText, lots, currentPrice) {
   if (tpMatch && analysisText.includes('Adjust to')) {
     recommendations.adjustTakeProfit = true;
     recommendations.newTakeProfit = parseFloat(tpMatch[1]);
+  }
+
+  const takeProfitLine = analysisText.match(/TAKE-PROFIT:\s*([^\n]+)/i)?.[1] || '';
+  if (/remove/i.test(takeProfitLine) && /trailing stop/i.test(takeProfitLine)) {
+    recommendations.targetAction = 'remove';
+    recommendations.targetType = 'trailing';
+    recommendations.adjustTakeProfit = true;
+    recommendations.newTakeProfit = null;
+  } else if (/remove/i.test(takeProfitLine) && (/flexible/i.test(takeProfitLine) || /rebalance/i.test(takeProfitLine))) {
+    recommendations.targetAction = 'remove';
+    recommendations.targetType = 'flexible_fundamental';
+    recommendations.adjustTakeProfit = true;
+    recommendations.newTakeProfit = null;
+  } else if (/adjust to/i.test(takeProfitLine) && recommendations.newTakeProfit != null) {
+    recommendations.targetAction = 'raise';
+  } else {
+    recommendations.targetAction = 'keep';
   }
 
   // Parse position action (FIXED: was looking for "TRIM: Yes", now looks for "POSITION ACTION: Trim/Exit")
@@ -256,6 +286,45 @@ function parseOpusRecommendations(analysisText, lots, currentPrice) {
 export async function executeReviewRecommendations(review) {
   try {
     const { symbol, lots, recommendations, currentPrice } = review;
+    const position = (await db.getPositions()).find(p => p.symbol === symbol) || {
+      symbol,
+      quantity: lots.reduce((sum, lot) => sum + lot.quantity, 0),
+      current_price: currentPrice,
+      stop_loss: lots[0]?.stop_loss ?? null,
+      take_profit: lots[0]?.take_profit ?? null,
+      target_type: lots[0]?.target_type ?? null,
+      strategy_type: lots[0]?.strategy_type ?? null,
+      pathway: lots[0]?.pathway ?? null,
+      current_intent: lots[0]?.current_intent ?? lots[0]?.intent ?? null,
+      rebalance_threshold_pct: lots[0]?.rebalance_threshold_pct ?? null,
+      trailing_stop_pct: lots[0]?.trailing_stop_pct ?? null,
+      has_fixed_target: lots[0]?.take_profit != null
+    };
+
+    const managementUpdate = thesisManager.deriveUpdatedManagementFields(position, {
+      thesisState: recommendations.thesisState,
+      actionDirective: recommendations.actionDirective,
+      targetAction: recommendations.targetAction,
+      targetType: recommendations.targetType,
+      newTakeProfit: recommendations.newTakeProfit,
+      newStopLoss: recommendations.newStopLoss,
+      analysisText: review.analysis
+    });
+
+    await thesisManager.persistPositionManagementUpdate(symbol, {
+      thesisSummary: review.analysis,
+      thesisState: managementUpdate.thesisState,
+      holdingPosture: managementUpdate.holdingPosture,
+      strategyType: position.strategy_type,
+      currentIntent: position.current_intent,
+      targetType: managementUpdate.targetType,
+      takeProfit: managementUpdate.takeProfit,
+      stopLoss: managementUpdate.stopLoss,
+      hasFixedTarget: managementUpdate.hasFixedTarget,
+      trailingStopPct: managementUpdate.trailingStopPct,
+      rebalanceThresholdPct: managementUpdate.rebalanceThresholdPct,
+      confidence: lots[0]?.confidence || null
+    });
 
     console.log(`\n💼 Executing recommendations for ${symbol}...`);
 
@@ -324,36 +393,73 @@ export async function executeReviewRecommendations(review) {
       }
     }
 
-    // Adjust take-profit
-    if (recommendations.adjustTakeProfit && recommendations.newTakeProfit && !recommendations.adjustStopLoss) {
-      console.log(`🎯 Adjusting take-profit to $${recommendations.newTakeProfit.toFixed(2)}`);
+    // Adjust take-profit or remove for flexible targets
+    if (recommendations.adjustTakeProfit && !recommendations.adjustStopLoss) {
+      if (recommendations.newTakeProfit === null) {
+        console.log(`🎯 Removing take-profit (converting to ${recommendations.targetType || 'flexible'} target)`);
+        
+        for (const lot of lots) {
+          if (lot.quantity > 0) {
+            await db.updatePositionLot(lot.id, {
+              take_profit: null,
+              target_type: recommendations.targetType || 'flexible_fundamental',
+              has_fixed_target: false
+            });
 
-      for (const lot of lots) {
-        if (lot.quantity > 0 && !lot.trailing_stop_active) {
-          await db.updatePositionLot(lot.id, {
-            take_profit: recommendations.newTakeProfit
-          });
+            // Cancel OCO and place stop-only order if stop_loss exists
+            if (lot.oco_order_id) {
+              try {
+                await tradier.cancelOrder(lot.oco_order_id);
+                await new Promise(resolve => setTimeout(resolve, 1000));
 
-          // Update OCO order
-          if (lot.oco_order_id && lot.stop_loss) {
-            try {
-              await tradier.cancelOrder(lot.oco_order_id);
-              await new Promise(resolve => setTimeout(resolve, 1000));
-
-              const newOCO = await tradier.placeOCOOrder(
-                symbol,
-                lot.quantity,
-                lot.stop_loss,
-                recommendations.newTakeProfit
-              );
-              await db.updatePositionLot(lot.id, { oco_order_id: newOCO.id });
-              console.log(`✅ Updated OCO for lot ${lot.id}`);
-            } catch (error) {
-              console.error(`⚠️ Failed to update OCO for lot ${lot.id}:`, error.message);
+                if (lot.stop_loss) {
+                  const stopOrder = await tradier.placeStopOrder(
+                    symbol,
+                    'sell',
+                    lot.quantity,
+                    lot.stop_loss
+                  );
+                  await db.updatePositionLot(lot.id, { oco_order_id: stopOrder.id });
+                  console.log(`✅ Placed stop-only order for lot ${lot.id}`);
+                }
+              } catch (error) {
+                console.error(`⚠️ Failed to update orders for lot ${lot.id}:`, error.message);
+              }
             }
-          }
 
-          await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
+      } else {
+        console.log(`🎯 Adjusting take-profit to $${recommendations.newTakeProfit.toFixed(2)}`);
+
+        for (const lot of lots) {
+          if (lot.quantity > 0 && !lot.trailing_stop_active) {
+            await db.updatePositionLot(lot.id, {
+              take_profit: recommendations.newTakeProfit
+            });
+
+            // Update OCO order
+            if (lot.oco_order_id && lot.stop_loss) {
+              try {
+                await tradier.cancelOrder(lot.oco_order_id);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+
+                const newOCO = await tradier.placeOCOOrder(
+                  symbol,
+                  lot.quantity,
+                  lot.stop_loss,
+                  recommendations.newTakeProfit
+                );
+                await db.updatePositionLot(lot.id, { oco_order_id: newOCO.id });
+                console.log(`✅ Updated OCO for lot ${lot.id}`);
+              } catch (error) {
+                console.error(`⚠️ Failed to update OCO for lot ${lot.id}:`, error.message);
+              }
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
         }
       }
     }

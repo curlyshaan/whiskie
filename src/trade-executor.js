@@ -9,6 +9,7 @@ import circuitBreaker from './circuit-breaker.js';
 import earningsGuard from './earnings-guard.js';
 import correlationAnalysis from './correlation-analysis-enhanced.js';
 import exitLiquidity from './exit-liquidity.js';
+import thesisManager from './thesis-manager.js';
 
 /**
  * Trade Execution Service
@@ -85,7 +86,7 @@ class TradeExecutor {
 
       // Get current price
       const quote = await tradier.getQuote(approval.symbol);
-      const currentPrice = quote.last || quote.close;
+      const currentPrice = quote.price || quote.previousClose || quote.close;
 
       // Check if price is still within acceptable range (±5% from approval price)
       const priceChange = Math.abs((currentPrice - approval.entry_price) / approval.entry_price);
@@ -170,12 +171,30 @@ class TradeExecutor {
   async createPositionLots(approval, orderId) {
     const isShort = approval.action === 'sell_short';
     const positionType = isShort ? 'short' : 'long';
+    const managementPlan = thesisManager.buildEntryManagementPlan({
+      action: approval.action,
+      quantity: approval.quantity,
+      entryPrice: approval.entry_price,
+      stopLoss: approval.stop_loss,
+      takeProfit: approval.take_profit,
+      strategyType: approval.strategy_type,
+      pathway: approval.pathway,
+      intent: approval.intent,
+      thesisState: approval.thesis_state,
+      targetType: approval.target_type,
+      trailingStopPct: approval.trailing_stop_pct,
+      rebalanceThresholdPct: approval.rebalance_threshold_pct,
+      hasFixedTarget: approval.has_fixed_target
+    });
 
     // Determine lot type based on intent
     let lotType = 'swing';
     if (approval.intent === 'value_momentum' || approval.intent === 'quality_dip' || approval.intent === 'fundamental_hold') {
       lotType = 'long-term';
     }
+
+    const stopLoss = managementPlan.stopLoss ?? approval.stop_loss;
+    const takeProfit = managementPlan.takeProfit;
 
     await db.createPositionLot({
       symbol: approval.symbol,
@@ -184,22 +203,24 @@ class TradeExecutor {
       quantity: isShort ? -approval.quantity : approval.quantity,
       cost_basis: approval.entry_price,
       entry_date: new Date(),
-      stop_loss: approval.stop_loss,
-      take_profit: approval.take_profit,
+      stop_loss: stopLoss,
+      take_profit: takeProfit,
       oco_order_id: orderId,
-      thesis: approval.reasoning,
+      thesis: approval.investment_thesis || approval.reasoning,
       original_intent: approval.intent,
       current_intent: approval.intent,
       pathway: approval.pathway,
       intent: approval.intent,
       strategy_type: approval.strategy_type,
+      thesis_state: managementPlan.thesisState,
+      holding_posture: approval.holding_posture || managementPlan.holdingPosture,
       holding_period: approval.holding_period,
       confidence: approval.confidence,
       growth_potential: approval.growth_potential,
       stop_type: approval.stop_type,
-      target_type: approval.target_type,
-      trailing_stop_pct: approval.trailing_stop_pct,
-      rebalance_threshold_pct: approval.rebalance_threshold_pct,
+      target_type: managementPlan.targetType,
+      trailing_stop_pct: managementPlan.trailingStopPct,
+      rebalance_threshold_pct: managementPlan.rebalanceThresholdPct,
       max_holding_days: approval.max_holding_days,
       fundamental_stop_conditions: approval.fundamental_stop_conditions,
       catalysts: approval.catalysts,
@@ -214,21 +235,23 @@ class TradeExecutor {
       current_price: approval.entry_price,
       sector: null, // Will be populated by position reconciliation
       stock_type: positionType,
-      stop_loss: approval.stop_loss,
-      take_profit: approval.take_profit,
+      stop_loss: stopLoss,
+      take_profit: takeProfit,
       pathway: approval.pathway,
       intent: approval.intent,
       peak_price: approval.entry_price,
       strategy_type: approval.strategy_type,
+      thesis_state: managementPlan.thesisState,
+      holding_posture: approval.holding_posture || managementPlan.holdingPosture,
       holding_period: approval.holding_period,
       confidence: approval.confidence,
       growth_potential: approval.growth_potential,
       stop_type: approval.stop_type,
       stop_reason: approval.stop_reason,
-      target_type: approval.target_type,
-      has_fixed_target: approval.has_fixed_target,
-      trailing_stop_pct: approval.trailing_stop_pct,
-      rebalance_threshold_pct: approval.rebalance_threshold_pct,
+      target_type: managementPlan.targetType,
+      has_fixed_target: managementPlan.hasFixedTarget,
+      trailing_stop_pct: managementPlan.trailingStopPct,
+      rebalance_threshold_pct: managementPlan.rebalanceThresholdPct,
       max_holding_days: approval.max_holding_days,
       fundamental_stop_conditions: approval.fundamental_stop_conditions,
       catalysts: approval.catalysts,

@@ -1,6 +1,6 @@
 import * as db from './db.js';
 import claude from './claude.js';
-import tradier from './tradier.js';
+import fmp from './fmp.js';
 import stockProfiles from './stock-profiles.js';
 import email from './email.js';
 
@@ -49,7 +49,7 @@ export async function runWeeklyPortfolioReview() {
     const quotes = {};
     for (const position of positions.rows) {
       try {
-        const quote = await tradier.getQuote(position.symbol);
+        const quote = await fmp.getQuote(position.symbol);
         quotes[position.symbol] = quote;
       } catch (error) {
         console.warn(`Could not fetch quote for ${position.symbol}`);

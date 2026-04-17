@@ -1,5 +1,4 @@
 import fmp from './fmp.js';
-import tradier from './tradier.js';
 import * as db from './db.js';
 import email from './email.js';
 import { getSectorConfig, normalizeSectorName } from './sector-config.js';
@@ -173,11 +172,11 @@ class FundamentalScreener {
    */
   async screenStock(stock) {
     try {
-      const quote = await tradier.getQuote(stock.symbol);
+      const quote = await fmp.getQuote(stock.symbol);
       if (!quote) return null;
 
-      const price = quote.last || quote.close || 0;
-      const volume = quote.average_volume || 0;
+      const price = quote.price || quote.previousClose || quote.close || 0;
+      const volume = quote.averageVolume || 0;
       const dollarVolume = volume * price;
 
       // Basic quality filters
@@ -1371,9 +1370,9 @@ class FundamentalScreener {
         const quote = marketData[stock.symbol];
         if (!quote) continue;
 
-        const changePercent = quote.change_percentage || 0;
-        const volumeSurge = (quote.average_volume || 0) > 0
-          ? (quote.volume || 0) / (quote.average_volume || 1) : 0;
+        const changePercent = quote.changePercentage || 0;
+        const volumeSurge = (quote.averageVolume || 0) > 0
+          ? (quote.volume || 0) / (quote.averageVolume || 1) : 0;
 
         if (Math.abs(changePercent) >= 5 && volumeSurge >= 1.5) {
           momentumTriggers.push({

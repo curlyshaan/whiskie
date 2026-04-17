@@ -1,8 +1,8 @@
 import * as db from './db.js';
-import tradier from './tradier.js';
+import fmp from './fmp.js';
 import pathwayStrategies from './pathway-exit-strategies.js';
 import email from './email.js';
-import fmp from './fmp.js';
+import tradier from './tradier.js';
 
 /**
  * Pathway Exit Monitor
@@ -85,13 +85,13 @@ class PathwayExitMonitor {
     }
 
     // Get current price
-    const quote = await tradier.getQuote(symbol);
+    const quote = await fmp.getQuote(symbol);
     if (!quote) {
       console.warn(`   ⚠️ No quote for ${symbol}`);
       return null;
     }
 
-    const currentPrice = quote.last || quote.close;
+    const currentPrice = quote.price || quote.previousClose || quote.close;
     const isShort = quantity < 0;
 
     // Calculate gain
@@ -167,8 +167,8 @@ class PathwayExitMonitor {
     if (trailing_stop_activated && position.trailing_stop_distance) {
       const trailDistance = position.trailing_stop_distance;
       const stopPrice = isShort
-        ? newPeakPrice * (1 - trailDistance) // For shorts, stop above low
-        : newPeakPrice * (1 + trailDistance); // For longs, stop below peak
+        ? newPeakPrice * (1 + trailDistance) // For shorts, stop above the lowest favorable price
+        : newPeakPrice * (1 - trailDistance); // For longs, stop below peak
 
       const stopTriggered = isShort
         ? currentPrice >= stopPrice
@@ -193,10 +193,10 @@ class PathwayExitMonitor {
 
   async checkStructuredExitRules(position) {
     const actions = [];
-    const quote = await tradier.getQuote(position.symbol);
+    const quote = await fmp.getQuote(position.symbol);
     if (!quote) return actions;
 
-    const currentPrice = quote.last || quote.close;
+    const currentPrice = quote.price || quote.previousClose || quote.close;
     const isShort = position.quantity < 0;
 
     if (position.max_holding_days && position.entry_date) {
@@ -214,11 +214,17 @@ class PathwayExitMonitor {
       }
     }
 
+    // Only check rebalance for non-short positions with rebalance posture or threshold
     if (!isShort && position.rebalance_threshold_pct && position.current_price && position.quantity) {
       const basisValue = position.cost_basis * Math.abs(position.quantity);
       const currentValue = currentPrice * Math.abs(position.quantity);
       const gainPct = basisValue > 0 ? ((currentValue - basisValue) / basisValue) * 100 : 0;
-      if (gainPct >= position.rebalance_threshold_pct) {
+      
+      // For flexible_fundamental targets, use rebalance logic instead of hard exits
+      const shouldRebalance = position.target_type === 'flexible_fundamental' || 
+                             position.holding_posture === 'rebalance';
+      
+      if (gainPct >= position.rebalance_threshold_pct && shouldRebalance) {
         actions.push({
           type: 'rebalance_trim',
           symbol: position.symbol,
@@ -231,13 +237,30 @@ class PathwayExitMonitor {
       }
     }
 
+    if (position.thesis_state === 'broken') {
+      actions.push({
+        type: 'fundamental_exit',
+        symbol: position.symbol,
+        pathway: position.pathway,
+        quantity: Math.abs(position.quantity),
+        currentPrice,
+        reason: 'Persisted thesis state is broken',
+        position
+      });
+    }
+
     if (position.stop_type === 'fundamental' && position.fundamental_stop_conditions) {
       const fundamentals = await fmp.getFundamentals(position.symbol);
-      const conditions = typeof position.fundamental_stop_conditions === 'string'
-        ? JSON.parse(position.fundamental_stop_conditions)
-        : position.fundamental_stop_conditions;
+      let conditions = position.fundamental_stop_conditions;
+      if (typeof conditions === 'string') {
+        try {
+          conditions = JSON.parse(conditions);
+        } catch {
+          conditions = null;
+        }
+      }
 
-      if (fundamentals && conditions) {
+      if (fundamentals && conditions && !conditions.summary) {
         if (conditions.operating_margin_min && fundamentals.operatingMargin < conditions.operating_margin_min) {
           actions.push({
             type: 'fundamental_exit',
@@ -260,6 +283,28 @@ class PathwayExitMonitor {
             position
           });
         }
+      }
+    }
+
+    // Only apply holding_posture rebalance if not already handled above
+    if (!isShort && position.holding_posture === 'rebalance' && position.rebalance_threshold_pct) {
+      const basisValue = position.cost_basis * Math.abs(position.quantity);
+      const currentValue = currentPrice * Math.abs(position.quantity);
+      const gainPct = basisValue > 0 ? ((currentValue - basisValue) / basisValue) * 100 : 0;
+      
+      // Avoid duplicate rebalance actions
+      const alreadyHasRebalance = actions.some(a => a.type === 'rebalance_trim' && a.symbol === position.symbol);
+      
+      if (gainPct >= position.rebalance_threshold_pct && !alreadyHasRebalance) {
+        actions.push({
+          type: 'rebalance_trim',
+          symbol: position.symbol,
+          pathway: position.pathway,
+          quantity: Math.max(1, Math.floor(Math.abs(position.quantity) * 0.15)),
+          currentPrice,
+          reason: `Holding posture is rebalance and gain reached ${gainPct.toFixed(1)}%`,
+          position
+        });
       }
     }
 

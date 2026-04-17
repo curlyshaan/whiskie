@@ -1,4 +1,4 @@
-import tradier from './tradier.js';
+import fmp from './fmp.js';
 import * as db from './db.js';
 
 /**
@@ -390,8 +390,8 @@ class ShortManager {
         : [optionsData.options.option];
 
       // Get current stock price
-      const quote = await tradier.getQuote(symbol);
-      const currentPrice = quote?.last || quote?.close;
+      const quote = await fmp.getQuote(symbol);
+      const currentPrice = quote?.price || quote?.previousClose || quote?.close;
 
       if (!currentPrice) {
         return null;

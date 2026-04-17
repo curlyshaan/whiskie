@@ -71,6 +71,8 @@ export async function initDatabase() {
         trailing_stop_activated BOOLEAN DEFAULT FALSE,
         trailing_stop_distance DECIMAL(8, 4),
         strategy_type VARCHAR(50),
+        thesis_state VARCHAR(20),
+        holding_posture VARCHAR(30),
         holding_period VARCHAR(50),
         confidence VARCHAR(20),
         growth_potential VARCHAR(50),
@@ -231,6 +233,8 @@ export async function initDatabase() {
         current_intent VARCHAR(50),
         pathway VARCHAR(50),
         strategy_type VARCHAR(50),
+        thesis_state VARCHAR(20),
+        holding_posture VARCHAR(30),
         holding_period VARCHAR(50),
         confidence VARCHAR(20),
         growth_potential VARCHAR(50),
@@ -288,6 +292,8 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS long_term_lots INTEGER DEFAULT 0,
       ADD COLUMN IF NOT EXISTS swing_lots INTEGER DEFAULT 0,
       ADD COLUMN IF NOT EXISTS thesis TEXT,
+      ADD COLUMN IF NOT EXISTS current_intent VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS last_reviewed TIMESTAMP,
       ADD COLUMN IF NOT EXISTS days_to_long_term INTEGER,
       ADD COLUMN IF NOT EXISTS next_earnings_date DATE,
       ADD COLUMN IF NOT EXISTS trim_history JSONB,
@@ -301,6 +307,8 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS trailing_stop_activated BOOLEAN DEFAULT FALSE,
       ADD COLUMN IF NOT EXISTS trailing_stop_distance DECIMAL(8, 4),
       ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS thesis_state VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS holding_posture VARCHAR(30),
       ADD COLUMN IF NOT EXISTS holding_period VARCHAR(50),
       ADD COLUMN IF NOT EXISTS confidence VARCHAR(20),
       ADD COLUMN IF NOT EXISTS growth_potential VARCHAR(50),
@@ -320,6 +328,8 @@ export async function initDatabase() {
       ALTER TABLE position_lots
       ADD COLUMN IF NOT EXISTS pathway VARCHAR(50),
       ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS thesis_state VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS holding_posture VARCHAR(30),
       ADD COLUMN IF NOT EXISTS holding_period VARCHAR(50),
       ADD COLUMN IF NOT EXISTS confidence VARCHAR(20),
       ADD COLUMN IF NOT EXISTS growth_potential VARCHAR(50),
@@ -620,6 +630,8 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS intent VARCHAR(50),
       ADD COLUMN IF NOT EXISTS investment_thesis TEXT,
       ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS thesis_state VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS holding_posture VARCHAR(30),
       ADD COLUMN IF NOT EXISTS catalysts JSONB,
       ADD COLUMN IF NOT EXISTS fundamentals JSONB,
       ADD COLUMN IF NOT EXISTS technical_setup TEXT,
@@ -650,7 +662,145 @@ export async function initDatabase() {
     `);
 
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_trade_approvals_status ON trade_approvals(status);
+      UPDATE trade_approvals
+      SET thesis_state = COALESCE(thesis_state, 'unchanged')
+      WHERE strategy_type IS NOT NULL AND thesis_state IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE trade_approvals
+      SET holding_posture = CASE
+        WHEN holding_posture IS NOT NULL THEN holding_posture
+        WHEN target_type = 'flexible_fundamental' THEN 'rebalance'
+        WHEN thesis_state = 'broken' AND action = 'sell_short' THEN 'cover'
+        WHEN thesis_state = 'broken' THEN 'exit'
+        WHEN target_type = 'trailing' THEN 'trail'
+        ELSE 'hold'
+      END
+      WHERE holding_posture IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE trade_approvals
+      SET has_fixed_target = CASE
+        WHEN has_fixed_target IS NOT NULL THEN has_fixed_target
+        WHEN target_type = 'flexible_fundamental' THEN FALSE
+        WHEN target_type IS NOT NULL THEN TRUE
+        WHEN take_profit IS NOT NULL THEN TRUE
+        ELSE FALSE
+      END
+      WHERE has_fixed_target IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE positions
+      SET thesis_state = COALESCE(thesis_state, 'unchanged')
+      WHERE strategy_type IS NOT NULL AND thesis_state IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE positions
+      SET holding_posture = CASE
+        WHEN holding_posture IS NOT NULL THEN holding_posture
+        WHEN target_type = 'flexible_fundamental' THEN 'rebalance'
+        WHEN thesis_state = 'broken' AND (position_type = 'short' OR stock_type = 'short' OR quantity < 0) THEN 'cover'
+        WHEN thesis_state = 'broken' THEN 'exit'
+        WHEN target_type = 'trailing' THEN 'trail'
+        ELSE 'hold'
+      END
+      WHERE holding_posture IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE positions
+      SET has_fixed_target = CASE
+        WHEN has_fixed_target IS NOT NULL THEN has_fixed_target
+        WHEN target_type = 'flexible_fundamental' THEN FALSE
+        WHEN target_type IS NOT NULL THEN TRUE
+        WHEN take_profit IS NOT NULL THEN TRUE
+        ELSE FALSE
+      END
+      WHERE has_fixed_target IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE position_lots
+      SET thesis_state = COALESCE(thesis_state, 'unchanged')
+      WHERE strategy_type IS NOT NULL AND thesis_state IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE position_lots
+      SET holding_posture = CASE
+        WHEN holding_posture IS NOT NULL THEN holding_posture
+        WHEN target_type = 'flexible_fundamental' THEN 'rebalance'
+        WHEN thesis_state = 'broken' AND position_type = 'short' THEN 'cover'
+        WHEN thesis_state = 'broken' THEN 'exit'
+        WHEN target_type = 'trailing' THEN 'trail'
+        ELSE 'hold'
+      END
+      WHERE holding_posture IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE positions
+      SET rebalance_threshold_pct = 20
+      WHERE rebalance_threshold_pct IS NULL
+        AND target_type = 'flexible_fundamental';
+    `);
+
+    await client.query(`
+      UPDATE positions
+      SET take_profit = NULL,
+          has_fixed_target = FALSE
+      WHERE target_type = 'flexible_fundamental';
+    `);
+
+    await client.query(`
+      UPDATE positions
+      SET trailing_stop_pct = COALESCE(trailing_stop_pct, 8)
+      WHERE (position_type = 'short' OR stock_type = 'short' OR quantity < 0)
+        AND trailing_stop_pct IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE position_lots
+      SET rebalance_threshold_pct = 20
+      WHERE rebalance_threshold_pct IS NULL
+        AND target_type = 'flexible_fundamental';
+    `);
+
+    await client.query(`
+      UPDATE position_lots
+      SET take_profit = NULL
+      WHERE target_type = 'flexible_fundamental';
+    `);
+
+    await client.query(`
+      UPDATE position_lots
+      SET trailing_stop_pct = COALESCE(trailing_stop_pct, 8)
+      WHERE position_type = 'short'
+        AND trailing_stop_pct IS NULL;
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_positions_thesis_state ON positions(thesis_state);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_positions_holding_posture ON positions(holding_posture);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_position_lots_thesis_state ON position_lots(thesis_state);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_trade_approvals_thesis_state ON trade_approvals(thesis_state);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_trade_approvals_holding_posture ON trade_approvals(holding_posture);
     `);
 
     // Trend learning tables
@@ -939,12 +1089,12 @@ export async function upsertPosition(position) {
       `INSERT INTO positions (
          symbol, quantity, cost_basis, current_price, sector, industry, stock_type,
          stop_loss, take_profit, pathway, intent, peak_price, position_type,
-         strategy_type, holding_period, confidence, growth_potential, stop_type,
-         stop_reason, target_type, has_fixed_target, trailing_stop_pct,
-         rebalance_threshold_pct, max_holding_days, fundamental_stop_conditions,
-         catalysts, news_links
+         strategy_type, thesis_state, holding_posture, holding_period, confidence,
+         growth_potential, stop_type, stop_reason, target_type, has_fixed_target,
+         trailing_stop_pct, rebalance_threshold_pct, max_holding_days,
+         fundamental_stop_conditions, catalysts, news_links
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
        ON CONFLICT (symbol)
        DO UPDATE SET
          quantity = $2,
@@ -960,19 +1110,21 @@ export async function upsertPosition(position) {
          peak_price = $12,
          position_type = $13,
          strategy_type = $14,
-         holding_period = $15,
-         confidence = $16,
-         growth_potential = $17,
-         stop_type = $18,
-         stop_reason = $19,
-         target_type = $20,
-         has_fixed_target = $21,
-         trailing_stop_pct = $22,
-         rebalance_threshold_pct = $23,
-         max_holding_days = $24,
-         fundamental_stop_conditions = $25,
-         catalysts = $26,
-         news_links = $27,
+         thesis_state = $15,
+         holding_posture = $16,
+         holding_period = $17,
+         confidence = $18,
+         growth_potential = $19,
+         stop_type = $20,
+         stop_reason = $21,
+         target_type = $22,
+         has_fixed_target = $23,
+         trailing_stop_pct = $24,
+         rebalance_threshold_pct = $25,
+         max_holding_days = $26,
+         fundamental_stop_conditions = $27,
+         catalysts = $28,
+         news_links = $29,
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [
@@ -990,6 +1142,8 @@ export async function upsertPosition(position) {
         position.peak_price || position.current_price,
         position.position_type || (position.quantity < 0 ? 'short' : 'long'),
         position.strategy_type || null,
+        position.thesis_state || null,
+        position.holding_posture || null,
         position.holding_period || null,
         position.confidence || null,
         position.growth_potential || null,
@@ -1476,10 +1630,11 @@ export async function createPositionLot(lot) {
         symbol, lot_type, quantity, cost_basis, current_price,
         entry_date, stop_loss, take_profit, oco_order_id, thesis,
         days_to_long_term, original_intent, current_intent, position_type,
-        pathway, strategy_type, holding_period, confidence, growth_potential,
-        stop_type, target_type, trailing_stop_pct, rebalance_threshold_pct,
-        max_holding_days, fundamental_stop_conditions, catalysts, news_links
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+        pathway, strategy_type, thesis_state, holding_posture, holding_period,
+        confidence, growth_potential, stop_type, target_type, trailing_stop_pct,
+        rebalance_threshold_pct, max_holding_days, fundamental_stop_conditions,
+        catalysts, news_links
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
       RETURNING *`,
       [
         lot.symbol,
@@ -1498,6 +1653,8 @@ export async function createPositionLot(lot) {
         lot.position_type || (lot.quantity < 0 ? 'short' : 'long'),
         lot.pathway || null,
         lot.strategy_type || null,
+        lot.thesis_state || null,
+        lot.holding_posture || null,
         lot.holding_period || null,
         lot.confidence || null,
         lot.growth_potential || null,

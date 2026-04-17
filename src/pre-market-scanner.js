@@ -1,4 +1,4 @@
-import tradier from './tradier.js';
+import fmp from './fmp.js';
 import tavily from './tavily.js';
 import * as db from './db.js';
 
@@ -25,7 +25,7 @@ export async function runPreMarketScan() {
     }
 
     // Fetch pre-market quotes
-    const quotes = await tradier.getQuotes(allSymbols.join(','));
+    const quotes = await fmp.getQuotes(allSymbols.join(','));
     const quoteArray = Array.isArray(quotes) ? quotes : [quotes];
 
     const gaps = [];
@@ -35,8 +35,8 @@ export async function runPreMarketScan() {
       if (!quote || !quote.symbol) continue;
 
       // Pre-market price vs prior close
-      const preMarketPrice = quote.last;
-      const priorClose = quote.prevclose;
+      const preMarketPrice = quote.price;
+      const priorClose = quote.previousClose;
 
       if (!preMarketPrice || !priorClose) continue;
 

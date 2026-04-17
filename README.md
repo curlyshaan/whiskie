@@ -113,17 +113,18 @@ Approved trades are processed by the trade executor during the market-hours moni
 
 ### FMP
 
-Primary fundamentals/data provider.
+Primary market-data and fundamentals provider.
 
 Current implementation details:
 
 - uses `/stable` endpoints
-- `src/fmp.js` enforces a `400ms` minimum call interval
+- uses a single paid `FMP_API_KEY_1`
+- quote reads now prefer per-symbol FMP quote requests, with controlled parallel fan-out instead of restricted batch-quote endpoints
 - `src/fmp.js` keeps a **30-minute in-memory cache** for repeated requests
 
 ### Tradier
 
-Used for live quotes, ETB checks, order placement, and reconciliation.
+Used for brokerage functions, options data, ETB checks, order placement, and reconciliation.
 
 ### Tavily
 
@@ -204,3 +205,19 @@ These files are retained for context but are not canonical:
 - `docs/WHISKIE_INVESTMENT_STRATEGY.md`
 - `docs/BETA_PLAY_STRATEGY.md`
 - `docs/fundamental_screener_criteria.md`
+
+## Strategy-aware management model
+
+Whiskie now persists post-entry management state so UI, monitoring, and execution all read the same live intent:
+
+- `thesis_state` — `strengthening`, `unchanged`, `weakening`, `broken`
+- `holding_posture` — `hold`, `rebalance`, `trim`, `exit`, `cover`, `trail`, `add`
+- `target_type` — includes `fixed`, `flexible_fundamental`, `trailing`, `timeboxed`
+
+This state is stored across `trade_approvals`, `positions`, and `position_lots`, and powers the dashboard plus pathway/weekly exit logic.
+
+## Recent implementation notes
+
+- Phase 4 approvals now support explicit override metadata: `override_phase2_decision`, `override_symbol`, and `override_reason`.
+- The dashboard and approvals UI were updated to render structured Phase 4 output more cleanly.
+- Legacy `quality_watchlist`, `value_watchlist`, and `overvalued_watchlist` tables were retired from the live database; `saturday_watchlist` is the active weekly candidate source.

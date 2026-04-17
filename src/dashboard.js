@@ -95,6 +95,28 @@ function renderDetailSection(title, content) {
   `;
 }
 
+function formatTargetType(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) return '-';
+
+  return normalized
+    .split('_')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function renderPositionManagementPills(position) {
+  const items = [
+    position.thesis_state && `Thesis: ${position.thesis_state}`,
+    position.holding_posture && `Posture: ${position.holding_posture}`,
+    position.target_type && `Target: ${formatTargetType(position.target_type)}`
+  ].filter(Boolean);
+
+  if (!items.length) return '-';
+
+  return `<div class="detail-chips">${items.map(item => `<span class="detail-chip">${escapeHtml(item)}</span>`).join('')}</div>`;
+}
+
 /**
  * Convert markdown to HTML for display
  */
@@ -691,6 +713,14 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
       font-size: 0.85rem;
       margin-top: 10px;
     }
+    .position-management-cell {
+      min-width: 230px;
+    }
+    .position-summary-note {
+      color: #8b93b5;
+      font-size: 0.85rem;
+      margin-top: 10px;
+    }
     .no-data {
       color: #666;
       text-align: center;
@@ -868,8 +898,11 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
               <th>Gain/Loss</th>
               <th>Pathway</th>
               <th>Intent</th>
+              <th>Management</th>
               <th>Stop Loss</th>
               <th>Take Profit</th>
+              <th>Rebalance</th>
+              <th>Trail</th>
             </tr>
           </thead>
           <tbody>
@@ -890,14 +923,18 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
                   </td>
                   <td>${p.pathway || '-'}</td>
                   <td>${p.intent || '-'}</td>
+                  <td class="position-management-cell">${renderPositionManagementPills(p)}</td>
                   <td>${stopLoss ? '$' + stopLoss.toFixed(2) : '-'}</td>
-                  <td>${takeProfit ? '$' + takeProfit.toFixed(2) : '-'}</td>
+                  <td>${takeProfit ? '$' + takeProfit.toFixed(2) : (p.target_type === 'flexible_fundamental' ? 'Flexible' : '-')}</td>
+                  <td>${p.rebalance_threshold_pct ? p.rebalance_threshold_pct + '%' : '-'}</td>
+                  <td>${p.trailing_stop_pct ? p.trailing_stop_pct + '%' : '-'}</td>
                 </tr>
               `;
             }).join('')}
             }).join('')}
           </tbody>
-        </table>`
+        </table>
+        <div class="position-summary-note">Flexible fundamental targets show as <strong>Flexible</strong> instead of a fixed take-profit so the UI matches thesis-driven management.</div>`
       }
     </div>
 
@@ -1540,11 +1577,13 @@ router.get('/approvals', async (req, res) => {
           <div class="reasoning-copy">${escapeHtml(trade.reasoning || '')}</div>
         </div>
 
-        ${(trade.investment_thesis || trade.strategy_type || trade.holding_period || trade.confidence || trade.growth_potential || trade.stop_type || trade.target_type) ? `
+        ${(trade.investment_thesis || trade.strategy_type || trade.thesis_state || trade.holding_posture || trade.holding_period || trade.confidence || trade.growth_potential || trade.stop_type || trade.target_type) ? `
         <div class="detail-block">
           <strong>Trade Thesis & Plan</strong>
           ${renderMetricGrid([
             { label: 'Strategy', value: trade.strategy_type },
+            { label: 'Thesis State', value: trade.thesis_state },
+            { label: 'Holding Posture', value: trade.holding_posture },
             { label: 'Holding Period', value: trade.holding_period },
             { label: 'Confidence', value: trade.confidence },
             { label: 'Growth Potential', value: trade.growth_potential },

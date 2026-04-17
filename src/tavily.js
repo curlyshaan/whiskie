@@ -57,6 +57,40 @@ class TavilyAPI {
     return await this.search(query, { depth: 'advanced', maxResults });
   }
 
+  async searchStructuredStockContext(symbol, options = {}) {
+    const days = options.days || 14;
+    const maxResults = options.maxResults || 5;
+    const query = [
+      `${symbol} earnings guidance`,
+      `${symbol} analyst downgrade OR analyst upgrade`,
+      `${symbol} product launch OR customer announcement OR regulation`,
+      `${symbol} litigation OR investigation OR recall`
+    ].join(' OR ');
+
+    return await this.search(query, {
+      depth: 'advanced',
+      maxResults,
+      includeDomains: options.includeDomains || []
+    });
+  }
+
+  async searchStructuredEarningsContext(symbol, options = {}) {
+    const maxResults = options.maxResults || 5;
+    const query = [
+      `${symbol} earnings preview`,
+      `${symbol} guidance`,
+      `${symbol} consensus estimates`,
+      `${symbol} margin outlook`,
+      `${symbol} revenue outlook`
+    ].join(' OR ');
+
+    return await this.search(query, {
+      depth: 'advanced',
+      maxResults,
+      includeDomains: options.includeDomains || []
+    });
+  }
+
   /**
    * Search for sector news
    */

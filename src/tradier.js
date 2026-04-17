@@ -237,24 +237,30 @@ class TradierAPI {
    * Place OCO order (One-Cancels-Other) - Stop-loss + Take-profit
    * When one executes, the other is automatically canceled
    */
-  async placeOCOOrder(symbol, quantity, stopPrice, limitPrice, accountId = TRADIER_ACCOUNT_ID) {
+  async placeOCOOrder(symbol, quantityOrSide, stopPriceOrQuantity, limitPriceOrStopPrice, maybeLimitPrice, accountId = TRADIER_ACCOUNT_ID) {
     try {
+      const isExplicitSide = typeof quantityOrSide === 'string';
+      const closingSide = isExplicitSide ? quantityOrSide : 'sell';
+      const quantity = isExplicitSide ? stopPriceOrQuantity : quantityOrSide;
+      const stopPrice = isExplicitSide ? limitPriceOrStopPrice : stopPriceOrQuantity;
+      const limitPrice = isExplicitSide ? maybeLimitPrice : limitPriceOrStopPrice;
+
       const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
         params: {
           class: 'oco',
           duration: 'gtc',
           // Leg 1: Stop-loss
           'symbol[0]': symbol,
-          'side[0]': 'sell',
+          'side[0]': closingSide,
           'quantity[0]': quantity,
           'type[0]': 'stop',
-          'stop[0]': stopPrice.toFixed(2),
+          'stop[0]': Number(stopPrice).toFixed(2),
           // Leg 2: Take-profit (limit)
           'symbol[1]': symbol,
-          'side[1]': 'sell',
+          'side[1]': closingSide,
           'quantity[1]': quantity,
           'type[1]': 'limit',
-          'price[1]': limitPrice.toFixed(2)
+          'price[1]': Number(limitPrice).toFixed(2)
         }
       });
       return response.data.order;
@@ -282,12 +288,12 @@ class TradierAPI {
           duration: 'gtc',
           // Leg 1: Stop-loss (triggers after entry fills)
           'order[0][type]': 'stop',
-          'order[0][side]': side === 'buy' ? 'sell' : 'buy',
+          'order[0][side]': side === 'buy' ? 'sell' : side === 'sell_short' ? 'buy_to_cover' : 'buy',
           'order[0][quantity]': quantity,
           'order[0][stop]': stopPrice,
           // Leg 2: Take-profit (triggers after entry fills)
           'order[1][type]': 'limit',
-          'order[1][side]': side === 'buy' ? 'sell' : 'buy',
+          'order[1][side]': side === 'buy' ? 'sell' : side === 'sell_short' ? 'buy_to_cover' : 'buy',
           'order[1][quantity]': quantity,
           'order[1][price]': limitPrice
         }

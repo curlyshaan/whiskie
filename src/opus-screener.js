@@ -1,5 +1,4 @@
 import fmp from './fmp.js';
-import tradier from './tradier.js';
 import claude from './claude.js';
 import * as db from './db.js';
 
@@ -56,27 +55,25 @@ class OpusScreener {
           console.log(`   Progress: ${fmpCount}/${totalStocks} stocks loaded`);
         }
 
-        // 500ms delay to stay under 300 calls/minute (120 calls/min with 500ms delay)
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
+              }
 
       console.log(`   ✅ Loaded ${Object.keys(fundamentalsData).length} stocks (${fmpCount} from FMP)`);
 
       // Get current market prices
       console.log('   📈 Fetching current market prices...');
       const symbols = Object.keys(fundamentalsData);
-      const quotes = await tradier.getQuotes(symbols);
+      const quotes = await fmp.getQuotes(symbols);
       const quotesArray = Array.isArray(quotes) ? quotes : [quotes];
 
       const marketData = {};
       quotesArray.forEach(q => {
         if (q && q.symbol) {
           marketData[q.symbol] = {
-            price: q.last || q.close,
-            high52w: q.week_52_high,
-            change: q.change_percentage || 0,
+            price: q.price || q.previousClose || q.close,
+            high52w: q.yearHigh,
+            change: q.changePercentage || 0,
             volume: q.volume,
-            avgVolume: q.average_volume
+            avgVolume: q.averageVolume
           };
         }
       });

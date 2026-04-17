@@ -3,36 +3,32 @@ import yahooFinance from './yahoo-finance.js';
 
 /**
  * Financial Modeling Prep (FMP) API Integration
- * Using paid plan with single API key
+ * Uses the current paid single-key setup.
  *
- * Paid plan benefits:
- * - 300 API calls per MINUTE (essentially unlimited for our use)
- * - Access to all endpoints (quotes, financials, ratios, income statements)
- * - Real-time data
+ * Current assumptions:
+ * - one paid FMP key
+ * - Starter-tier 300 calls/minute ceiling
+ * - `/stable` endpoints as the canonical FMP surface
  *
- * Strategy:
- * - Single paid key with 300 calls/minute rate limit
- * - 90-day cache to optimize performance
- * - No daily limit concerns
+ * Notes:
+ * - some endpoints are still plan-restricted, so code should not assume
+ *   every documented endpoint is available
+ * - quote fan-out should prefer controlled parallel single-symbol requests
+ *   over restricted batch endpoints
  */
 
 class FMPClient {
   constructor() {
     this.BASE_URL = 'https://financialmodelingprep.com/stable';
 
-    // Single paid API key
+    // Single paid API key (Starter plan in current deployment)
     this.apiKey = process.env.FMP_API_KEY_1 || '4WeyS0aP8qcZE7MncNLbUfUYeP3d3Y6z';
 
     // Track usage for monitoring
     this.callCount = 0;
     this.RATE_LIMIT_PER_MINUTE = 300;
     this.lastResetDate = new Date().toDateString();
-
-    // Rate limiting: 400ms between calls = 150 calls/min (safely under 300/min)
-    // With 6 API calls per stock in getFundamentals, this prevents rate limit errors
-    // 407 stocks × 6 calls = 2,442 calls over ~16 minutes (safe for Saturday screening)
-    this.lastCallTime = 0;
-    this.MIN_CALL_INTERVAL = 400; // milliseconds
+    this.DEFAULT_QUOTE_CONCURRENCY = 12;
 
     // Short-term cache for Saturday screening (30 minutes)
     // Prevents re-fetching same data when Opus screening runs after fundamental screening
@@ -61,14 +57,14 @@ class FMPClient {
   getUsageStats() {
     return {
       calls: this.callCount,
-      limit: 'No daily limit (300 calls/minute)',
-      remaining: 'Unlimited',
+      limit: '300 calls/minute',
+      remaining: 'Tracked client-side only',
       percentage: 'N/A'
     };
   }
 
   /**
-   * Make API request with automatic rate limiting and 30-minute cache
+   * Make API request with 30-minute cache for repeated reads
    */
   async request(endpoint, params = {}) {
     // Check cache first (30-minute TTL for Saturday screening)
@@ -77,15 +73,6 @@ class FMPClient {
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
       return cached.data;
     }
-
-    // Rate limiting: ensure 400ms between calls
-    const now = Date.now();
-    const timeSinceLastCall = now - this.lastCallTime;
-    if (timeSinceLastCall < this.MIN_CALL_INTERVAL) {
-      const delay = this.MIN_CALL_INTERVAL - timeSinceLastCall;
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-    this.lastCallTime = Date.now();
 
     const apiKey = this.getCurrentKey();
 
@@ -130,6 +117,38 @@ class FMPClient {
   async getQuote(symbol) {
     const data = await this.request(`/quote`, { symbol });
     return data[0] || null;
+  }
+
+  /**
+   * Get multiple real-time quotes with controlled parallel single-symbol requests.
+   * `batch-quote` is currently restricted on the active plan.
+   */
+  async getQuotes(symbols, options = {}) {
+    const symbolList = Array.isArray(symbols)
+      ? symbols
+      : String(symbols || '').split(',').map(s => s.trim()).filter(Boolean);
+
+    if (!symbolList.length) return [];
+
+    const concurrency = Math.max(1, options.concurrency || this.DEFAULT_QUOTE_CONCURRENCY);
+    const results = [];
+
+    for (let i = 0; i < symbolList.length; i += concurrency) {
+      const chunk = symbolList.slice(i, i + concurrency);
+      const chunkResults = await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            return await this.getQuote(symbol);
+          } catch (error) {
+            console.warn(`⚠️ Quote fetch failed for ${symbol}: ${error.message}`);
+            return null;
+          }
+        })
+      );
+      results.push(...chunkResults.filter(Boolean));
+    }
+
+    return results;
   }
 
   /**
@@ -639,7 +658,7 @@ class FMPClient {
    */
   async getFundamentals(symbol) {
     try {
-      // Sequential calls to respect 400ms rate limiting (no parallel calls)
+      // Keep fundamentals fetches mostly sequential per symbol to avoid accidental fan-out bursts during large scans
       const profile = await this.getProfile(symbol);
       const ratiosTTM = await this.getRatiosTTM(symbol);
       const keyMetricsTTM = await this.getKeyMetricsTTM(symbol);
@@ -839,24 +858,38 @@ class FMPClient {
       // Calculate pre-computed signals
       const revenueAccel = this.calcGrowthAcceleration(financialGrowth);
 
+      const quote = await this.getQuote(symbol).catch(() => null);
+      const fundamentals = await this.getFundamentals(symbol);
+
       return {
         symbol,
         profile,
+        quote,
         ratiosTTM,
         keyMetricsTTM,
         financialGrowth,
         incomeStatements,
         technicals,
+        fundamentals,
 
         // Pre-computed signals for Opus
         signals: {
-          isAbove200MA: technicals?.aboveMa200 || false,
-          isAbove50MA: technicals?.aboveMa50 || false,
-          ma200Distance: technicals?.ma200Distance || 0,
+          isAbove200MA: technicals?.aboveSMA200 || technicals?.aboveMa200 || false,
+          isAbove50MA: technicals?.aboveSMA50 || technicals?.aboveMa50 || false,
+          ma200Distance: technicals?.distanceFrom200MA || technicals?.ma200Distance || 0,
           revenueAccel,
           latestQuarterRevenue: incomeStatements[0]?.revenue || 0,
           latestQuarterEarnings: incomeStatements[0]?.netIncome || 0,
-          latestQuarterDate: incomeStatements[0]?.date || 'N/A'
+          latestQuarterDate: incomeStatements[0]?.date || 'N/A',
+          currentPrice: quote?.price || profile?.price || technicals?.currentPrice || 0,
+          marketCap: fundamentals?.marketCap || profile?.marketCap || 0,
+          sector: fundamentals?.sector || profile?.sector || 'Unknown',
+          industry: fundamentals?.industry || profile?.industry || 'Unknown',
+          revenueGrowth: fundamentals?.revenueGrowth || financialGrowth?.[0]?.revenueGrowth || 0,
+          epsGrowth: fundamentals?.epsGrowth || financialGrowth?.[0]?.epsgrowth || 0,
+          operatingMargin: fundamentals?.operatingMargin || ratiosTTM?.operatingProfitMarginTTM || 0,
+          roe: fundamentals?.roe || keyMetricsTTM?.returnOnEquityTTM || 0,
+          roic: fundamentals?.roic || keyMetricsTTM?.returnOnInvestedCapitalTTM || 0
         }
       };
     } catch (error) {

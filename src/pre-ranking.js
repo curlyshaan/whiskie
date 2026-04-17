@@ -1,4 +1,3 @@
-import tradier from './tradier.js';
 import fmp from './fmp.js';
 import * as db from './db.js';
 import sectorRotation from './sector-rotation.js';
@@ -79,7 +78,7 @@ class PreRanking {
 
     let quotes;
     try {
-      quotes = await tradier.getQuotes(symbols);
+      quotes = await fmp.getQuotes(symbols);
       // Normalize to array if single quote returned
       if (!Array.isArray(quotes)) {
         quotes = [quotes];
@@ -108,8 +107,8 @@ class PreRanking {
           continue;
         }
 
-        const price = quote.last || quote.close;
-        const avgVolume = Math.round(quote.average_volume || 0);
+        const price = quote.price || quote.previousClose || quote.close;
+        const avgVolume = Math.round(quote.averageVolume || 0);
         const bid = quote.bid || 0;
         const ask = quote.ask || 0;
         const spread = (ask && bid && price) ? (ask - bid) / price : 0;
@@ -294,12 +293,12 @@ class PreRanking {
    */
   async scoreStock(stock, sectorMap, earningsMap) {
     // Get real-time quote
-    const quote = await tradier.getQuote(stock.symbol);
+    const quote = await fmp.getQuote(stock.symbol);
     if (!quote) return null;
 
-    const price = quote.last || quote.close;
+    const price = quote.price || quote.previousClose || quote.close;
     const volume = quote.volume || 0;
-    const change = quote.change_percentage || 0;
+    const change = quote.changePercentage || 0;
     const avgVolume = stock.avgVolume; // Already calculated in filter step
 
     // Calculate volume surge

@@ -210,7 +210,20 @@ EXECUTE_BUY: SYMBOL | QTY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 EXECUTE_SHORT: SYMBOL | QTY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 ```
 
-The richer Phase 4 output also includes thesis, catalysts, fundamentals, risk, stop, and holding metadata that feed the approval queue.
+The richer Phase 4 output also includes thesis, catalysts, fundamentals, risk, stop, holding metadata, and explicit override markers (`OVERRIDE_PHASE2_DECISION`, `OVERRIDE_SYMBOL`, `OVERRIDE_REASON`) that feed the approval queue.
+
+The current Phase 4 trade blocks also request structured fields such as:
+
+- `THESIS`
+- `STRATEGY`
+- `CATALYSTS`
+- `FUNDAMENTALS`
+- `TECHNICAL`
+- `RISKS`
+- `STOP_TYPE` / `STOP_REASON`
+- `TARGET_TYPE` / `TRAILING_STOP_PCT` / `REBALANCE_THRESHOLD_PCT` / `MAX_HOLD_DAYS`
+- `OVERRIDE_PHASE2_DECISION` / `OVERRIDE_SYMBOL` / `OVERRIDE_REASON`
+
 
 ## Stock profiles
 
@@ -224,6 +237,33 @@ Profiles live in `stock_profiles` and are used to reduce repeated research work.
 - stale names get an incremental or deeper refresh depending on context
 
 Because the code has both 12-day and 14-day checks in different flows, docs should describe that nuance instead of claiming a single universal threshold.
+
+## Strategy-aware post-entry management
+
+Whiskie now treats post-entry position management as a persisted state machine rather than relying only on entry-time targets.
+
+### Persisted management fields
+
+The live system stores and consumes:
+
+- `thesis_state`
+- `holding_posture`
+- `target_type`
+- `has_fixed_target`
+- `trailing_stop_pct`
+- `rebalance_threshold_pct`
+
+These fields exist across `trade_approvals`, `positions`, and `position_lots`. Database initialization backfills and normalizes these values so dashboard rendering, weekly review, and pathway exits stay aligned.
+
+### Current prompt context improvements
+
+Weekly Opus-driven reviews now use richer prompt context:
+
+- FMP fundamentals
+- FMP technical indicators
+- structured Tavily searches for catalysts, analyst changes, guidance, and material risks
+
+This replaces looser stock-news-only prompting in the reviewed flows.
 
 ## Trade approval and execution
 
@@ -316,7 +356,7 @@ All schedules are configured for `America/New_York`.
 Current facts from `src/fmp.js`:
 
 - `/stable` endpoints are the intended API surface
-- minimum call spacing is `400ms`
+- quote fan-out uses controlled parallel single-symbol requests because `batch-quote` is restricted on the active FMP plan
 - repeated requests are cached in-memory for `30 minutes`
 
 ### Tradier
