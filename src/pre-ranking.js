@@ -58,20 +58,31 @@ class PreRanking {
     const watchlistStocks = await this.getWatchlistStocks();
     console.log(`   Saturday watchlist: ${watchlistStocks.length} stocks`);
 
-    // Get all stocks from FMP-based universe
-    const allStocks = await this.getAllStocks();
-    console.log(`   Total stocks: ${allStocks.length}`);
+    let marketOpen = false;
+    try {
+      marketOpen = await tradier.isMarketOpen();
+    } catch (error) {
+      console.warn('⚠️ Could not determine market-open state for pre-ranking, defaulting to closed-market pricing:', error.message);
+    }
 
-    // Merge watchlist stocks with universe stocks (watchlist takes priority)
-    const watchlistSymbols = new Set(watchlistStocks.map(s => s.symbol));
-    const mergedStocks = [
-      ...watchlistStocks,
-      ...allStocks.filter(s => !watchlistSymbols.has(s.symbol))
-    ];
-    console.log(`   Merged candidates: ${mergedStocks.length} (${watchlistStocks.length} from watchlist, ${mergedStocks.length - watchlistStocks.length} from universe)`);
+    let mergedStocks;
+    if (marketOpen) {
+      const allStocks = await this.getAllStocks();
+      console.log(`   Total stocks: ${allStocks.length}`);
+
+      const watchlistSymbols = new Set(watchlistStocks.map(s => s.symbol));
+      mergedStocks = [
+        ...watchlistStocks,
+        ...allStocks.filter(s => !watchlistSymbols.has(s.symbol))
+      ];
+      console.log(`   Merged candidates: ${mergedStocks.length} (${watchlistStocks.length} from watchlist, ${mergedStocks.length - watchlistStocks.length} from universe)`);
+    } else {
+      mergedStocks = [...watchlistStocks];
+      console.log(`   Market closed: limiting candidates to ${mergedStocks.length} active watchlist stocks`);
+    }
 
     // Filter stocks with live spread/volume/price checks using batch quote fetching
-    console.log(`   🔍 Starting live filtering with spread/volume/price checks...`);
+    console.log(`   🔍 Starting ${marketOpen ? 'live' : 'closed-market'} filtering...`);
     const filteredStocks = [];
     const failedStocks = { volume: [], spread: [], price: [], noQuote: [] };
 
@@ -100,12 +111,6 @@ class PreRanking {
     }
 
     console.log(`   ✅ Fetched ${quoteMap.size} quotes`);
-    let marketOpen = false;
-    try {
-      marketOpen = await tradier.isMarketOpen();
-    } catch (error) {
-      console.warn('⚠️ Could not determine market-open state for pre-ranking, defaulting to closed-market pricing:', error.message);
-    }
 
     // Filter stocks using batch-fetched quotes
     for (const stock of mergedStocks) {
@@ -117,26 +122,27 @@ class PreRanking {
         }
 
         const price = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
+        const MIN_PRICE = 5.00;
         const avgVolume = Math.round(quote.averageVolume || 0);
         const bid = quote.bid || 0;
         const ask = quote.ask || 0;
         const spread = (ask && bid && price) ? (ask - bid) / price : 0;
         const dollarVolume = Math.round(avgVolume * price);
 
-        // Live filters
-        const MIN_VOLUME = 50_000_000; // $50M
-        const MAX_SPREAD = 0.005; // 0.5%
-        const MIN_PRICE = 5.00;
-
         // Check each filter and log failures
         let passed = true;
-        if (dollarVolume < MIN_VOLUME) {
-          failedStocks.volume.push(`${stock.symbol} ($${(dollarVolume/1e6).toFixed(1)}M)`);
-          passed = false;
-        }
-        if (spread > MAX_SPREAD) {
-          failedStocks.spread.push(`${stock.symbol} (${(spread*100).toFixed(2)}%)`);
-          passed = false;
+        if (marketOpen) {
+          const MIN_VOLUME = 50_000_000; // $50M
+          const MAX_SPREAD = 0.005; // 0.5%
+
+          if (dollarVolume < MIN_VOLUME) {
+            failedStocks.volume.push(`${stock.symbol} ($${(dollarVolume/1e6).toFixed(1)}M)`);
+            passed = false;
+          }
+          if (spread > MAX_SPREAD) {
+            failedStocks.spread.push(`${stock.symbol} (${(spread*100).toFixed(2)}%)`);
+            passed = false;
+          }
         }
         if (price < MIN_PRICE) {
           failedStocks.price.push(`${stock.symbol} ($${price.toFixed(2)})`);
@@ -162,7 +168,7 @@ class PreRanking {
       }
     }
 
-    console.log(`\n   ✅ Live filtering complete: ${filteredStocks.length}/${allStocks.length} stocks passed`);
+    console.log(`\n   ✅ Filtering complete: ${filteredStocks.length}/${mergedStocks.length} stocks passed`);
     console.log(`   📉 Filter breakdown:`);
     console.log(`      • Failed volume check: ${failedStocks.volume.length} stocks`);
     console.log(`      • Failed spread check: ${failedStocks.spread.length} stocks`);
@@ -319,6 +325,7 @@ class PreRanking {
     const volume = quote.volume || 0;
     const change = quote.changePercentage || 0;
     const avgVolume = stock.avgVolume; // Already calculated in filter step
+    const allowOffHoursBypass = !marketOpen && stock.source === 'watchlist';
 
     // Calculate volume surge
     const volumeSurge = avgVolume > 0 ? volume / avgVolume : 0;
@@ -352,7 +359,7 @@ class PreRanking {
       // Tavily news in daily analysis will catch "good earnings but stock down" opportunities
 
       // Check if meets sector-adjusted momentum threshold
-      const meetsThreshold = bypassMomentum || (
+      const meetsThreshold = allowOffHoursBypass || bypassMomentum || (
         Math.abs(change / 100) >= momentumThresholds.minMove &&
         volumeSurge >= momentumThresholds.minVolumeSurge
       );
@@ -365,6 +372,9 @@ class PreRanking {
       if (bypassMomentum) {
         score += 12;
         reasons.push(`momentum bypass for ${stock.pathway}`);
+      } else if (allowOffHoursBypass) {
+        score += 8;
+        reasons.push('off-hours watchlist review');
       }
 
       // Positive momentum (sector-adjusted scoring)
@@ -401,7 +411,9 @@ class PreRanking {
     // SHORT SCORING
     if (change < 0) {
       let meetsThreshold;
-      if (shortMomentumConfig.direction === 'negative') {
+      if (allowOffHoursBypass) {
+        meetsThreshold = true;
+      } else if (shortMomentumConfig.direction === 'negative') {
         meetsThreshold = (change / 100) <= -shortMomentumConfig.minMove &&
           volumeSurge >= shortMomentumConfig.minVolumeSurge;
       } else if (shortMomentumConfig.direction === 'positive') {
@@ -451,6 +463,9 @@ class PreRanking {
       }
 
       reasons.push(`${stock.pathway || 'short'} momentum rule: ${shortMomentumConfig.direction}`);
+      if (allowOffHoursBypass) {
+        reasons.push('off-hours watchlist review');
+      }
 
       direction = 'short';
     }

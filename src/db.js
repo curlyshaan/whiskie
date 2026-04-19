@@ -1667,20 +1667,20 @@ export async function searchUpcomingEarningsSymbols(queryText = '', limit = 10) 
     const queryValue = String(queryText || '').trim().toUpperCase();
     const params = [normalizedLimit];
     let whereClause = `
-      WHERE earnings_date >= CURRENT_DATE
+      WHERE ec.earnings_date >= CURRENT_DATE
     `;
 
     if (queryValue) {
       params.unshift(`%${queryValue}%`);
       whereClause += `
-        AND symbol ILIKE $1
+        AND ec.symbol ILIKE $1
       `;
     }
 
     const limitPlaceholder = queryValue ? '$2' : '$1';
 
     const result = await pool.query(
-      `SELECT DISTINCT ON (symbol)
+      `SELECT DISTINCT ON (ec.symbol)
         ec.symbol,
         ec.earnings_date,
         ec.earnings_time,

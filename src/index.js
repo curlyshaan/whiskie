@@ -1299,10 +1299,12 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         riskManager.isDefensiveMode(portfolio) ||
         health.opportunities.length > 0;
 
+      let marketContext = {};
+
       if (shouldRunFullAnalysis) {
         console.log('🧠 Running deep analysis with Claude Opus...');
         // Pass all context to deep analysis
-        await this.runDeepAnalysis(portfolio, wrappedNews, {
+        const deepAnalysisResult = await this.runDeepAnalysis(portfolio, wrappedNews, {
           cashContext,
           vixContext,
           macroContext,
@@ -1311,6 +1313,7 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
           sectorContext,
           optionsContext
         });
+        marketContext = deepAnalysisResult?.marketContext || {};
       } else {
         // Portfolio is healthy, but still scan watchlist and news for opportunities
         console.log('✅ Portfolio healthy - running watchlist scan and news review');
@@ -2698,6 +2701,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
       }
       console.log('');
 
+      return { marketContext };
     } catch (error) {
       console.error('');
       console.error('═══════════════════════════════════════');
@@ -2711,6 +2715,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
       console.error('Stack trace:', error.stack);
       console.error('═══════════════════════════════════════');
       console.error('');
+      return { marketContext: {} };
     }
   }
 
