@@ -837,6 +837,168 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
       color: #666;
       font-size: 0.85rem;
     }
+    .detail-block {
+      background: #0f1425;
+      padding: 15px;
+      border-radius: 5px;
+      margin-bottom: 15px;
+      color: #d0d0d0;
+      line-height: 1.5;
+    }
+    .detail-block ul {
+      margin-left: 18px;
+      margin-top: 8px;
+    }
+    .detail-block strong {
+      color: #fff;
+    }
+    .compact-trade-card {
+      background: #11182b;
+      border: 1px solid #2a2f4a;
+      border-left-width: 4px;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 14px 0;
+    }
+    .compact-trade-card.buy { border-left-color: #10b981; }
+    .compact-trade-card.short { border-left-color: #ef4444; }
+    .compact-trade-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .compact-trade-title {
+      font-weight: 700;
+      color: #fff;
+      font-size: 1rem;
+    }
+    .compact-trade-badge {
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(102, 126, 234, 0.15);
+      color: #a5b4fc;
+    }
+    .compact-trade-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+    }
+    .compact-trade-metric-label {
+      color: #8b93b5;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 4px;
+    }
+    .compact-trade-metric-value {
+      color: #e5e7eb;
+      font-weight: 600;
+      word-break: break-word;
+    }
+    .phase4-section {
+      background: #0f1425;
+      border: 1px solid #2a2f4a;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 16px 0;
+    }
+    .phase4-section-title {
+      color: #fff;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin: 10px 0 16px;
+    }
+    .metric-card {
+      background: #11182b;
+      border: 1px solid #2a2f4a;
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .metric-label {
+      color: #8b93b5;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+    .metric-value {
+      color: #fff;
+      font-weight: 600;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .detail-section {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #2a2f4a;
+    }
+    .detail-section-title {
+      color: #fff;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .detail-section-body {
+      color: #d0d0d0;
+      line-height: 1.6;
+    }
+    .detail-list {
+      margin: 0 0 0 18px;
+      padding: 0;
+    }
+    .detail-list li {
+      margin-bottom: 6px;
+    }
+    .detail-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .detail-chip, .news-link {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #11182b;
+      border: 1px solid #2a2f4a;
+      color: #cbd5e1;
+      text-decoration: none;
+      font-size: 0.9rem;
+      word-break: break-all;
+    }
+    .news-link:hover {
+      border-color: #667eea;
+      color: #fff;
+    }
+    .override-banner {
+      background: rgba(245, 158, 11, 0.14);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 15px;
+    }
+    .override-label {
+      color: #fbbf24;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .reasoning-copy {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
   </style>
 </head>
 <body>
@@ -2168,7 +2330,7 @@ function generateEarningsRemindersHTML(reminders) {
               <td><strong>${escapeHtml(reminder.symbol)}</strong></td>
               <td>${escapeHtml(reminder.earnings_date)}</td>
               <td>${escapeHtml((reminder.earnings_session || 'unknown').replace(/_/g, ' '))}</td>
-              <td>${reminder.scheduled_send_at ? escapeHtml(new Date(reminder.scheduled_send_at).toLocaleString('en-US', { timeZone: 'America/New_York' })) + ' ET' : '-'}</td>
+              <td>${escapeHtml(formatDashboardDateTime(reminder.scheduled_send_at))}</td>
               <td><span class="status-pill">${escapeHtml(reminder.status)}</span></td>
               <td>${escapeHtml((reminder.notes || '').slice(0, 140) || '-')}</td>
             </tr>
@@ -2240,7 +2402,10 @@ function generateEarningsRemindersHTML(reminders) {
       document.getElementById('detailSymbol').textContent = payload.symbol;
       document.getElementById('detailDate').textContent = payload.timing.earningsDate || payload.nextEarning.earnings_date;
       document.getElementById('detailSession').textContent = (payload.timing.earningsSession || 'unknown').replace(/_/g, ' ');
-      document.getElementById('detailSendAt').textContent = payload.scheduledSendAt ? new Date(payload.scheduledSendAt).toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET' : '-';
+      const scheduled = payload.scheduledSendAt ? new Date(payload.scheduledSendAt) : null;
+      document.getElementById('detailSendAt').textContent = scheduled && !Number.isNaN(scheduled.getTime())
+        ? scheduled.toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET'
+        : '-';
       document.getElementById('timingRaw').textContent = payload.timing.earningsTimeRaw || 'No Yahoo timing detail found.';
       document.getElementById('catalystSummary').textContent = payload.catalystSummary || 'No catalyst summary available.';
       document.getElementById('existingNotes').textContent = payload.reminder?.notes || 'None saved yet.';
@@ -2300,6 +2465,13 @@ function generateEarningsRemindersHTML(reminders) {
 </body>
 </html>
   `;
+}
+
+function formatDashboardDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return `${date.toLocaleString('en-US', { timeZone: 'America/New_York' })} ET`;
 }
 
 export default router;

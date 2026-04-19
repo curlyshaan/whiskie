@@ -24,6 +24,12 @@ function toIsoDate(value) {
   return date.toISOString().split('T')[0];
 }
 
+function isValidDate(value) {
+  if (!value) return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime());
+}
+
 function getEasternDateParts(date = new Date()) {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: EASTERN_TIMEZONE,
@@ -192,7 +198,7 @@ export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
   };
 
   for (const script of scripts) {
-    if (!script.includes('startdatetime') || !script.includes(symbol)) continue;
+    if (!script.includes(symbol)) continue;
 
     const matches = script.match(/"rows":(\[[\s\S]*?\])\s*,\s*"sortFields"/);
     if (!matches) continue;
@@ -203,7 +209,7 @@ export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
       if (!row) continue;
 
       const isoDate = toIsoDate(row.startdatetime || row.startDate || row.earningsDate) || expectedDate;
-      const rawText = row.startdatetimetype || row.time || row.companyshortname || null;
+      const rawText = row.startdatetimetype || row.time || row.epsestimate || null;
       return {
         symbol,
         earningsDate: isoDate,
@@ -256,10 +262,10 @@ export async function getEarningsReminderDetails(symbol) {
   }
 
   const catalystSummary = existingReminder?.catalyst_summary || await buildEarningsCatalystSummary(normalizedSymbol);
-  const scheduledSendAt = calculateScheduledSendAt(
-    timing.earningsDate || upcoming.earnings_date,
-    timing.earningsSession || 'unknown'
-  );
+  const effectiveEarningsDate = timing.earningsDate || upcoming.earnings_date;
+  const scheduledSendAt = isValidDate(effectiveEarningsDate)
+    ? calculateScheduledSendAt(effectiveEarningsDate, timing.earningsSession || 'unknown')
+    : null;
 
   return {
     symbol: normalizedSymbol,
