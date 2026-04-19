@@ -47,3 +47,27 @@ export function formatMarkdown(text) {
 
   return formatted;
 }
+
+export function resolveMarketPrice(quote, options = {}) {
+  const {
+    marketOpen = true,
+    fallback = 0
+  } = options;
+
+  if (!quote || typeof quote !== 'object') {
+    return fallback;
+  }
+
+  const liveCandidates = [quote.price, quote.last, quote.previousClose, quote.close];
+  const closedCandidates = [quote.previousClose, quote.close, quote.price, quote.last];
+  const candidates = marketOpen ? liveCandidates : closedCandidates;
+
+  for (const candidate of candidates) {
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+
+  return fallback;
+}

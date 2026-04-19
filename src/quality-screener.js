@@ -1,6 +1,8 @@
 import fmp from './fmp.js';
 import * as db from './db.js';
 import email from './email.js';
+import tradier from './tradier.js';
+import { resolveMarketPrice } from './utils.js';
 
 /**
  * Quality Watchlist Manager
@@ -26,7 +28,8 @@ class QualityScreener {
     const quote = await fmp.getQuote(symbol);
     if (!quote) return null;
 
-    const price = quote.price || quote.previousClose || quote.close;
+    const marketOpen = await tradier.isMarketOpen().catch(() => false);
+    const price = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
     const high52w = quote.yearHigh || 0;
     const change = quote.changePercentage || 0;
     const volume = quote.volume || 0;

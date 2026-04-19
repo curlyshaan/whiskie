@@ -39,6 +39,7 @@ import macroRegime from './macro-regime.js';
 import corporateActions from './corporate-actions.js';
 import { runPreMarketScan } from './pre-market-scanner.js';
 import { sanitizeNewsContent, wrapNewsForPrompt } from './news-sanitizer.js';
+import { resolveMarketPrice } from './utils.js';
 import * as db from './db.js';
 import { updateAllEarnings } from './earnings.js';
 import { runTrimCheck } from './trimming.js';
@@ -48,6 +49,7 @@ import { runEarningsDayAnalysis } from './earnings-analysis.js';
 import { runWeeklyReview } from './weekly-review.js';
 import stockProfiles from './stock-profiles.js';
 import catalystResearch, { detectCatalysts } from './catalyst-research.js';
+import earningsReminders from './earnings-reminders.js';
 
 dotenv.config();
 
@@ -179,6 +181,42 @@ class WhiskieBot {
         } catch (error) {
           console.error('❌ Daily summary failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule earnings reminder processor at 3:00 PM ET
+      cron.schedule('0 15 * * 1-5', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Earnings Reminder Processor', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ 3:00 PM ET - Processing due earnings reminders');
+          await earningsReminders.syncAutoEarningsReminders();
+          await this.processEarningsReminders();
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Earnings reminder processing failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await email.sendErrorAlert(error, 'Earnings reminder processing failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      cron.schedule('15 16 * * 1-5', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Earnings Reminder Grader', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ 4:15 PM ET - Grading sent earnings reminders');
+          await this.gradeEarningsReminders();
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Earnings reminder grading failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await email.sendErrorAlert(error, 'Earnings reminder grading failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -780,6 +818,23 @@ class WhiskieBot {
           }
         })();
         res.json({ success: true, message: 'EOD summary started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-earnings-reminders', async (req, res) => {
+      try {
+        console.log('📡 Manual earnings reminder processing triggered via API');
+        (async () => {
+          try {
+            await earningsReminders.syncAutoEarningsReminders();
+            await this.processEarningsReminders();
+          } catch (error) {
+            console.error('❌ Error in manual earnings reminder processing:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Earnings reminder processing started. Check logs for progress.' });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
@@ -1388,7 +1443,7 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       action: 'sell',
       symbol,
       quantity: sellQuantity,
-      price: quote.price || quote.previousClose || quote.close || 0,
+      price: resolveMarketPrice(quote, { marketOpen: false, fallback: 0 }),
       positionSize: action.percentage * 100,
       reasoning: action.reason,
       stopLoss: 0,
@@ -3273,6 +3328,58 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
     }
   }
 
+  async processEarningsReminders(now = new Date()) {
+    try {
+      const dueReminders = await db.getRemindersDueForSend(now);
+
+      if (!dueReminders.length) {
+        console.log('ℹ️ No earnings reminders due right now');
+        return [];
+      }
+
+      const processed = [];
+
+      for (const reminder of dueReminders) {
+        console.log(`⏰ Processing earnings reminder for ${reminder.symbol}`);
+        const prediction = await earningsReminders.runOfficialReminderPrediction(reminder);
+        const updatedReminder = await db.markEarningsReminderSent(reminder.id, now, prediction);
+        await email.sendEarningsReminderEmail(updatedReminder);
+        processed.push(updatedReminder);
+      }
+
+      console.log(`✅ Processed ${processed.length} earnings reminder(s)`);
+      return processed;
+    } catch (error) {
+      console.error('Error processing earnings reminders:', error);
+      throw error;
+    }
+  }
+
+  async gradeEarningsReminders() {
+    try {
+      const pendingGrades = await db.getSentEarningsRemindersPendingGrade();
+
+      if (!pendingGrades.length) {
+        console.log('ℹ️ No earnings reminders pending grading');
+        return [];
+      }
+
+      const graded = [];
+      for (const reminder of pendingGrades) {
+        const result = await earningsReminders.gradeEarningsReminder(reminder);
+        if (result) {
+          graded.push(result);
+        }
+      }
+
+      console.log(`✅ Graded ${graded.length} earnings reminder(s)`);
+      return graded;
+    } catch (error) {
+      console.error('Error grading earnings reminders:', error);
+      throw error;
+    }
+  }
+
   /**
    * Execute a trade (buy or sell)
    * Supports long and short positions with multiple lots
@@ -3284,7 +3391,8 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
 
       // Get current price
       const quote = await fmp.getQuote(symbol);
-      const price = quote.price;
+      const marketOpen = await tradier.isMarketOpen().catch(() => false);
+      const price = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
 
       // Validate trade
       const portfolio = await analysisEngine.getPortfolioState();
@@ -3583,3 +3691,4 @@ process.on('SIGTERM', () => bot.stop());
 bot.start().catch(console.error);
 
 export default bot;
+export { WhiskieBot };

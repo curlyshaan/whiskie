@@ -1,6 +1,7 @@
 import express from 'express';
 import * as db from './db.js';
 import { stripThinkingBlocks } from './utils.js';
+import earningsReminders from './earnings-reminders.js';
 
 const router = express.Router();
 
@@ -508,6 +509,48 @@ router.get('/logs', async (req, res) => {
   }
 });
 
+router.get('/earnings-reminders', async (req, res) => {
+  try {
+    const reminders = await db.getAllActiveEarningsReminders();
+    res.send(generateEarningsRemindersHTML(reminders));
+  } catch (error) {
+    console.error('Earnings reminders page error:', error);
+    res.status(500).send('Error loading earnings reminders');
+  }
+});
+
+router.get('/api/earnings-reminders/search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '');
+    const results = await earningsReminders.searchEarningsReminderSymbols(q, 12);
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/api/earnings-reminders/:symbol', async (req, res) => {
+  try {
+    const details = await earningsReminders.getEarningsReminderDetails(req.params.symbol);
+    if (!details) {
+      res.status(404).json({ error: 'No upcoming earnings found for symbol' });
+      return;
+    }
+    res.json(details);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/api/earnings-reminders/save', async (req, res) => {
+  try {
+    const reminder = await earningsReminders.saveEarningsReminder(req.body || {});
+    res.json({ success: true, reminder });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 function generateDashboardHTML(analyses, positions, trades, snapshot) {
   const totalValue = snapshot?.total_value || 100000;
   const cash = snapshot?.cash || snapshot?.cash_balance || 100000;
@@ -811,6 +854,9 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
     </a>
     <a href="/cron-status" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;">
       ⏰ Cron Jobs
+    </a>
+    <a href="/earnings-reminders" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;">
+      ⏰ Earnings Reminders
     </a>
 
     <div class="stats">
@@ -1746,7 +1792,8 @@ function generateCronStatusHTML(executions, days) {
     { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
     { name: 'Daily Summary', type: 'daily', schedule: '6:00 PM ET Mon-Fri', endpoint: '/api/trigger-eod-summary' },
     { name: 'Trade Executor', type: 'manual', schedule: 'Every 30 min (9:30am-4pm ET)', endpoint: '/api/trigger-trade-executor' },
-    { name: 'Weekly Earnings Refresh', type: 'weekly', schedule: 'Friday 3:00 PM ET', endpoint: null },
+    { name: 'Weekly Earnings Refresh', type: 'weekly', schedule: 'Friday 8:00 PM ET', endpoint: null },
+    { name: 'Earnings Reminder Processor', type: 'daily', schedule: '3:00 PM ET Mon-Fri', endpoint: null },
     { name: 'Stock Universe Refresh', type: 'weekly', schedule: 'Saturday 10:00 AM ET', endpoint: null },
     { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET', endpoint: '/api/trigger-saturday-screening' },
     { name: 'Weekly Portfolio Review', type: 'weekly', schedule: 'Sunday 1:00 PM ET', endpoint: '/weekly-review' },
@@ -2003,6 +2050,252 @@ function generateCronStatusHTML(executions, days) {
         }, 3000);
       }
     }
+  </script>
+</body>
+</html>
+  `;
+}
+
+function generateEarningsRemindersHTML(reminders) {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Earnings Reminders - Whiskie</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0e27; color: #e0e0e0; padding: 20px; line-height: 1.5; }
+    .container { max-width: 1180px; margin: 0 auto; }
+    h1 { font-size: 2.3rem; margin-bottom: 10px; color: #fff; }
+    .subtitle { color: #94a3b8; margin-bottom: 24px; }
+    .back-btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; margin-bottom: 20px; text-decoration: none; display: inline-block; }
+    .layout { display: grid; grid-template-columns: 420px 1fr; gap: 24px; align-items: start; }
+    .panel { background: #1a1f3a; border: 1px solid #2a2f4a; border-radius: 12px; padding: 22px; }
+    .panel h2 { margin-bottom: 16px; font-size: 1.25rem; }
+    input, textarea, select { width: 100%; background: #0f1425; color: #e0e0e0; border: 1px solid #2a2f4a; border-radius: 8px; padding: 12px; font-size: 0.95rem; }
+    textarea { min-height: 140px; resize: vertical; }
+    label { display: block; margin: 14px 0 8px; color: #cbd5e1; font-size: 0.92rem; }
+    .helper { color: #94a3b8; font-size: 0.85rem; margin-top: 8px; }
+    .btn { margin-top: 16px; background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); color: #fff; border: none; border-radius: 8px; padding: 12px 18px; font-weight: 700; cursor: pointer; }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .suggestions { margin-top: 10px; border: 1px solid #2a2f4a; border-radius: 10px; overflow: hidden; }
+    .suggestion { padding: 12px; background: #0f1425; border-bottom: 1px solid #1f2942; cursor: pointer; }
+    .suggestion:last-child { border-bottom: none; }
+    .suggestion:hover { background: #151c33; }
+    .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .detail-card { background: #0f1425; border: 1px solid #2a2f4a; border-radius: 10px; padding: 12px; }
+    .detail-label { color: #94a3b8; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .detail-value { color: #fff; font-weight: 700; }
+    .summary-box, .notes-box { background: #0f1425; border: 1px solid #2a2f4a; border-radius: 10px; padding: 14px; white-space: pre-wrap; color: #dbe4f0; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 12px; border-bottom: 1px solid #2a2f4a; vertical-align: top; }
+    th { color: #94a3b8; text-transform: uppercase; font-size: 0.82rem; text-align: left; }
+    .status-pill { display: inline-block; padding: 4px 10px; border-radius: 999px; background: rgba(236,72,153,0.15); color: #f9a8d4; font-size: 0.8rem; font-weight: 700; }
+    .message { margin-top: 12px; font-size: 0.9rem; }
+    .message.error { color: #fca5a5; }
+    .message.success { color: #86efac; }
+    @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⏰ Earnings Reminders</h1>
+    <p class="subtitle">Search upcoming earnings, review catalysts, and save one active reminder per symbol.</p>
+    <a href="/" class="back-btn">← Back to Dashboard</a>
+
+    <div class="layout">
+      <div class="panel">
+        <h2>Create or Update Reminder</h2>
+        <label for="symbolSearch">Search symbol</label>
+        <input id="symbolSearch" type="text" placeholder="Type AAPL, NFLX, APP..." autocomplete="off" />
+        <div id="suggestions" class="suggestions" style="display:none;"></div>
+        <div class="helper">Searches upcoming rows from earnings_calendar.</div>
+
+        <label for="sessionOverride">Session override</label>
+        <select id="sessionOverride">
+          <option value="">Use detected timing</option>
+          <option value="pre_market">Pre-market</option>
+          <option value="post_market">Post-market</option>
+          <option value="unknown">Unknown</option>
+        </select>
+
+        <label for="notes">Notes</label>
+        <textarea id="notes" placeholder="Personal notes for the reminder email..."></textarea>
+
+        <button id="saveBtn" class="btn" disabled>Save Reminder</button>
+        <div id="saveMessage" class="message"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Selected Earnings Setup</h2>
+        <div id="emptyState" class="helper">Pick a symbol to load its next earnings date, timing, latest catalysts, and any existing reminder.</div>
+        <div id="details" style="display:none;">
+          <div class="detail-grid">
+            <div class="detail-card"><div class="detail-label">Symbol</div><div class="detail-value" id="detailSymbol">-</div></div>
+            <div class="detail-card"><div class="detail-label">Earnings Date</div><div class="detail-value" id="detailDate">-</div></div>
+            <div class="detail-card"><div class="detail-label">Session</div><div class="detail-value" id="detailSession">-</div></div>
+            <div class="detail-card"><div class="detail-label">Reminder Time</div><div class="detail-value" id="detailSendAt">-</div></div>
+          </div>
+          <h3 style="margin-bottom:10px;">Timing Detail</h3>
+          <div id="timingRaw" class="summary-box" style="margin-bottom:16px;">-</div>
+          <h3 style="margin-bottom:10px;">Catalyst Summary</h3>
+          <div id="catalystSummary" class="summary-box" style="margin-bottom:16px;">-</div>
+          <h3 style="margin-bottom:10px;">Existing Reminder Notes</h3>
+          <div id="existingNotes" class="notes-box">None saved yet.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:24px;">
+      <h2>Active Reminders</h2>
+      ${reminders.length === 0 ? '<div class="helper">No active earnings reminders saved yet.</div>' : `
+      <table>
+        <thead>
+          <tr>
+            <th>Symbol</th>
+            <th>Earnings Date</th>
+            <th>Session</th>
+            <th>Reminder Time</th>
+            <th>Status</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${reminders.map(reminder => `
+            <tr>
+              <td><strong>${escapeHtml(reminder.symbol)}</strong></td>
+              <td>${escapeHtml(reminder.earnings_date)}</td>
+              <td>${escapeHtml((reminder.earnings_session || 'unknown').replace(/_/g, ' '))}</td>
+              <td>${reminder.scheduled_send_at ? escapeHtml(new Date(reminder.scheduled_send_at).toLocaleString('en-US', { timeZone: 'America/New_York' })) + ' ET' : '-'}</td>
+              <td><span class="status-pill">${escapeHtml(reminder.status)}</span></td>
+              <td>${escapeHtml((reminder.notes || '').slice(0, 140) || '-')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>`}
+    </div>
+  </div>
+
+  <script>
+    const searchInput = document.getElementById('symbolSearch');
+    const suggestionsEl = document.getElementById('suggestions');
+    const detailsEl = document.getElementById('details');
+    const emptyStateEl = document.getElementById('emptyState');
+    const notesEl = document.getElementById('notes');
+    const sessionOverrideEl = document.getElementById('sessionOverride');
+    const saveBtn = document.getElementById('saveBtn');
+    const saveMessageEl = document.getElementById('saveMessage');
+    let selectedSymbol = null;
+    let currentDetails = null;
+
+    function setMessage(text, type = '') {
+      saveMessageEl.textContent = text || '';
+      saveMessageEl.className = 'message' + (type ? ' ' + type : '');
+    }
+
+    async function searchSymbols(query) {
+      if (!query || query.trim().length < 1) {
+        suggestionsEl.style.display = 'none';
+        suggestionsEl.innerHTML = '';
+        return;
+      }
+
+      const response = await fetch('/api/earnings-reminders/search?q=' + encodeURIComponent(query));
+      const results = await response.json();
+
+      if (!Array.isArray(results) || results.length === 0) {
+        suggestionsEl.style.display = 'none';
+        suggestionsEl.innerHTML = '';
+        return;
+      }
+
+      suggestionsEl.innerHTML = results.map(item => {
+        const session = (item.earnings_time || 'unknown').toUpperCase();
+        return '<div class="suggestion" data-symbol="' + item.symbol + '">' +
+          '<strong>' + item.symbol + '</strong> · ' + item.earnings_date + ' · ' + session +
+          '</div>';
+      }).join('');
+      suggestionsEl.style.display = 'block';
+    }
+
+    async function loadSymbol(symbol) {
+      setMessage('');
+      const response = await fetch('/api/earnings-reminders/' + encodeURIComponent(symbol));
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || 'Failed to load symbol details');
+      }
+
+      selectedSymbol = symbol;
+      currentDetails = payload;
+      saveBtn.disabled = false;
+      detailsEl.style.display = 'block';
+      emptyStateEl.style.display = 'none';
+      suggestionsEl.style.display = 'none';
+      searchInput.value = symbol;
+
+      document.getElementById('detailSymbol').textContent = payload.symbol;
+      document.getElementById('detailDate').textContent = payload.timing.earningsDate || payload.nextEarning.earnings_date;
+      document.getElementById('detailSession').textContent = (payload.timing.earningsSession || 'unknown').replace(/_/g, ' ');
+      document.getElementById('detailSendAt').textContent = payload.scheduledSendAt ? new Date(payload.scheduledSendAt).toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET' : '-';
+      document.getElementById('timingRaw').textContent = payload.timing.earningsTimeRaw || 'No Yahoo timing detail found.';
+      document.getElementById('catalystSummary').textContent = payload.catalystSummary || 'No catalyst summary available.';
+      document.getElementById('existingNotes').textContent = payload.reminder?.notes || 'None saved yet.';
+      notesEl.value = payload.reminder?.notes || '';
+      sessionOverrideEl.value = '';
+    }
+
+    searchInput.addEventListener('input', async (event) => {
+      try {
+        await searchSymbols(event.target.value);
+      } catch (error) {
+        setMessage(error.message, 'error');
+      }
+    });
+
+    suggestionsEl.addEventListener('click', async (event) => {
+      const target = event.target.closest('[data-symbol]');
+      if (!target) return;
+      try {
+        await loadSymbol(target.dataset.symbol);
+      } catch (error) {
+        setMessage(error.message, 'error');
+      }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+      if (!selectedSymbol || !currentDetails) return;
+
+      saveBtn.disabled = true;
+      setMessage('Saving reminder...');
+
+      try {
+        const response = await fetch('/api/earnings-reminders/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            symbol: selectedSymbol,
+            notes: notesEl.value,
+            earningsSession: sessionOverrideEl.value || undefined
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.success) {
+          throw new Error(payload.error || 'Failed to save reminder');
+        }
+
+        setMessage('Reminder saved successfully.', 'success');
+        await loadSymbol(selectedSymbol);
+        setTimeout(() => location.reload(), 800);
+      } catch (error) {
+        setMessage(error.message, 'error');
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
   </script>
 </body>
 </html>

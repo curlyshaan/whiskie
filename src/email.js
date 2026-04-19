@@ -187,6 +187,34 @@ class EmailAlerts {
       console.error('Failed to send weekly review email:', error);
     }
   }
+
+  async sendEarningsReminderEmail(reminder) {
+    const subject = `⏰ Earnings Reminder: ${reminder.symbol} (${reminder.earnings_date})`;
+    const html = `
+      <h2>Earnings Reminder</h2>
+      <p><strong>Symbol:</strong> ${reminder.symbol}</p>
+      <p><strong>Earnings Date:</strong> ${reminder.earnings_date}</p>
+      <p><strong>Session:</strong> ${(reminder.earnings_session || 'unknown').replace(/_/g, ' ')}</p>
+      ${reminder.earnings_time_raw ? `<p><strong>Timing Detail:</strong> ${reminder.earnings_time_raw}</p>` : ''}
+      <hr>
+      <h3>Latest Catalysts</h3>
+      <pre>${reminder.prediction_catalyst_summary || reminder.catalyst_summary || 'No catalyst summary available.'}</pre>
+      ${reminder.notes ? `<h3>Notes</h3><p>${reminder.notes}</p>` : ''}
+      <hr>
+      <h3>Reaction Predictor</h3>
+      <p><strong>Direction:</strong> ${(reminder.predicted_direction || 'unknown').toUpperCase()}</p>
+      <p><strong>Confidence:</strong> ${(reminder.predicted_confidence || 'unknown').toUpperCase()}</p>
+      <pre>${reminder.prediction_reasoning || 'No prediction reasoning available.'}</pre>
+    `;
+
+    try {
+      await this.sendEmail(this.alertEmail, subject, html);
+      console.log(`📧 Earnings reminder email sent for ${reminder.symbol}`);
+    } catch (error) {
+      console.error(`Failed to send earnings reminder email for ${reminder.symbol}:`, error);
+      throw error;
+    }
+  }
 }
 
 export default new EmailAlerts();

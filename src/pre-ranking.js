@@ -2,6 +2,8 @@ import fmp from './fmp.js';
 import * as db from './db.js';
 import sectorRotation from './sector-rotation.js';
 import { getSectorConfig } from './sector-config.js';
+import tradier from './tradier.js';
+import { resolveMarketPrice } from './utils.js';
 
 /**
  * Pre-Ranking Algorithm
@@ -98,6 +100,12 @@ class PreRanking {
     }
 
     console.log(`   ✅ Fetched ${quoteMap.size} quotes`);
+    let marketOpen = false;
+    try {
+      marketOpen = await tradier.isMarketOpen();
+    } catch (error) {
+      console.warn('⚠️ Could not determine market-open state for pre-ranking, defaulting to closed-market pricing:', error.message);
+    }
 
     // Filter stocks using batch-fetched quotes
     for (const stock of mergedStocks) {
@@ -108,7 +116,7 @@ class PreRanking {
           continue;
         }
 
-        const price = quote.price || quote.previousClose || quote.close;
+        const price = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
         const avgVolume = Math.round(quote.averageVolume || 0);
         const bid = quote.bid || 0;
         const ask = quote.ask || 0;
@@ -301,7 +309,13 @@ class PreRanking {
     const quote = stock.quote || await fmp.getQuote(stock.symbol);
     if (!quote) return null;
 
-    const price = quote.price || quote.previousClose || quote.close;
+    let marketOpen = false;
+    try {
+      marketOpen = await tradier.isMarketOpen();
+    } catch (error) {
+      console.warn(`⚠️ Could not determine market-open state for ${stock.symbol}, defaulting to closed-market pricing:`, error.message);
+    }
+    const price = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
     const volume = quote.volume || 0;
     const change = quote.changePercentage || 0;
     const avgVolume = stock.avgVolume; // Already calculated in filter step

@@ -65,7 +65,7 @@ node test/test-yahoo-finance.js
 
 ### Weekly flow
 
-- Friday 3:00 PM ET — earnings refresh
+- Friday 8:00 PM ET — earnings refresh
 - Saturday 10:00 AM ET — `scripts/populate-universe-v2.js`
 - Saturday 3:00 PM ET — `fundamentalScreener.runWeeklyScreen('full')`
 - Sunday 1:00 PM ET — weekly portfolio review
@@ -79,8 +79,10 @@ node test/test-yahoo-finance.js
 - 9:00 AM ET — pre-market scan
 - 10:00 AM ET — daily analysis
 - 2:00 PM ET — daily analysis
+- 3:00 PM ET — earnings reminder processor
 - every 30 minutes during market hours — approved trade processing + pathway exit monitoring
 - 4:30 PM ET — structured exit review
+- 4:15 PM ET — earnings reminder grader
 - hourly during market hours — order reconciliation
 - 6:00 PM ET — daily summary
 - hourly — expire stale approvals
@@ -179,5 +181,12 @@ Environment variables can override them, but current code defaults are:
 - `POST /api/trigger-premarket-scan`
 - `POST /api/update-etb-status`
 - `POST /api/trigger-eod-summary`
+- `POST /api/trigger-earnings-reminders`
 - `POST /api/trigger-trade-executor`
 - `POST /chat`
+
+## Cross-feature consistency rule
+
+When implementing or modifying a feature, preserve the same structure across prompts, DB fields, scheduling, API routes, and dashboard/UI surfaces. Avoid feature-specific one-offs when an existing Whiskie pattern already exists. If a workflow is added in one layer, verify the corresponding persistence, route, rendering, and operational behavior stay aligned.
+
+For earnings reminders specifically, treat `earnings_calendar` as the broad source list but auto-maintain active reminders for all upcoming names with `stock_universe.market_cap >= $10B`. The dashboard is primarily for operator notes and overrides; saved notes must persist and be included in reminder emails.

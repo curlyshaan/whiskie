@@ -1,8 +1,8 @@
 import dotenv from 'dotenv';
-import tradier from './src/tradier.js';
-import preRanking from './src/pre-ranking.js';
-import fundamentalScreener from './src/fundamental-screener.js';
-import assetClassData from './src/asset-class-data.js';
+import tradier from '../src/tradier.js';
+import preRanking from '../src/pre-ranking.js';
+import fundamentalScreener from '../src/fundamental-screener.js';
+import { getSubIndustriesForStock, getAllSubIndustries } from '../src/sub-industry-data.js';
 
 dotenv.config();
 
@@ -52,8 +52,8 @@ async function testFullAnalysis() {
 
     // Test 3: Check asset class
     console.log('TEST 3: Asset Class Lookup\n');
-    const assetClass = assetClassData.getAssetClass('PANW');
-    console.log(`✅ PANW asset class: ${assetClass}`);
+    const assetClass = getSubIndustriesForStock('PANW');
+    console.log(`✅ PANW asset class: ${assetClass.join(', ') || 'Unknown'}`);
     console.log('');
 
     // Test 4: Volume surge calculation (for pre-ranking)
@@ -94,7 +94,7 @@ async function testFullAnalysis() {
     console.log(`✅ Tradier API: Connected`);
     console.log(`✅ Fundamental Screener: Loaded`);
     console.log(`✅ Pre-Ranking: Loaded`);
-    console.log(`✅ Asset Class Data: Loaded (${Object.keys(assetClassData.ASSET_CLASSES).length} asset classes)`);
+    console.log(`✅ Asset Class Data: Loaded (${getAllSubIndustries().length} asset classes)`);
     console.log('');
 
     // Summary

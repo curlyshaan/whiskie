@@ -5,6 +5,7 @@ import tavily from './tavily.js';
 import email from './email.js';
 import tradier from './tradier.js';
 import thesisManager from './thesis-manager.js';
+import { resolveMarketPrice } from './utils.js';
 
 /**
  * Earnings Day Analysis Module
@@ -74,7 +75,13 @@ export async function analyzeBeforeEarnings(position) {
 
     // Get current price
     const quote = await fmp.getQuote(position.symbol);
-    const currentPrice = quote.price;
+    let marketOpen = false;
+    try {
+      marketOpen = await tradier.isMarketOpen();
+    } catch (error) {
+      console.warn(`⚠️ Could not determine market-open state for ${position.symbol}, defaulting to closed-market pricing:`, error.message);
+    }
+    const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
 
     // Calculate position details
     const totalQuantity = position.lots.reduce((sum, lot) => sum + Math.abs(lot.quantity), 0);

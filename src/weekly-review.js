@@ -10,6 +10,7 @@ import fundamentalScreener from './fundamental-screener.js';
 import { getWeeklyEarningsReport } from './earnings-analysis.js';
 import tradier from './tradier.js';
 import thesisManager from './thesis-manager.js';
+import { resolveMarketPrice } from './utils.js';
 
 /**
  * Weekly Review Module
@@ -24,18 +25,25 @@ async function auditWatchlist() {
     const watchlist = await db.getWatchlist();
     const stale = [];
     const missed = [];
+    let marketOpen = false;
+    try {
+      marketOpen = await tradier.isMarketOpen();
+    } catch (error) {
+      console.warn('⚠️ Could not determine market-open state for watchlist audit, defaulting to closed-market pricing:', error.message);
+    }
 
     for (const item of watchlist) {
       const quote = await fmp.getQuote(item.symbol);
+      const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
       const daysOnWatchlist = Math.floor((Date.now() - new Date(item.added_date)) / 86400000);
 
       // Missed opportunity: price ran past target exit without buying
-      if (quote.price > item.target_exit_price) {
-        missed.push({ ...item, currentPrice: quote.price });
+      if (currentPrice > item.target_exit_price) {
+        missed.push({ ...item, currentPrice });
       }
       // Stale: on watchlist >30 days and price 10%+ above target entry
-      else if (daysOnWatchlist > 30 && quote.price > item.target_entry_price * 1.10) {
-        stale.push({ ...item, daysOnWatchlist, currentPrice: quote.price });
+      else if (daysOnWatchlist > 30 && currentPrice > item.target_entry_price * 1.10) {
+        stale.push({ ...item, daysOnWatchlist, currentPrice });
       }
     }
 
@@ -84,7 +92,13 @@ export async function reviewPosition(symbol, lots) {
 
     // Get current price
     const quote = await fmp.getQuote(symbol);
-    const currentPrice = quote.price;
+    let marketOpen = false;
+    try {
+      marketOpen = await tradier.isMarketOpen();
+    } catch (error) {
+      console.warn(`⚠️ Could not determine market-open state for ${symbol}, defaulting to closed-market pricing:`, error.message);
+    }
+    const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
 
     // Calculate aggregate metrics
     const totalQuantity = lots.reduce((sum, lot) => sum + lot.quantity, 0);

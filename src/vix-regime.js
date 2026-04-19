@@ -1,5 +1,7 @@
 import fmp from './fmp.js';
 import email from './email.js';
+import tradier from './tradier.js';
+import { resolveMarketPrice } from './utils.js';
 
 /**
  * VIX Regime Detector
@@ -13,7 +15,8 @@ class VixRegime {
   async getCurrentVix() {
     try {
       const quote = await fmp.getQuote('VIX');
-      return parseFloat(quote.price || quote.previousClose || quote.close || 20);
+      const marketOpen = await tradier.isMarketOpen().catch(() => false);
+      return parseFloat(resolveMarketPrice(quote, { marketOpen, fallback: 20 }));
     } catch (error) {
       console.warn('⚠️ Could not fetch VIX, defaulting to 20 (Normal regime)');
       return 20;

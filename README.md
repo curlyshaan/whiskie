@@ -42,6 +42,8 @@ Whiskie manages a long/short equity workflow built around:
 - **9:00 AM ET** — pre-market scan
 - **10:00 AM ET** — daily 4-phase analysis
 - **2:00 PM ET** — daily 4-phase analysis
+- **3:00 PM ET** — process due earnings reminders and send reminder emails
+- **4:15 PM ET** — grade sent earnings reminders against post-earnings reaction
 - **Every 30 minutes, 9:00 AM-4:00 PM ET** — process approved trades and run pathway exit monitoring
 - **4:30 PM ET** — structured exit review
 - **Hourly, 9:00 AM-4:00 PM ET** — order reconciliation
@@ -198,8 +200,34 @@ Current routes in `src/index.js` include:
 - `POST /api/trigger-premarket-scan`
 - `POST /api/update-etb-status`
 - `POST /api/trigger-eod-summary`
+- `POST /api/trigger-earnings-reminders`
 - `POST /api/trigger-trade-executor`
 - `POST /chat`
+
+Dashboard routes in `src/dashboard.js` also include:
+
+- `GET /earnings-reminders`
+- `GET /api/earnings-reminders/search?q=...`
+- `GET /api/earnings-reminders/:symbol`
+- `POST /api/earnings-reminders/save`
+
+## Earnings reminder feature
+
+Whiskie now includes an earnings reminder workflow:
+
+- auto-cover upcoming symbols from `earnings_calendar` with `stock_universe.market_cap >= $10B`
+- search and review upcoming symbols in the dashboard
+- enrich timing/session with Yahoo earnings calendar data
+- synthesize fresh catalysts from FMP + Tavily
+- keep one active reminder row per symbol in `earnings_reminders`
+- preserve dashboard notes per symbol and include those notes in reminder emails
+- send the official reminder email and prediction snapshot at the scheduled 3:00 PM ET reminder time
+- grade the saved prediction after earnings based on the subsequent stock reaction
+
+Current grading rule:
+
+- compare the saved 3:00 PM reminder snapshot price to the next trading session close proxy
+- classify result as `correct`, `incorrect`, `flat`, or `unclear`
 
 ## Historical docs
 

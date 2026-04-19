@@ -1,6 +1,6 @@
 // Test 4-phase analysis with NOW and OKLO
-import tradier from './src/tradier.js';
-import claude from './src/claude.js';
+import tradier from '../src/tradier.js';
+import claude from '../src/claude.js';
 
 console.log('🧪 Testing 4-phase analysis system with NOW and OKLO\n');
 
@@ -32,7 +32,7 @@ Testing extraction logic
 `;
 
 // Import the bot to test extraction
-import { WhiskieBot } from './src/index.js';
+import { WhiskieBot } from '../src/index.js';
 const bot = new WhiskieBot();
 
 const extracted = bot.extractLongShortCandidates(testAnalysis);

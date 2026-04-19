@@ -2,6 +2,8 @@ import fmp from './fmp.js';
 import * as db from './db.js';
 import email from './email.js';
 import { getSectorConfig, normalizeSectorName } from './sector-config.js';
+import tradier from './tradier.js';
+import { resolveMarketPrice } from './utils.js';
 
 /**
  * Combined Fundamental Screener
@@ -180,7 +182,8 @@ class FundamentalScreener {
       // Skip if no fundamentals (likely an ETF or non-equity security)
       if (!fundamentals) return null;
 
-      const price = Number(stock.price || quote.price || quote.previousClose || quote.close || fundamentals.price || 0);
+      const marketOpen = await tradier.isMarketOpen().catch(() => false);
+      const price = Number(stock.price || resolveMarketPrice(quote, { marketOpen, fallback: 0 }) || fundamentals.price || 0);
       const avgVolume = Number(stock.avgDailyVolume || fundamentals.avgVolume || quote.averageVolume || quote.volume || 0);
       const dollarVolume = avgVolume * price;
 

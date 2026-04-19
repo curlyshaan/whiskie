@@ -1,5 +1,7 @@
 import * as db from './db.js';
 import fmp from './fmp.js';
+import tradier from './tradier.js';
+import { resolveMarketPrice } from './utils.js';
 
 /**
  * ETF Manager
@@ -147,11 +149,12 @@ class ETFManager {
 
     const quotes = await fmp.getQuotes(symbols);
     const quotesArray = Array.isArray(quotes) ? quotes : [quotes];
+    const marketOpen = await tradier.isMarketOpen().catch(() => false);
 
     for (const quote of quotesArray) {
       if (!quote || !quote.symbol) continue;
 
-      const price = quote.price || quote.previousClose || quote.close || 0;
+      const price = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
       const volume = quote.averageVolume || 0;
 
       await db.query(

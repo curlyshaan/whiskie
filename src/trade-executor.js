@@ -10,6 +10,7 @@ import earningsGuard from './earnings-guard.js';
 import correlationAnalysis from './correlation-analysis-enhanced.js';
 import exitLiquidity from './exit-liquidity.js';
 import thesisManager from './thesis-manager.js';
+import { resolveMarketPrice } from './utils.js';
 
 /**
  * Trade Execution Service
@@ -86,7 +87,8 @@ class TradeExecutor {
 
       // Get current price
       const quote = await tradier.getQuote(approval.symbol);
-      const currentPrice = quote.price || quote.previousClose || quote.close;
+      const marketOpen = await tradier.isMarketOpen().catch(() => false);
+      const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
 
       // Check if price is still within acceptable range (±5% from approval price)
       const priceChange = Math.abs((currentPrice - approval.entry_price) / approval.entry_price);

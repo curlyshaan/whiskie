@@ -3,6 +3,7 @@ import fmp from './fmp.js';
 import claude from './claude.js';
 import tavily from './tavily.js';
 import riskManager from './risk-manager.js';
+import { resolveMarketPrice } from './utils.js';
 import * as db from './db.js';
 
 /**
@@ -22,6 +23,12 @@ class AnalysisEngine {
       const balances = await tradier.getBalances();
       const positions = await tradier.getPositions();
       const dbPositions = await db.getPositions();
+      let marketOpen = false;
+      try {
+        marketOpen = await tradier.isMarketOpen();
+      } catch (error) {
+        console.warn('⚠️ Could not determine market-open state, defaulting to closed-market pricing:', error.message);
+      }
 
       // Merge positions
       const mergedPositions = this.mergePositions(positions, dbPositions);
@@ -30,7 +37,7 @@ class AnalysisEngine {
       for (const position of mergedPositions) {
         try {
           const quote = await fmp.getQuote(position.symbol);
-          position.currentPrice = quote.price || quote.previousClose || quote.close || 0;
+          position.currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
         } catch (error) {
           console.warn(`⚠️ Failed to fetch price for ${position.symbol}:`, error.message);
           position.currentPrice = 0;
@@ -704,7 +711,7 @@ class AnalysisEngine {
 
       return {
         symbol,
-        currentPrice: quote.price || quote.previousClose || quote.close || 0,
+        currentPrice: resolveMarketPrice(quote, { marketOpen: false, fallback: 0 }),
         analysis: analysis.analysis,
         technicals,
         news: formattedNews
@@ -724,7 +731,13 @@ class AnalysisEngine {
 
       // Get current price
       const quote = await fmp.getQuote(position.symbol);
-      const currentPrice = quote.price;
+      let marketOpen = false;
+      try {
+        marketOpen = await tradier.isMarketOpen();
+      } catch (error) {
+        console.warn(`⚠️ Could not determine market-open state for ${position.symbol}, defaulting to closed-market pricing:`, error.message);
+      }
+      const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
 
       // Get news
       const news = await tavily.searchStockNews(position.symbol, 3);

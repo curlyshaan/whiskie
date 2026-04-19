@@ -209,6 +209,56 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_earnings_date ON earnings_calendar(earnings_date);
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS earnings_reminders (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        status VARCHAR(20) DEFAULT 'active',
+        earnings_date DATE NOT NULL,
+        earnings_time_raw TEXT,
+        earnings_session VARCHAR(20) DEFAULT 'unknown',
+        earnings_session_source VARCHAR(20) DEFAULT 'unknown',
+        catalyst_summary TEXT,
+        notes TEXT,
+        scheduled_send_at TIMESTAMP,
+        email_enabled BOOLEAN DEFAULT TRUE,
+        email_sent_at TIMESTAMP,
+        predictor_run_at TIMESTAMP,
+        predictor_snapshot_price DECIMAL(12, 4),
+        predicted_direction VARCHAR(10),
+        predicted_confidence VARCHAR(20),
+        prediction_reasoning TEXT,
+        prediction_catalyst_summary TEXT,
+        actual_reaction_direction VARCHAR(10),
+        actual_reaction_pct DECIMAL(8, 4),
+        grade_result VARCHAR(20),
+        graded_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_earnings_reminders_symbol
+      ON earnings_reminders(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_earnings_reminders_status
+      ON earnings_reminders(status);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_earnings_reminders_scheduled_send_at
+      ON earnings_reminders(scheduled_send_at);
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_earnings_reminders_active_symbol_unique
+      ON earnings_reminders(symbol)
+      WHERE status = 'active';
+    `);
+
     // Position lots - track individual lots (long-term vs swing, long vs short)
     await client.query(`
       CREATE TABLE IF NOT EXISTS position_lots (
@@ -1593,7 +1643,12 @@ export async function getNextEarning(symbol) {
 export async function getUpcomingEarnings(days = 30) {
   try {
     const result = await pool.query(
-      `SELECT * FROM earnings_calendar
+      `SELECT
+        ec.*,
+        su.company_name,
+        su.market_cap
+       FROM earnings_calendar ec
+       LEFT JOIN stock_universe su ON su.symbol = ec.symbol
        WHERE earnings_date >= CURRENT_DATE
        AND earnings_date <= CURRENT_DATE + INTERVAL '${days} days'
        ORDER BY earnings_date ASC`,
@@ -1602,6 +1657,282 @@ export async function getUpcomingEarnings(days = 30) {
     return result.rows;
   } catch (error) {
     console.error('Error fetching upcoming earnings:', error);
+    throw error;
+  }
+}
+
+export async function searchUpcomingEarningsSymbols(queryText = '', limit = 10) {
+  try {
+    const normalizedLimit = Number.isFinite(Number(limit)) ? Math.max(1, Math.min(Number(limit), 25)) : 10;
+    const queryValue = String(queryText || '').trim().toUpperCase();
+    const params = [normalizedLimit];
+    let whereClause = `
+      WHERE earnings_date >= CURRENT_DATE
+    `;
+
+    if (queryValue) {
+      params.unshift(`%${queryValue}%`);
+      whereClause += `
+        AND symbol ILIKE $1
+      `;
+    }
+
+    const limitPlaceholder = queryValue ? '$2' : '$1';
+
+    const result = await pool.query(
+      `SELECT DISTINCT ON (symbol)
+        ec.symbol,
+        ec.earnings_date,
+        ec.earnings_time,
+        ec.source,
+        ec.last_updated,
+        su.company_name,
+        su.market_cap
+       FROM earnings_calendar ec
+       LEFT JOIN stock_universe su ON su.symbol = ec.symbol
+       ${whereClause}
+       ORDER BY ec.symbol,
+                ec.earnings_date ASC
+       LIMIT ${limitPlaceholder}`,
+      params
+    );
+
+    return result.rows;
+  } catch (error) {
+    console.error('Error searching upcoming earnings symbols:', error);
+    throw error;
+  }
+}
+
+export async function getUpcomingEarningsForAutoReminders(days = 14, minMarketCap = 10000000000) {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT ON (ec.symbol)
+        ec.symbol,
+        ec.earnings_date,
+        ec.earnings_time,
+        ec.source,
+        ec.last_updated,
+        su.company_name,
+        su.market_cap
+       FROM earnings_calendar ec
+       JOIN stock_universe su ON su.symbol = ec.symbol
+       WHERE ec.earnings_date >= CURRENT_DATE
+         AND ec.earnings_date <= CURRENT_DATE + ($1::text || ' days')::interval
+         AND COALESCE(su.market_cap, 0) >= $2
+         AND su.status = 'active'
+       ORDER BY ec.symbol, ec.earnings_date ASC`,
+      [days, minMarketCap]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching upcoming earnings for auto reminders:', error);
+    throw error;
+  }
+}
+
+export async function getActiveEarningsReminder(symbol) {
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM earnings_reminders
+       WHERE symbol = $1
+         AND status = 'active'
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [symbol]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error(`Error fetching active earnings reminder for ${symbol}:`, error);
+    throw error;
+  }
+}
+
+export async function getAllActiveEarningsReminders() {
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM earnings_reminders
+       WHERE status = 'active'
+       ORDER BY scheduled_send_at ASC NULLS LAST, earnings_date ASC, symbol ASC`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching active earnings reminders:', error);
+    throw error;
+  }
+}
+
+export async function getRemindersDueForSend(now = new Date()) {
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM earnings_reminders
+       WHERE status = 'active'
+         AND email_enabled = TRUE
+         AND scheduled_send_at IS NOT NULL
+         AND scheduled_send_at <= $1
+       ORDER BY scheduled_send_at ASC, symbol ASC`,
+      [now]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching due earnings reminders:', error);
+    throw error;
+  }
+}
+
+export async function getSentEarningsRemindersPendingGrade() {
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM earnings_reminders
+       WHERE status = 'sent'
+         AND predicted_direction IS NOT NULL
+         AND grade_result IS NULL
+       ORDER BY email_sent_at ASC NULLS LAST, symbol ASC`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching sent earnings reminders pending grade:', error);
+    throw error;
+  }
+}
+
+export async function upsertEarningsReminder(payload) {
+  const {
+    symbol,
+    earningsDate,
+    earningsTimeRaw = null,
+    earningsSession = 'unknown',
+    earningsSessionSource = 'unknown',
+    catalystSummary = null,
+    notes = null,
+    scheduledSendAt = null,
+    emailEnabled = true
+  } = payload;
+
+  try {
+    const existing = await getActiveEarningsReminder(symbol);
+
+    if (existing) {
+      const result = await pool.query(
+        `UPDATE earnings_reminders
+         SET earnings_date = $2,
+             earnings_time_raw = $3,
+             earnings_session = $4,
+             earnings_session_source = $5,
+             catalyst_summary = $6,
+             notes = $7,
+             scheduled_send_at = $8,
+             email_enabled = $9,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1
+         RETURNING *`,
+        [
+          existing.id,
+          earningsDate,
+          earningsTimeRaw,
+          earningsSession,
+          earningsSessionSource,
+          catalystSummary,
+          notes,
+          scheduledSendAt,
+          emailEnabled
+        ]
+      );
+      return result.rows[0];
+    }
+
+    const result = await pool.query(
+      `INSERT INTO earnings_reminders (
+        symbol,
+        status,
+        earnings_date,
+        earnings_time_raw,
+        earnings_session,
+        earnings_session_source,
+        catalyst_summary,
+        notes,
+        scheduled_send_at,
+        email_enabled
+      ) VALUES ($1, 'active', $2, $3, $4, $5, $6, $7, $8, $9)
+      RETURNING *`,
+      [
+        symbol,
+        earningsDate,
+        earningsTimeRaw,
+        earningsSession,
+        earningsSessionSource,
+        catalystSummary,
+        notes,
+        scheduledSendAt,
+        emailEnabled
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error(`Error upserting earnings reminder for ${symbol}:`, error);
+    throw error;
+  }
+}
+
+export async function markEarningsReminderSent(id, sentAt, predictionData = {}) {
+  try {
+    const result = await pool.query(
+      `UPDATE earnings_reminders
+       SET status = 'sent',
+           email_sent_at = $2,
+           predictor_run_at = $3,
+           predictor_snapshot_price = $4,
+           predicted_direction = $5,
+           predicted_confidence = $6,
+           prediction_reasoning = $7,
+           prediction_catalyst_summary = $8,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING *`,
+      [
+        id,
+        sentAt,
+        predictionData.predictorRunAt || sentAt,
+        predictionData.snapshotPrice ?? null,
+        predictionData.direction || null,
+        predictionData.confidence || null,
+        predictionData.reasoning || null,
+        predictionData.catalystSummary || null
+      ]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error(`Error marking earnings reminder ${id} as sent:`, error);
+    throw error;
+  }
+}
+
+export async function saveEarningsReminderGrade(id, gradePayload = {}) {
+  try {
+    const result = await pool.query(
+      `UPDATE earnings_reminders
+       SET actual_reaction_direction = $2,
+           actual_reaction_pct = $3,
+           grade_result = $4,
+           graded_at = $5,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1
+       RETURNING *`,
+      [
+        id,
+        gradePayload.actualReactionDirection || null,
+        gradePayload.actualReactionPct ?? null,
+        gradePayload.gradeResult || null,
+        gradePayload.gradedAt || new Date()
+      ]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error(`Error saving earnings reminder grade for ${id}:`, error);
     throw error;
   }
 }

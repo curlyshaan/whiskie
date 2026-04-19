@@ -3,6 +3,7 @@ import fmp from './fmp.js';
 import pathwayStrategies from './pathway-exit-strategies.js';
 import email from './email.js';
 import tradier from './tradier.js';
+import { resolveMarketPrice } from './utils.js';
 
 /**
  * Pathway Exit Monitor
@@ -91,7 +92,8 @@ class PathwayExitMonitor {
       return null;
     }
 
-    const currentPrice = quote.price || quote.previousClose || quote.close;
+    const marketOpen = await tradier.isMarketOpen().catch(() => false);
+    const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
     const isShort = quantity < 0;
 
     // Calculate gain
@@ -196,7 +198,8 @@ class PathwayExitMonitor {
     const quote = await fmp.getQuote(position.symbol);
     if (!quote) return actions;
 
-    const currentPrice = quote.price || quote.previousClose || quote.close;
+    const marketOpen = await tradier.isMarketOpen().catch(() => false);
+    const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
     const isShort = position.quantity < 0;
 
     if (position.max_holding_days && position.entry_date) {
