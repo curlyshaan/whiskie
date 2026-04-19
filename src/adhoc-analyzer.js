@@ -201,6 +201,53 @@ router.get('/', async (req, res) => {
       line-height: 1.8;
       font-size: 1.05rem;
     }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .summary-card {
+      background: #0f1425;
+      border: 1px solid #2a2f4a;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .summary-card .label {
+      font-size: 0.78rem;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+    .summary-card .value {
+      color: #f3f4f6;
+      font-size: 1rem;
+      font-weight: 600;
+      line-height: 1.4;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .detail-card {
+      background: #0f1425;
+      border: 1px solid #2a2f4a;
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .detail-card h3 {
+      color: #667eea;
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }
+    .detail-card p {
+      color: #d0d0d0;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
     .back-link {
       display: inline-block;
       color: #667eea;
@@ -378,10 +425,44 @@ router.get('/', async (req, res) => {
         html += '</div></div>';
       }
 
+      if (data.parsedRecommendation) {
+        const parsed = data.parsedRecommendation;
+        html += '<div class="result-section">';
+        html += '<h2>Decision Summary</h2>';
+        html += '<div class="summary-grid">';
+        html += renderSummaryCard('Decision', parsed.decision);
+        html += renderSummaryCard('Pathway Fit', parsed.pathwayFit);
+        html += renderSummaryCard('Conviction', parsed.conviction);
+        html += renderSummaryCard('Growth Potential', parsed.growthPotential);
+        html += renderSummaryCard('Holding Period', parsed.holdingPeriod);
+        html += '</div>';
+        html += '</div>';
+
+        html += '<div class="result-section">';
+        html += '<h2>Trade Plan</h2>';
+        html += '<div class="summary-grid">';
+        html += renderSummaryCard('Entry', parsed.entry);
+        html += renderSummaryCard('Stop', parsed.stop);
+        html += renderSummaryCard('Target', parsed.target);
+        html += renderSummaryCard('Management Plan', parsed.managementPlan);
+        html += '</div>';
+        html += '</div>';
+
+        html += '<div class="result-section">';
+        html += '<h2>Analysis Breakdown</h2>';
+        html += '<div class="detail-grid">';
+        html += renderDetailCard('Thesis', parsed.thesis);
+        html += renderDetailCard('Catalysts', parsed.catalysts);
+        html += renderDetailCard('Technical View', parsed.technicalView);
+        html += renderDetailCard('Risk View', parsed.riskView);
+        html += '</div>';
+        html += '</div>';
+      }
+
       // Opus recommendation
       html += '<div class="result-section">';
       html += '<div class="opus-recommendation">';
-      html += '<h3>Opus Recommendation</h3>';
+      html += '<h3>Full Opus Recommendation</h3>';
       html += \`<div class="recommendation-text">\${data.opusRecommendation}</div>\`;
       html += '</div>';
       html += '</div>';
@@ -389,6 +470,16 @@ router.get('/', async (req, res) => {
       resultsDiv.innerHTML = html;
       resultsDiv.classList.add('active');
       resultsDiv.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function renderSummaryCard(label, value) {
+      if (!value) return '';
+      return \`<div class="summary-card"><div class="label">\${label}</div><div class="value">\${value}</div></div>\`;
+    }
+
+    function renderDetailCard(title, value) {
+      if (!value) return '';
+      return \`<div class="detail-card"><h3>\${title}</h3><p>\${value}</p></div>\`;
     }
   </script>
 </body>
@@ -548,7 +639,7 @@ router.post('/analyze', async (req, res) => {
       }
     }
 
-    // Format recommendation for HTML display
+    const parsedRecommendation = parseStructuredRecommendation(opusRecommendation);
     opusRecommendation = formatOpusResponse(opusRecommendation);
 
     // Return results
@@ -567,6 +658,7 @@ router.post('/analyze', async (req, res) => {
         risks: profile.risks,
         catalysts: profile.catalysts
       } : null,
+      parsedRecommendation,
       opusRecommendation
     });
 
@@ -855,6 +947,30 @@ function formatOpusResponse(text) {
   }).join('\n');
 
   return html;
+}
+
+function parseStructuredRecommendation(text) {
+  const extract = (label) => {
+    const match = text.match(new RegExp(`^${label}:\\s*(.+)$`, 'im'));
+    return match ? match[1].trim() : null;
+  };
+
+  return {
+    decision: extract('DECISION'),
+    pathwayFit: extract('PATHWAY_FIT'),
+    conviction: extract('CONVICTION'),
+    growthPotential: extract('GROWTH_POTENTIAL'),
+    entry: extract('ENTRY'),
+    stop: extract('STOP'),
+    target: extract('TARGET'),
+    holdingPeriod: extract('HOLDING_PERIOD'),
+    thesis: extract('THESIS'),
+    catalysts: extract('CATALYSTS'),
+    technicalView: extract('TECHNICAL_VIEW'),
+    riskView: extract('RISK_VIEW'),
+    managementPlan: extract('MANAGEMENT_PLAN'),
+    reasoning: extract('REASONING')
+  };
 }
 
 export default router;
