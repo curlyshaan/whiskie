@@ -143,6 +143,7 @@ class PreRanking {
             price,
             avgVolume,
             spread,
+            quote,
             pathway: stock.pathway || null,  // Preserve pathway from watchlist
             watchlistScore: stock.score || null,
             source: stock.source
@@ -297,8 +298,7 @@ class PreRanking {
    * Returns: { symbol, score, direction, reasons, earningsDate }
    */
   async scoreStock(stock, sectorMap, earningsMap) {
-    // Get real-time quote
-    const quote = await fmp.getQuote(stock.symbol);
+    const quote = stock.quote || await fmp.getQuote(stock.symbol);
     if (!quote) return null;
 
     const price = quote.price || quote.previousClose || quote.close;

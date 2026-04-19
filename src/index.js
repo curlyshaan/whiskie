@@ -184,9 +184,9 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule weekly earnings update - Friday 3:00 PM ET
-      cron.schedule('0 15 * * 5', async () => {
-        console.log('\n⏰ Friday 3:00 PM - Weekly earnings calendar refresh');
+      // Schedule weekly earnings update - Friday 8:00 PM ET
+      cron.schedule('0 20 * * 5', async () => {
+        console.log('\n⏰ Friday 8:00 PM - Weekly earnings calendar refresh');
         try {
           // Run FMP-based earnings refresh script
           const { exec } = await import('child_process');
@@ -472,7 +472,7 @@ class WhiskieBot {
       console.log('   • Every 5 min (9am-4pm) - Process approved trades');
       console.log('   • Hourly (9am-4pm) - Order reconciliation');
       console.log('   • Hourly - Expire old trade approvals');
-      console.log('📅 Weekly earnings refresh: Friday 3:00 PM ET');
+      console.log('📅 Weekly earnings refresh: Friday 8:00 PM ET');
       console.log('📅 Stock universe refresh: Saturday 10:00 AM ET');
       console.log('   → Repopulate stock_universe from FMP (top 7 per industry, $7B+ market cap)');
       console.log('📅 Weekly screening: Saturday 3:00 PM ET');
@@ -1127,10 +1127,7 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       const wrappedNews = wrapNewsForPrompt(formattedNews);
       console.log(`   Found ${allNews.length} articles (sanitized)\n`);
 
-      // Quick sentiment check
-      const headlines = marketNews.map(n => n.title).join('. ');
-      const sentiment = await claude.quickSentimentCheck(headlines);
-      console.log('📊 Market Sentiment:', sentiment.analysis.substring(0, 100) + '...\n');
+      console.log('📊 Market Sentiment: skipped (news context passed directly into analysis prompts)\n');
 
       // Gather additional context for Claude's analysis
       console.log('📊 Gathering market context...');
@@ -1285,7 +1282,7 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       }
 
       // Save portfolio snapshot
-      await this.saveSnapshot(portfolio);
+      await this.saveSnapshot(portfolio, marketContext);
 
       // Run daily trend learning (learns from recent trades and patterns)
       console.log('🧠 Running daily trend learning...');
@@ -3178,7 +3175,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
   /**
    * Save portfolio snapshot
    */
-  async saveSnapshot(portfolio) {
+  async saveSnapshot(portfolio, marketContext = null) {
     try {
       const today = new Date().toISOString().split('T')[0];
 
@@ -3203,7 +3200,8 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
 
       // Fetch S&P 500 return for comparison
       try {
-        const spyQuote = await fmp.getQuote('SPY');
+        const spyPrice = marketContext?.SPY?.price;
+        const spyQuote = spyPrice != null ? { price: spyPrice } : await fmp.getQuote('SPY');
         if (spyQuote && typeof spyQuote.changePercentage === "number") {
           sp500Return = spyQuote.changePercentage / 100; // Convert to decimal
         }

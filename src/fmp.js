@@ -29,6 +29,10 @@ class FMPClient {
     this.RATE_LIMIT_PER_MINUTE = 300;
     this.lastResetDate = new Date().toDateString();
     this.DEFAULT_QUOTE_CONCURRENCY = 12;
+    this.requestTimestamps = [];
+    this.minRequestSpacingMs = 225;
+    this.maxRetries = 3;
+    this.rateLimitBackoffMs = [1500, 3000, 6000];
 
     // Short-term cache for Saturday screening (30 minutes)
     // Prevents re-fetching same data when Opus screening runs after fundamental screening
@@ -58,9 +62,44 @@ class FMPClient {
     return {
       calls: this.callCount,
       limit: '300 calls/minute',
-      remaining: 'Tracked client-side only',
-      percentage: 'N/A'
+      remaining: Math.max(0, this.RATE_LIMIT_PER_MINUTE - this.getRecentRequestCount()),
+      percentage: `${((this.getRecentRequestCount() / this.RATE_LIMIT_PER_MINUTE) * 100).toFixed(1)}% (rolling 60s)`,
+      recentCallsLast60s: this.getRecentRequestCount()
     };
+  }
+
+  pruneRequestTimestamps(now = Date.now()) {
+    const cutoff = now - 60000;
+    while (this.requestTimestamps.length && this.requestTimestamps[0] < cutoff) {
+      this.requestTimestamps.shift();
+    }
+  }
+
+  getRecentRequestCount() {
+    this.pruneRequestTimestamps();
+    return this.requestTimestamps.length;
+  }
+
+  async throttleRequest() {
+    const now = Date.now();
+    this.pruneRequestTimestamps(now);
+
+    const lastRequestAt = this.requestTimestamps[this.requestTimestamps.length - 1];
+    if (lastRequestAt) {
+      const sinceLast = now - lastRequestAt;
+      if (sinceLast < this.minRequestSpacingMs) {
+        await new Promise(resolve => setTimeout(resolve, this.minRequestSpacingMs - sinceLast));
+      }
+    }
+
+    this.pruneRequestTimestamps();
+    if (this.requestTimestamps.length >= this.RATE_LIMIT_PER_MINUTE - 5) {
+      const oldest = this.requestTimestamps[0];
+      const waitMs = Math.max(250, 60000 - (Date.now() - oldest));
+      console.warn(`⚠️ FMP throttle engaged: ${this.requestTimestamps.length} requests in rolling 60s, waiting ${waitMs}ms`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+      this.pruneRequestTimestamps();
+    }
   }
 
   /**
@@ -76,38 +115,45 @@ class FMPClient {
 
     const apiKey = this.getCurrentKey();
 
-    try {
-      const response = await axios.get(`${this.BASE_URL}${endpoint}`, {
-        params: {
-          ...params,
-          apikey: apiKey
-        },
-        timeout: 10000
-      });
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      await this.throttleRequest();
 
-      // Increment usage counter
-      this.callCount++;
+      try {
+        this.requestTimestamps.push(Date.now());
 
-      // Cache the result
-      this.cache.set(cacheKey, {
-        data: response.data,
-        timestamp: Date.now()
-      });
+        const response = await axios.get(`${this.BASE_URL}${endpoint}`, {
+          params: {
+            ...params,
+            apikey: apiKey
+          },
+          timeout: 10000
+        });
 
-      return response.data;
-    } catch (error) {
-      // Check if rate limit error (429)
-      if (error.response?.status === 429) {
-        console.warn(`⚠️ Rate limit hit (300 calls/minute exceeded)`);
-        throw new Error(`FMP API rate limit exceeded. Slow down requests.`);
+        this.callCount++;
+
+        this.cache.set(cacheKey, {
+          data: response.data,
+          timestamp: Date.now()
+        });
+
+        return response.data;
+      } catch (error) {
+        if (error.response?.status === 429) {
+          const retryDelay = this.rateLimitBackoffMs[Math.min(attempt, this.rateLimitBackoffMs.length - 1)];
+          if (attempt < this.maxRetries - 1) {
+            console.warn(`⚠️ FMP 429 on ${endpoint}; backing off ${retryDelay}ms before retry ${attempt + 2}/${this.maxRetries}`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            continue;
+          }
+          throw new Error(`FMP API rate limit exceeded after retries for ${endpoint}.`);
+        }
+
+        if (error.response?.status === 403 || error.response?.status === 401) {
+          throw new Error(`FMP API authentication failed. Please verify API key is set correctly.`);
+        }
+
+        throw error;
       }
-
-      // Check if authentication error
-      if (error.response?.status === 403 || error.response?.status === 401) {
-        throw new Error(`FMP API authentication failed. Please verify API key is set correctly.`);
-      }
-
-      throw error;
     }
   }
 
@@ -130,7 +176,7 @@ class FMPClient {
 
     if (!symbolList.length) return [];
 
-    const concurrency = Math.max(1, options.concurrency || this.DEFAULT_QUOTE_CONCURRENCY);
+    const concurrency = Math.max(1, Math.min(options.concurrency || this.DEFAULT_QUOTE_CONCURRENCY, 8));
     const results = [];
 
     for (let i = 0; i < symbolList.length; i += concurrency) {

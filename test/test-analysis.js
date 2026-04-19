@@ -1,5 +1,5 @@
-import fundamentalScreener from './src/fundamental-screener.js';
-import preRanking from './src/pre-ranking.js';
+import fundamentalScreener from '../src/fundamental-screener.js';
+import preRanking from '../src/pre-ranking.js';
 
 /**
  * Test script to verify daily analysis flow
@@ -25,12 +25,12 @@ async function testDailyAnalysisFlow() {
     let passedCount = 0;
     for (const stock of testStocks) {
       console.log(`Testing ${stock.symbol}...`);
-      const score = await fundamentalScreener.scoreStock(stock);
+      const result = await fundamentalScreener.screenStock({ symbol: stock.symbol, sector: stock.assetClass, industry: 'Test', price: 100, avgDailyVolume: 1000000 });
 
-      if (score) {
-        console.log(`✅ ${stock.symbol} scored: ${score.score}/100`);
-        console.log(`   Metrics: ${JSON.stringify(score.metrics)}`);
-        console.log(`   Reasons: ${score.reasons}`);
+      if (result && (result.longScore !== null || result.shortScore !== null)) {
+        console.log(`✅ ${stock.symbol} screened`);
+        console.log(`   Long: ${result.longScore} (${result.longPathway || 'n/a'})`);
+        console.log(`   Short: ${result.shortScore} (${result.shortPathway || 'n/a'})`);
         passedCount++;
       } else {
         console.log(`❌ ${stock.symbol} did not pass screening (likely high valuation)`);

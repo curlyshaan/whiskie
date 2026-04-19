@@ -46,3 +46,34 @@ All notable changes to this project will be documented in this file.
 - Next analysis run will populate Phase 2/3 data and show detailed reasoning in trade approvals
 - Cron job execution history will start accumulating from next scheduled run
 - CLAUDE.md created for project documentation
+
+## [2026-04-18] - FMP Stability, Adhoc Analyzer Alignment, and Runtime Cleanup
+
+### Added
+- Rolling FMP client throttling and 429 retry/backoff in `src/fmp.js`
+- Richer adhoc analyzer context using:
+  - `getDeepAnalysisBundle()`
+  - structured catalyst research
+  - watchlist pathway and weekly Opus conviction
+  - existing position-management context
+- Mounted adhoc analyzer process is now documented in the operator docs
+
+### Changed
+- Adhoc analyzer now follows a Whiskie-consistent single-stock analysis framework instead of a separate simplified review path
+- Non-thinking Claude/Quatarly calls now use deterministic `temperature = 0`
+- Friday earnings refresh moved from **3:00 PM ET** to **8:00 PM ET** to separate it from daytime trading load
+- Daily analysis now reuses already-fetched quote data inside pre-ranking and reuses existing SPY market context for snapshot calculations
+- Validation scripts in `test/` were updated to match the current module layout and FMP client stats output
+
+### Fixed
+- `/adhoc-analyzer` runtime failure caused by querying nonexistent `active_positions`
+- Missing `trade_approvals` migration coverage for:
+  - `override_phase2_decision`
+  - `override_symbol`
+  - `override_reason`
+- Redundant same-run quote fetches inside pre-ranking
+- Broken local test imports and outdated test assumptions
+
+### Notes
+- The growth expansion universe is still populated into `stock_universe`, but active screening/pre-ranking still excludes it because `EXCLUDE_GROWTH_UNIVERSE = true` remains intentionally enabled
+- This release reduces FMP request duplication in the live daily path, but broader multi-phase quote/technical reuse is still a good next optimization target

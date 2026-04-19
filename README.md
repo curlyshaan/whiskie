@@ -28,7 +28,7 @@ Whiskie manages a long/short equity workflow built around:
 
 ### Weekly workflow
 
-- **Friday 3:00 PM ET** — refresh earnings calendar
+- **Friday 8:00 PM ET** — refresh earnings calendar
 - **Saturday 10:00 AM ET** — rebuild `stock_universe` with `scripts/populate-universe-v2.js`
 - **Saturday 3:00 PM ET** — run `fundamentalScreener.runWeeklyScreen('full')`, writing candidates to `saturday_watchlist` with `status='pending'`
 - **Sunday 1:00 PM ET** — weekly portfolio review
@@ -58,6 +58,10 @@ Whiskie manages a long/short equity workflow built around:
 - a **growth expansion universe**: selected `$1B-$10B` names in growth-heavy sectors
 
 The result is written to `stock_universe` and tagged with `universe_bucket` values such as `core` and `growth_expansion`.
+
+Important current setting:
+
+- the code still keeps `EXCLUDE_GROWTH_UNIVERSE = true` in the live screener and pre-ranker, so the growth expansion bucket is populated and preserved in data, but it is intentionally not yet included in the active screening/trading flow
 
 ### 2. Weekly fundamental screening
 
@@ -121,6 +125,9 @@ Current implementation details:
 - uses a single paid `FMP_API_KEY_1`
 - quote reads now prefer per-symbol FMP quote requests, with controlled parallel fan-out instead of restricted batch-quote endpoints
 - `src/fmp.js` keeps a **30-minute in-memory cache** for repeated requests
+- `src/fmp.js` now also applies rolling client-side throttling and retry/backoff for `429` protection against the Starter-tier `300 calls/minute` ceiling
+- daily analysis now reuses quote data inside pre-ranking and skips the extra AI sentiment call, reducing unnecessary FMP/AI load in the live run path
+- weekly earnings refresh now runs Friday at **8:00 PM ET** so it is separated from the daytime trading/analysis load
 
 ### Tradier
 
@@ -221,3 +228,8 @@ This state is stored across `trade_approvals`, `positions`, and `position_lots`,
 - Phase 4 approvals now support explicit override metadata: `override_phase2_decision`, `override_symbol`, and `override_reason`.
 - The dashboard and approvals UI were updated to render structured Phase 4 output more cleanly.
 - Legacy `quality_watchlist`, `value_watchlist`, and `overvalued_watchlist` tables were retired from the live database; `saturday_watchlist` is the active weekly candidate source.
+
+Mounted routers:
+
+- `GET /adhoc-analyzer` and `POST /adhoc-analyzer/analyze` are exposed by `src/adhoc-analyzer.js` via `app.use('/adhoc-analyzer', adhocAnalyzer)`.
+- The adhoc analyzer now uses a Whiskie-consistent single-stock analysis process with deep FMP bundle context, structured catalyst research, pathway awareness, and management-plan style outputs so it stays closer to the trading bot's core reasoning model.

@@ -1,4 +1,4 @@
-import fmp from './src/fmp.js';
+import fmp from '../src/fmp.js';
 
 console.log('Testing FMP API Integration\n');
 console.log('='.repeat(80));
@@ -36,10 +36,10 @@ for (const symbol of testSymbols) {
 console.log(`\n${'='.repeat(80)}`);
 console.log('\n📊 FMP API Usage Statistics:');
 const stats = fmp.getUsageStats();
-console.log(`   Current Key: ${stats.currentKey}`);
-stats.usage.forEach(key => {
-  console.log(`   Key ${key.key}: ${key.calls}/250 calls used (${key.percentage})`);
-});
-console.log(`   Total: ${stats.totalCalls} calls, ${stats.totalRemaining} remaining today`);
+console.log(`   Calls made: ${stats.calls}`);
+console.log(`   Limit: ${stats.limit}`);
+console.log(`   Remaining: ${stats.remaining}`);
+console.log(`   Rolling usage: ${stats.percentage}`);
+console.log(`   Recent calls (60s): ${stats.recentCallsLast60s}`);
 
 console.log(`\n${'='.repeat(80)}`);

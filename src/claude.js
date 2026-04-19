@@ -42,7 +42,8 @@ class ClaudeAPI {
         messages
       };
 
-      // Extended thinking requires temperature 1.0
+      // Quatarly/Claude thinking models require temperature 1.0 when thinking is enabled.
+      // For non-thinking calls, keep temperature near-deterministic for trading consistency.
       if (enableThinking && model === MODELS.OPUS) {
         if (!quiet) {
           console.log(`🧠 Enabling extended thinking with ${thinkingBudget.toLocaleString()} token budget...`);
@@ -56,7 +57,7 @@ class ClaudeAPI {
           console.log('⏳ This may take 3-7 minutes for DEEP analysis...');
         }
       } else {
-        payload.temperature = 0.1; // Consistent, focused decisions for non-thinking calls
+        payload.temperature = 0; // Deterministic for non-thinking calls
       }
 
       if (systemPrompt) {

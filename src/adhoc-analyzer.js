@@ -4,6 +4,7 @@ import claude, { MODELS } from './claude.js';
 import fmp from './fmp.js';
 import tradier from './tradier.js';
 import tavily from './tavily.js';
+import { researchCatalysts } from './catalyst-research.js';
 
 const router = express.Router();
 
@@ -420,7 +421,11 @@ router.post('/analyze', async (req, res) => {
 
     // Step 2: Check if stock is in saturday_watchlist
     const watchlistCheck = await db.query(
-      'SELECT * FROM saturday_watchlist WHERE symbol = $1 ORDER BY last_reviewed DESC LIMIT 1',
+      `SELECT *
+       FROM saturday_watchlist
+       WHERE symbol = $1
+       ORDER BY COALESCE(last_reviewed, added_date) DESC, added_date DESC
+       LIMIT 1`,
       [symbol]
     );
     const inWatchlist = watchlistCheck.rows.length > 0;
@@ -429,11 +434,18 @@ router.post('/analyze', async (req, res) => {
     const opusConviction = inWatchlist ? watchlistCheck.rows[0].opus_conviction : null;
     
     // Check if there's an active position with thesis management
-    const positionCheck = await db.query(
-      'SELECT * FROM active_positions WHERE symbol = $1 AND status = $2',
-      [symbol, 'open']
-    );
-    const positionDetails = positionCheck.rows.length > 0 ? positionCheck.rows[0] : null;
+    let positionDetails = null;
+    try {
+      const positionCheck = await db.query(
+        `SELECT *
+         FROM positions
+         WHERE symbol = $1`,
+        [symbol]
+      );
+      positionDetails = positionCheck.rows.length > 0 ? positionCheck.rows[0] : null;
+    } catch (error) {
+      console.warn(`   ⚠️ Could not load position details for ${symbol}: ${error.message}`);
+    }
 
     // Step 3: Get stock profile
     const profileCheck = await db.query(
@@ -444,17 +456,18 @@ router.post('/analyze', async (req, res) => {
     const profile = hasProfile ? profileCheck.rows[0] : null;
 
     // Step 4: Get current market data
-    const [quote, ratios, keyMetrics] = await Promise.all([
+    const [quote, ratios, keyMetrics, deepBundle] = await Promise.all([
       fmp.getQuote(symbol),
       fmp.getRatiosTTM(symbol),
-      fmp.getKeyMetricsTTM(symbol)
+      fmp.getKeyMetricsTTM(symbol),
+      fmp.getDeepAnalysisBundle(symbol)
     ]);
 
     if (!quote) {
       return res.status(404).json({ error: 'Stock not found or invalid ticker' });
     }
 
-    const currentPrice = quote.price;
+    const currentPrice = quote?.price || quote?.previousClose || quote?.close || 0;
 
     // Step 5: Get earnings calendar
     const earningsResult = await db.query(
@@ -464,12 +477,24 @@ router.post('/analyze', async (req, res) => {
     const nextEarnings = earningsResult.rows[0];
 
     // Step 6: Get recent news
-    const news = await tavily.search(`${symbol} stock news earnings catalyst`, {
-      days: 7,
-      max_results: 5
-    });
+    let news = [];
+    try {
+      news = await tavily.searchStructuredStockContext(symbol, { maxResults: 5 });
+    } catch (error) {
+      console.warn(`   ⚠️ Tavily structured search failed for ${symbol}: ${error.message}`);
+      news = [];
+    }
 
-    // Step 7: Get options data from Tradier (if available)
+    // Step 7: Get catalyst research and options data
+    let catalystResearch = [];
+    try {
+      catalystResearch = await researchCatalysts(symbol, watchlistPathway || intent);
+    } catch (error) {
+      console.warn(`   ⚠️ Catalyst research failed for ${symbol}: ${error.message}`);
+      catalystResearch = [];
+    }
+
+    // Step 8: Get options data from Tradier (if available)
     let optionsData = null;
     try {
       // Get options chain for next 2 months
@@ -478,7 +503,7 @@ router.post('/analyze', async (req, res) => {
       console.log(`   ⚠️  Options data not available for ${symbol}`);
     }
 
-    // Step 8: Build Opus prompt
+    // Step 9: Build Opus prompt
     const prompt = buildOpusPrompt({
       symbol,
       intent,
@@ -489,17 +514,21 @@ router.post('/analyze', async (req, res) => {
       quote,
       ratios,
       keyMetrics,
+      deepBundle,
       profile,
       nextEarnings,
       news,
+      catalystResearch,
       optionsData,
       inUniverse,
       inWatchlist,
       watchlistStatus,
+      watchlistPathway,
+      opusConviction,
       positionDetails
     });
 
-    // Step 9: Call Opus with extended thinking
+    // Step 10: Call Opus with extended thinking
     console.log(`   🧠 Calling Opus with 30k token extended thinking...`);
     const messages = [{ role: 'user', content: prompt }];
     const response = await claude.sendMessage(
@@ -561,17 +590,25 @@ function buildOpusPrompt(data) {
     quote,
     ratios,
     keyMetrics,
+    deepBundle,
     profile,
     nextEarnings,
     news,
+    catalystResearch,
     optionsData,
     inUniverse,
     inWatchlist,
     watchlistStatus,
+    watchlistPathway,
+    opusConviction,
     positionDetails
   } = data;
 
-  let prompt = `You are analyzing ${symbol} for a ${intent} position.
+  let prompt = `You are Whiskie. Analyze ${symbol} using the same core process Whiskie's trading bot uses: pathway-aware context, stock profile context, technical confirmation, catalyst review, risk/reward discipline, and strategy-consistent position management.
+
+This is an ADHOC single-stock review, not a portfolio-construction pass. Be consistent with Whiskie's PHASE 2/3 style analysis and management language.
+
+You are analyzing ${symbol} for a ${intent} position.
 
 CURRENT POSITION DETAILS:
 - Intent: ${intent}
@@ -614,6 +651,8 @@ ACTIVE POSITION MANAGEMENT:
 WHISKIE SYSTEM STATUS:
 - In Stock Universe: ${inUniverse ? 'Yes' : 'No'}
 - In Saturday Watchlist: ${inWatchlist ? `Yes (${watchlistStatus})` : 'No'}
+- Watchlist Pathway: ${watchlistPathway || 'None'}
+- Weekly Opus Conviction: ${opusConviction ?? 'N/A'}
 - Has Stock Profile: ${profile ? 'Yes' : 'No'}
 
 `;
@@ -632,26 +671,53 @@ Catalysts: ${profile.catalysts || 'N/A'}
 `;
   }
 
+  if (deepBundle) {
+    prompt += `DEEP ANALYSIS BUNDLE:
+- Sector: ${deepBundle.signals?.sector || 'Unknown'}
+- Industry: ${deepBundle.signals?.industry || 'Unknown'}
+- Revenue Acceleration: ${deepBundle.signals?.revenueAccel || 'unknown'}
+- Current Price Signal: ${deepBundle.signals?.currentPrice || currentPrice}
+- Revenue Growth: ${typeof deepBundle.signals?.revenueGrowth === 'number' ? `${(deepBundle.signals.revenueGrowth * 100).toFixed(1)}%` : 'N/A'}
+- EPS Growth: ${typeof deepBundle.signals?.epsGrowth === 'number' ? `${(deepBundle.signals.epsGrowth * 100).toFixed(1)}%` : 'N/A'}
+- Operating Margin: ${typeof deepBundle.signals?.operatingMargin === 'number' ? `${(deepBundle.signals.operatingMargin * 100).toFixed(1)}%` : 'N/A'}
+- ROE: ${typeof deepBundle.signals?.roe === 'number' ? `${(deepBundle.signals.roe * 100).toFixed(1)}%` : 'N/A'}
+- ROIC: ${typeof deepBundle.signals?.roic === 'number' ? `${(deepBundle.signals.roic * 100).toFixed(1)}%` : 'N/A'}
+- Technicals Snapshot: ${deepBundle.technicals ? JSON.stringify(deepBundle.technicals, null, 2) : 'N/A'}
+
+`;
+  }
+
   // Add fundamentals
+  const marketCap = quote?.marketCap || keyMetrics?.marketCap || 0;
+  const peRatio = ratios?.priceToEarningsRatioTTM;
+  const pegRatio = ratios?.priceToEarningsGrowthRatioTTM;
+  const forwardPeg = ratios?.forwardPriceToEarningsGrowthRatioTTM;
+  const priceToBook = ratios?.priceToBookRatioTTM ?? ratios?.priceToBookRatio;
+  const operatingMargin = ratios?.operatingProfitMarginTTM ?? ratios?.operatingMargin;
+  const roe = keyMetrics?.returnOnEquityTTM ?? ratios?.returnOnEquity;
+  const debtToEquity = ratios?.debtToEquityRatioTTM ?? ratios?.debtToEquity;
+  const currentRatio = ratios?.currentRatioTTM ?? ratios?.currentRatio;
+  const fcfYield = keyMetrics?.freeCashFlowYieldTTM ?? keyMetrics?.freeCashFlowYield;
+
   prompt += `CURRENT FUNDAMENTALS:
-- Market Cap: $${(quote.marketCap / 1e9).toFixed(2)}B
-- P/E Ratio (TTM): ${ratios?.peRatioTTM?.toFixed(2) || 'N/A'}
-- PEG Ratio (TTM): ${ratios?.priceToEarningsGrowthRatioTTM?.toFixed(2) || 'N/A'}
-- PEG Ratio (Forward): ${ratios?.forwardPriceToEarningsGrowthRatioTTM?.toFixed(2) || 'N/A'}
-- Price to Book: ${ratios?.priceToBookRatio?.toFixed(2) || 'N/A'}
-- Operating Margin: ${(ratios?.operatingMargin * 100)?.toFixed(1) || 'N/A'}%
-- ROE: ${(ratios?.returnOnEquity * 100)?.toFixed(1) || 'N/A'}%
-- Debt to Equity: ${ratios?.debtToEquity?.toFixed(2) || 'N/A'}
-- Current Ratio: ${ratios?.currentRatio?.toFixed(2) || 'N/A'}
-- FCF Yield: ${(keyMetrics?.freeCashFlowYield * 100)?.toFixed(1) || 'N/A'}%
+- Market Cap: ${marketCap ? `$${(marketCap / 1e9).toFixed(2)}B` : 'N/A'}
+- P/E Ratio (TTM): ${typeof peRatio === 'number' ? peRatio.toFixed(2) : 'N/A'}
+- PEG Ratio (TTM): ${typeof pegRatio === 'number' ? pegRatio.toFixed(2) : 'N/A'}
+- PEG Ratio (Forward): ${typeof forwardPeg === 'number' ? forwardPeg.toFixed(2) : 'N/A'}
+- Price to Book: ${typeof priceToBook === 'number' ? priceToBook.toFixed(2) : 'N/A'}
+- Operating Margin: ${typeof operatingMargin === 'number' ? `${(operatingMargin * 100).toFixed(1)}%` : 'N/A'}
+- ROE: ${typeof roe === 'number' ? `${(roe * 100).toFixed(1)}%` : 'N/A'}
+- Debt to Equity: ${typeof debtToEquity === 'number' ? debtToEquity.toFixed(2) : 'N/A'}
+- Current Ratio: ${typeof currentRatio === 'number' ? currentRatio.toFixed(2) : 'N/A'}
+- FCF Yield: ${typeof fcfYield === 'number' ? `${(fcfYield * 100).toFixed(1)}%` : 'N/A'}
 
 PRICE ACTION:
-- Day Change: ${quote.changePercentage?.toFixed(2)}%
-- Day Range: $${quote.dayLow} - $${quote.dayHigh}
-- 52-Week Range: $${quote.yearLow} - $${quote.yearHigh}
-- 50-Day MA: $${quote.priceAvg50?.toFixed(2) || 'N/A'}
-- 200-Day MA: $${quote.priceAvg200?.toFixed(2) || 'N/A'}
-- Volume: ${(quote.volume / 1e6).toFixed(2)}M
+- Day Change: ${typeof quote?.changePercentage === 'number' ? `${quote.changePercentage.toFixed(2)}%` : 'N/A'}
+- Day Range: ${quote?.dayLow && quote?.dayHigh ? `$${quote.dayLow} - $${quote.dayHigh}` : 'N/A'}
+- 52-Week Range: ${quote?.yearLow && quote?.yearHigh ? `$${quote.yearLow} - $${quote.yearHigh}` : 'N/A'}
+- 50-Day MA: ${typeof quote?.priceAvg50 === 'number' ? `$${quote.priceAvg50.toFixed(2)}` : 'N/A'}
+- 200-Day MA: ${typeof quote?.priceAvg200 === 'number' ? `$${quote.priceAvg200.toFixed(2)}` : 'N/A'}
+- Volume: ${typeof quote?.volume === 'number' ? `${(quote.volume / 1e6).toFixed(2)}M` : 'N/A'}
 
 `;
 
@@ -673,6 +739,13 @@ PRICE ACTION:
     });
   }
 
+  if (catalystResearch && catalystResearch.length > 0) {
+    prompt += `STRUCTURED CATALYST RESEARCH:
+${JSON.stringify(catalystResearch, null, 2)}
+
+`;
+  }
+
   // Add options data if available
   if (optionsData) {
     prompt += `OPTIONS MARKET DATA:
@@ -686,32 +759,65 @@ PRICE ACTION:
   // Add evaluation criteria
   if (intent === 'LONG') {
     prompt += `YOUR TASK:
-Provide a comprehensive recommendation for this LONG position considering:
+Provide a comprehensive recommendation for this LONG position using Whiskie's core long-analysis framework:
 
 1. **Current Action**: Should the user HOLD, BUY MORE, SELL, or WAIT?
-2. **Reasoning**: Why? Consider fundamentals, technicals, catalysts, and risks
-3. **Entry/Exit Strategy**:
+2. **Growth Potential**: 2x-3x / 50-100% / 20-50% / <20%
+3. **Reasoning**: Why? Consider fundamentals, technicals, catalysts, pathway fit, and risks
+4. **Entry/Exit Strategy**:
    - If no position: Is current price a good entry? What's the ideal entry?
    - If has position: Should they add, trim, or hold?
    - Stop loss and take profit recommendations
-4. **Catalyst Timing**: Any upcoming events (earnings, product launches) to wait for?
-5. **Risk Assessment**: Key risks and how to manage them
-6. **Time Horizon**: Is this a short-term trade or long-term hold?
+5. **Catalyst Timing**: Any upcoming events (earnings, product launches) to wait for?
+6. **Risk Assessment**: Key risks and how to manage them
+7. **Time Horizon**: Is this a short-term trade or long-term hold?
+
+Use this output structure:
+DECISION: BUY / PASS / HOLD / TRIM / EXIT / WAIT
+PATHWAY_FIT: [best matching pathway or NONE]
+CONVICTION: High / Medium / Low
+GROWTH_POTENTIAL: 2x-3x / 50-100% / 20-50% / <20%
+ENTRY: [price or range]
+STOP: [price and rationale]
+TARGET: [price and rationale]
+HOLDING_PERIOD: [days/weeks/months/years]
+THESIS: [1-2 sentences]
+CATALYSTS: [dated catalysts]
+TECHNICAL_VIEW: [summary]
+RISK_VIEW: [summary]
+MANAGEMENT_PLAN: [hold/rebalance/trim/exit/trail/add]
+REASONING: [detailed explanation]
 
 Be specific and actionable. If you recommend waiting, explain what you're waiting for and at what price/condition to act.`;
   } else {
     prompt += `YOUR TASK:
-Provide a comprehensive recommendation for this SHORT position considering:
+Provide a comprehensive recommendation for this SHORT position using Whiskie's core short-analysis framework:
 
 1. **Current Action**: Should the user HOLD SHORT, ADD TO SHORT, COVER, or WAIT?
-2. **Reasoning**: Why? Consider overvaluation, deteriorating fundamentals, technical weakness
-3. **Entry/Exit Strategy**:
+2. **Reasoning**: Why? Consider overvaluation, deterioration, pathway fit, and technical weakness
+3. **Technical Confirmation**: Explicitly address price vs 200MA, direction of 200MA, RSI, squeeze risk, and earnings proximity
+4. **Entry/Exit Strategy**:
    - If no position: Is current price a good short entry? What's the ideal entry?
    - If has position: Should they add, cover partially, or hold?
    - Stop loss (cover) and take profit recommendations
-4. **Catalyst Timing**: Any upcoming events that could trigger downside?
-5. **Risk Assessment**: Squeeze risk, borrow costs, upside catalysts to watch
-6. **Time Horizon**: Short-term trade or longer-term short thesis?
+5. **Catalyst Timing**: Any upcoming events that could trigger downside?
+6. **Risk Assessment**: Squeeze risk, borrow costs, upside catalysts to watch
+7. **Time Horizon**: Short-term trade or longer-term short thesis?
+
+Use this output structure:
+DECISION: SHORT / PASS / HOLD / COVER / WAIT
+PATHWAY_FIT: overvalued / deteriorating / overextended / NONE
+CONVICTION: High / Medium / Low
+ENTRY: [price or range]
+STOP: [price and rationale]
+TARGET: [price and rationale]
+HOLDING_PERIOD: [days/weeks/months]
+THESIS: [1-2 sentences]
+CATALYSTS: [dated catalysts]
+TECHNICAL_VIEW: [summary]
+RISK_VIEW: [summary]
+MANAGEMENT_PLAN: [hold/cover/trim/exit/add]
+REASONING: [detailed explanation]
 
 Be specific and actionable. If you recommend waiting, explain what you're waiting for and at what price/condition to act.`;
   }

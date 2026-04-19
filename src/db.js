@@ -647,7 +647,10 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS trailing_stop_pct DECIMAL(5, 2),
       ADD COLUMN IF NOT EXISTS rebalance_threshold_pct DECIMAL(5, 2),
       ADD COLUMN IF NOT EXISTS max_holding_days INTEGER,
-      ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB;
+      ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB,
+      ADD COLUMN IF NOT EXISTS override_phase2_decision VARCHAR(10),
+      ADD COLUMN IF NOT EXISTS override_symbol VARCHAR(10),
+      ADD COLUMN IF NOT EXISTS override_reason TEXT;
     `);
 
     await client.query(`
