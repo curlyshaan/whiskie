@@ -8,12 +8,14 @@ const { Pool } = pg;
 /**
  * Database connection pool
  */
+const DATABASE_CONNECT_TIMEOUT_MS = Number(process.env.DB_CONNECTION_TIMEOUT_MS || 15000);
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
   max: 20, // Maximum number of connections in pool
   idleTimeoutMillis: 30000, // Close idle connections after 30 seconds
-  connectionTimeoutMillis: 2000, // Fail fast if can't connect within 2 seconds
+  connectionTimeoutMillis: DATABASE_CONNECT_TIMEOUT_MS,
 });
 
 // Handle unexpected pool errors
@@ -26,10 +28,10 @@ pool.on('error', (err) => {
  * Initialize database schema
  */
 export async function initDatabase() {
+  console.log(`📊 Initializing database schema... (timeout ${DATABASE_CONNECT_TIMEOUT_MS}ms)`);
   const client = await pool.connect();
 
   try {
-    console.log('📊 Initializing database schema...');
 
     // Trades table - log every trade executed
     await client.query(`
