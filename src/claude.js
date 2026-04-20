@@ -12,7 +12,8 @@ const QUATARLY_BASE_URL = process.env.QUATARLY_BASE_URL;
 export const MODELS = {
   OPUS: 'claude-opus-4-6-thinking',      // Use for everything - consistent decisions
   SONNET: 'claude-sonnet-4-6-thinking',  // Deprecated - use Opus instead
-  HAIKU: 'claude-haiku-4-5-20251001'     // Deprecated - use Opus instead
+  HAIKU: 'claude-haiku-4-5-20251001',    // Deprecated - use Opus instead
+  GEMINI_PRO: 'gemini-3.1-pro'
 };
 
 /**
@@ -44,7 +45,7 @@ class ClaudeAPI {
 
       // Quatarly/Claude thinking models require temperature 1.0 when thinking is enabled.
       // For non-thinking calls, keep temperature near-deterministic for trading consistency.
-      if (enableThinking && model === MODELS.OPUS) {
+      if (enableThinking && (model === MODELS.OPUS || model === MODELS.GEMINI_PRO)) {
         if (!quiet) {
           console.log(`🧠 Enabling extended thinking with ${thinkingBudget.toLocaleString()} token budget...`);
         }

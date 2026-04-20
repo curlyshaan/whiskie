@@ -55,6 +55,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
+const CRON_JOBS_ENABLED = process.env.ENABLE_SCHEDULED_JOBS === 'true';
 
 app.use(express.json());
 
@@ -118,6 +119,9 @@ class WhiskieBot {
       console.log('📅 Scheduled runs: 9:00 AM (pre-market), 10:00 AM, 2:00 PM ET (Mon-Fri)');
       console.log('📡 Manual trigger: POST /analyze\n');
 
+      if (!CRON_JOBS_ENABLED) {
+        console.log('⏸️ All scheduled cron jobs are disabled. Manual trigger endpoints remain available.');
+      } else {
       // Schedule pre-market gap scanner at 9:00 AM ET
       cron.schedule('0 9 * * 1-5', async () => {
         const scheduledTime = new Date();
@@ -511,6 +515,7 @@ class WhiskieBot {
       }, {
         timezone: 'America/New_York'
       });
+      }
 
       console.log('\n✅ Whiskie Bot is running');
       console.log('📅 Analysis schedule (Mon-Fri):');

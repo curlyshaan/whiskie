@@ -1,5 +1,5 @@
 import * as db from './db.js';
-import claude from './claude.js';
+import claude, { MODELS } from './claude.js';
 import fmp from './fmp.js';
 import tradier from './tradier.js';
 import tavily from './tavily.js';
@@ -270,33 +270,33 @@ ${JSON.stringify(fundamentals, null, 2)}
 **Recent News:**
 ${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 200)}...`).join('\n\n')}
 
-**Your Task:** Create a comprehensive stock profile with the following sections. CRITICAL: Stay within character limits for each section.
+**Your Task:** Create a comprehensive stock profile with the following sections. CRITICAL: Summarize each descriptive section in 2000 characters or less.
 
-1. **BUSINESS_MODEL** (MAX 1500 chars)
+1. **BUSINESS_MODEL** (MAX 2000 chars)
    - What does the company do? How do they make money?
    - Revenue streams, customer segments, key products/services
    - Business model sustainability and scalability
 
-2. **MOATS** (MAX 1200 chars)
+2. **MOATS** (MAX 2000 chars)
    - Identify 3-5 competitive moats (network effects, brand, switching costs, scale, IP, regulatory)
    - Rate strength of each moat (Strong/Moderate/Weak)
    - Explain why each moat is defensible
 
-3. **COMPETITIVE_ADVANTAGES** (MAX 1000 chars)
+3. **COMPETITIVE_ADVANTAGES** (MAX 2000 chars)
    - What makes this company better than competitors?
    - Market position, technological edge, operational excellence
 
-4. **COMPETITIVE_LANDSCAPE** (MAX 1000 chars)
+4. **COMPETITIVE_LANDSCAPE** (MAX 2000 chars)
    - Top 3-5 competitors and market share
    - Pricing dynamics and competitive threats
    - Industry structure and barriers to entry
 
-5. **MANAGEMENT_QUALITY** (MAX 800 chars)
+5. **MANAGEMENT_QUALITY** (MAX 2000 chars)
    - Capital allocation track record (buybacks, dividends, M&A)
    - Insider ownership percentage
    - Execution history and strategic vision
 
-6. **VALUATION_FRAMEWORK** (MAX 1000 chars)
+6. **VALUATION_FRAMEWORK** (MAX 2000 chars)
    - Primary valuation method (DCF, P/E, EV/EBITDA, etc.)
    - Key multiples vs peers and historical average
    - Normalized earnings and growth assumptions
@@ -307,12 +307,12 @@ ${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 200)}...`).join('\n\n
    - Balance sheet strength (debt levels, cash position)
    - Capital allocation (buybacks, dividends, M&A)
 
-8. **RISKS** (MAX 1500 chars)
+8. **RISKS** (MAX 2000 chars)
    - Identify 5-7 key risks (competitive, regulatory, execution, macro, valuation)
    - Rate severity (High/Medium/Low)
    - Explain potential impact
 
-9. **CATALYSTS** (MAX 1200 chars)
+9. **CATALYSTS** (MAX 2000 chars)
    - Near-term catalysts (next 3-6 months)
    - Medium-term catalysts (6-18 months)
    - Long-term thesis drivers (2+ years)
@@ -329,23 +329,23 @@ ${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 200)}...`).join('\n\n
    Key metrics: {"primary": ["revenue_growth", "operating_margin"], "thresholds": {"revenue_growth": {"concern": 0.10, "target": 0.20}}}
 
 **Output Format:**
-Structure your response with clear section headers. STAY WITHIN CHARACTER LIMITS. The METADATA section is REQUIRED and must use the exact format shown above. Be thorough but concise. Focus on insights that will be useful for daily trading decisions.`;
+Structure your response with clear section headers. Keep every descriptive section at 2000 characters or less. The METADATA section is REQUIRED and must use the exact format shown above. Be thorough but concise. Focus on insights that will be useful for daily trading decisions.`;
 
-    console.log('  🤔 Running Opus deep research (10-20k tokens)...');
+    console.log('  🤔 Running Gemini 3.1 Pro deep research (10-20k tokens)...');
     const researchStart = Date.now();
-    const research = await claude.deepAnalysis(
-      {},
-      {},
-      news,
-      {},
-      researchPrompt,
-      20000  // 20k token thinking budget for deep research
+    const research = await claude.sendMessage(
+      [{ role: 'user', content: researchPrompt }],
+      MODELS.GEMINI_PRO,
+      null,
+      true,
+      20000
     );
     const researchDuration = ((Date.now() - researchStart) / 1000).toFixed(1);
     console.log(`  ✅ Research complete (${researchDuration}s)`);
 
-    // Parse Opus response into structured profile
-    const profile = parseResearchIntoProfile(symbol, research.analysis, fundamentals);
+    // Parse model response into structured profile
+    const researchText = research?.content?.map(block => block?.text || '').join('\n').trim() || '';
+    const profile = parseResearchIntoProfile(symbol, researchText, fundamentals);
     profile.profile_status = 'active';
     profile.refresh_tier = 'full';
     profile.last_full_refresh_at = new Date();
@@ -409,18 +409,18 @@ If nothing material has changed in a section, write "No material changes."
 
 Keep it concise - this is an incremental update, not a full rebuild.`;
 
-    console.log('  🤔 Running Opus incremental update (5k tokens)...');
+    console.log('  🤔 Running Gemini 3.1 Pro incremental update (5k tokens)...');
     const updateStart = Date.now();
-    const update = await claude.deepAnalysis(
-      {},
-      {},
-      news,
-      {},
-      updatePrompt,
-      5000  // 5k token thinking budget for incremental update
+    const update = await claude.sendMessage(
+      [{ role: 'user', content: updatePrompt }],
+      MODELS.GEMINI_PRO,
+      null,
+      true,
+      5000
     );
     const updateDuration = ((Date.now() - updateStart) / 1000).toFixed(1);
     console.log(`  ✅ Update complete (${updateDuration}s)`);
+    const updateText = update?.content?.map(block => block?.text || '').join('\n').trim() || '';
 
     // Merge updates with existing profile (apply cleanText to enforce character limits)
     const updatedProfile = {
@@ -432,11 +432,11 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
       management_quality: existingProfile.management_quality,
       valuation_framework: existingProfile.valuation_framework,
       fundamentals: fundamentals || existingProfile.fundamentals,
-      risks: update.analysis.includes('RISKS_UPDATE') ?
-        cleanText(update.analysis.match(/RISKS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.risks, 1500) :
+      risks: updateText.includes('RISKS_UPDATE') ?
+        cleanText(updateText.match(/RISKS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.risks, 2000) :
         existingProfile.risks,
-      catalysts: update.analysis.includes('CATALYSTS_UPDATE') ?
-        cleanText(update.analysis.match(/CATALYSTS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.catalysts, 1200) :
+      catalysts: updateText.includes('CATALYSTS_UPDATE') ?
+        cleanText(updateText.match(/CATALYSTS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.catalysts, 2000) :
         existingProfile.catalysts,
       industry_sector: existingProfile.industry_sector,
       market_cap_category: existingProfile.market_cap_category,
@@ -482,6 +482,8 @@ function cleanText(text, maxChars = 2000) {
   // Remove markdown headers (## or **)
   let cleaned = text.replace(/^#+\s+/gm, '');
   cleaned = cleaned.replace(/\*\*([^*]+)\*\*/g, '$1');
+  cleaned = cleaned.replace(/^\*\*+\s*/, '');
+  cleaned = cleaned.replace(/\s*\*\*+$/, '');
 
   // Remove bullet point markers but keep the text
   cleaned = cleaned.replace(/^[\s]*[-*•]\s+/gm, '');
@@ -507,16 +509,89 @@ function cleanText(text, maxChars = 2000) {
  * Parse Opus research response into structured profile
  */
 function parseResearchIntoProfile(symbol, researchText, fundamentals) {
-  // More flexible regex patterns - handle variations in header formatting
-  const businessModelMatch = researchText.match(/(?:##\s*(?:BUSINESS[_\s]MODEL|Business\s+Model)|\*\*(?:BUSINESS[_\s]MODEL|Business\s+Model)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:MOATS?|Moats?|COMPETITIVE|Competitive)|$)/i);
-  const moatsMatch = researchText.match(/(?:##\s*(?:MOATS?|Moats?)|\*\*(?:MOATS?|Moats?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:COMPETITIVE|Competitive)|$)/i);
-  const competitiveAdvMatch = researchText.match(/(?:##\s*(?:COMPETITIVE[_\s]ADVANTAGES?|Competitive\s+Advantages?)|\*\*(?:COMPETITIVE[_\s]ADVANTAGES?|Competitive\s+Advantages?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:COMPETITIVE[_\s]LANDSCAPE|Competitive\s+Landscape|MANAGEMENT|Management|VALUATION|Valuation|FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
-  const competitiveLandscapeMatch = researchText.match(/(?:##\s*(?:COMPETITIVE[_\s]LANDSCAPE|Competitive\s+Landscape)|\*\*(?:COMPETITIVE[_\s]LANDSCAPE|Competitive\s+Landscape)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:MANAGEMENT|Management|VALUATION|Valuation|FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
-  const managementMatch = researchText.match(/(?:##\s*(?:MANAGEMENT[_\s]QUALITY|Management\s+Quality)|\*\*(?:MANAGEMENT[_\s]QUALITY|Management\s+Quality)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:VALUATION|Valuation|FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
-  const valuationMatch = researchText.match(/(?:##\s*(?:VALUATION[_\s]FRAMEWORK|Valuation\s+Framework)|\*\*(?:VALUATION[_\s]FRAMEWORK|Valuation\s+Framework)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:FUNDAMENTALS?|Fundamentals?|RISKS?|Risks?)|$)/i);
-  const risksMatch = researchText.match(/(?:##\s*(?:RISKS?|Risks?)|\*\*(?:RISKS?|Risks?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:CATALYSTS?|Catalysts?|METADATA|Metadata)|$)/i);
-  const catalystsMatch = researchText.match(/(?:##\s*(?:CATALYSTS?|Catalysts?)|\*\*(?:CATALYSTS?|Catalysts?)\*\*)[:\s]*\n([\s\S]*?)(?=\n(?:##|\*\*)(?:METADATA|Metadata)|$)/i);
-  const metadataMatch = researchText.match(/(?:##\s*(?:METADATA|Metadata)|\*\*(?:METADATA|Metadata)\*\*)[:\s]*\n([\s\S]*?)$/i);
+  const normalized = String(researchText || '').replace(/\r\n/g, '\n');
+  const sectionAliases = {
+    BUSINESS_MODEL: ['BUSINESS_MODEL', 'Business Model'],
+    MOATS: ['MOATS', 'Moats'],
+    COMPETITIVE_ADVANTAGES: ['COMPETITIVE_ADVANTAGES', 'Competitive Advantages'],
+    COMPETITIVE_LANDSCAPE: ['COMPETITIVE_LANDSCAPE', 'Competitive Landscape'],
+    MANAGEMENT_QUALITY: ['MANAGEMENT_QUALITY', 'Management Quality'],
+    VALUATION_FRAMEWORK: ['VALUATION_FRAMEWORK', 'Valuation Framework'],
+    FUNDAMENTALS_SUMMARY: ['FUNDAMENTALS_SUMMARY', 'Fundamentals Summary'],
+    RISKS: ['RISKS', 'Risks'],
+    CATALYSTS: ['CATALYSTS', 'Catalysts'],
+    METADATA: ['METADATA', 'Metadata']
+  };
+
+  const sectionValues = {};
+  let currentSection = null;
+  const lines = normalized.split('\n');
+
+  const normalizeHeaderCandidate = (value) => String(value || '')
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/^\*\*+/, '')
+    .replace(/\*\*+$/, '')
+    .replace(/^[_*`~-]+/, '')
+    .replace(/[_*`~-]+$/, '')
+    .replace(/^\d+[\.)]\s*/, '')
+    .replace(/^\(?[A-Z]\)\s*/, '')
+    .trim();
+
+  const findSectionMatch = (value) => {
+    const cleanedValue = normalizeHeaderCandidate(value).replace(/:$/, '').trim();
+    if (!cleanedValue) return null;
+
+    return Object.entries(sectionAliases).find(([, aliases]) =>
+      aliases.some(alias => alias.toLowerCase() === cleanedValue.toLowerCase())
+    )?.[0] || null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (currentSection) {
+        sectionValues[currentSection].push(rawLine);
+      }
+      continue;
+    }
+
+    let matchedSection = findSectionMatch(line);
+    let inlineContent = '';
+
+    if (!matchedSection) {
+      const colonIndex = line.indexOf(':');
+      if (colonIndex > 0) {
+        const headerCandidate = line.slice(0, colonIndex);
+        matchedSection = findSectionMatch(headerCandidate);
+        if (matchedSection) {
+          inlineContent = line.slice(colonIndex + 1).trim();
+        }
+      }
+    }
+
+    if (matchedSection) {
+      currentSection = matchedSection;
+      if (!sectionValues[currentSection]) sectionValues[currentSection] = [];
+      if (inlineContent) {
+        sectionValues[currentSection].push(inlineContent);
+      }
+      continue;
+    }
+
+    if (currentSection) {
+      sectionValues[currentSection].push(rawLine);
+    }
+  }
+
+  const businessModelText = sectionValues.BUSINESS_MODEL?.join('\n').trim() || '';
+  const moatsText = sectionValues.MOATS?.join('\n').trim() || '';
+  const competitiveAdvantagesText = sectionValues.COMPETITIVE_ADVANTAGES?.join('\n').trim() || '';
+  const competitiveLandscapeText = sectionValues.COMPETITIVE_LANDSCAPE?.join('\n').trim() || '';
+  const managementText = sectionValues.MANAGEMENT_QUALITY?.join('\n').trim() || '';
+  const valuationText = sectionValues.VALUATION_FRAMEWORK?.join('\n').trim() || '';
+  const risksText = sectionValues.RISKS?.join('\n').trim() || '';
+  const catalystsText = sectionValues.CATALYSTS?.join('\n').trim() || '';
+  const metadata = sectionValues.METADATA?.join('\n').trim() || '';
 
   // Parse metadata section
   let industrySector = null;
@@ -528,9 +603,7 @@ function parseResearchIntoProfile(symbol, researchText, fundamentals) {
   let nextEarningsDate = null;
   let keyMetrics = null;
 
-  if (metadataMatch) {
-    const metadata = metadataMatch[1];
-
+  if (metadata) {
     const sectorMatch = metadata.match(/Industry\s+sector[:\s]+([^\n]+)/i);
     if (sectorMatch) industrySector = sectorMatch[1].trim();
 
@@ -589,15 +662,15 @@ function parseResearchIntoProfile(symbol, researchText, fundamentals) {
 
   return {
     symbol,
-    business_model: cleanText(businessModelMatch ? businessModelMatch[1] : researchText.substring(0, 1000), 1500),
-    moats: cleanText(moatsMatch ? moatsMatch[1] : '', 1200),
-    competitive_advantages: cleanText(competitiveAdvMatch ? competitiveAdvMatch[1] : '', 1000),
-    competitive_landscape: cleanText(competitiveLandscapeMatch ? competitiveLandscapeMatch[1] : '', 1000),
-    management_quality: cleanText(managementMatch ? managementMatch[1] : '', 800),
-    valuation_framework: cleanText(valuationMatch ? valuationMatch[1] : '', 1000),
+    business_model: cleanText(businessModelText || normalized.substring(0, 2000), 2000),
+    moats: cleanText(moatsText, 2000),
+    competitive_advantages: cleanText(competitiveAdvantagesText, 2000),
+    competitive_landscape: cleanText(competitiveLandscapeText, 2000),
+    management_quality: cleanText(managementText, 2000),
+    valuation_framework: cleanText(valuationText, 2000),
     fundamentals: fundamentals || {},
-    risks: cleanText(risksMatch ? risksMatch[1] : '', 1500),
-    catalysts: cleanText(catalystsMatch ? catalystsMatch[1] : '', 1200),
+    risks: cleanText(risksText, 2000),
+    catalysts: cleanText(catalystsText, 2000),
     industry_sector: industrySector,
     market_cap_category: marketCapCategory,
     growth_stage: growthStage,

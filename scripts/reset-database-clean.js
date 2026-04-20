@@ -33,7 +33,12 @@ async function resetDatabase() {
       'earnings_calendar',
       'stock_analysis_history',
       'market_trend_patterns',
-      'learning_insights'
+      'learning_insights',
+      'earnings_reminders',
+      'saturday_watchlist',
+      'daily_symbol_state',
+      'stock_profiles',
+      'stock_universe'
     ];
 
     for (const table of tablesToClear) {
@@ -78,8 +83,8 @@ async function resetDatabase() {
     }
 
     console.log('\n✅ Database reset complete!');
-    console.log('📊 stock_universe table preserved (365 stocks intact)');
-    console.log('🚀 Ready for fresh paper trading start\n');
+    console.log('📊 All major runtime and durable data tables cleared');
+    console.log('🚀 Ready for db:init and fresh rebuild\n');
 
   } catch (error) {
     console.error('❌ Database reset failed:', error);

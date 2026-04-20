@@ -1273,6 +1273,30 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      ALTER TABLE stock_profiles
+      ALTER COLUMN competitive_landscape TYPE TEXT,
+      ALTER COLUMN management_quality TYPE TEXT,
+      ALTER COLUMN valuation_framework TYPE TEXT,
+      ALTER COLUMN market_cap_category TYPE VARCHAR(20),
+      ALTER COLUMN growth_stage TYPE VARCHAR(30);
+    `);
+
+    const stockProfileLengthConstraints = [
+      'check_business_model_length',
+      'check_moats_length',
+      'check_competitive_advantages_length',
+      'check_competitive_landscape_length',
+      'check_management_quality_length',
+      'check_valuation_framework_length',
+      'check_risks_length',
+      'check_catalysts_length'
+    ];
+
+    for (const constraint of stockProfileLengthConstraints) {
+      await client.query(`ALTER TABLE stock_profiles DROP CONSTRAINT IF EXISTS ${constraint};`);
+    }
+
+    await client.query(`
       UPDATE stock_profiles
       SET profile_status = COALESCE(profile_status, CASE
             WHEN quality_flag = 'active' THEN 'active'
@@ -2180,7 +2204,7 @@ export async function getActiveEarningsReminder(symbol) {
               sw.selection_source,
               sw.selection_rank_within_pathway,
               sw.review_priority
-       FROM earnings_reminders
+       FROM earnings_reminders er
        LEFT JOIN LATERAL (
          SELECT primary_pathway, secondary_pathways, analysis_ready, selection_source, selection_rank_within_pathway, review_priority
          FROM saturday_watchlist
@@ -2190,9 +2214,9 @@ export async function getActiveEarningsReminder(symbol) {
                   added_date DESC
          LIMIT 1
        ) sw ON TRUE
-       WHERE symbol = $1
+       WHERE er.symbol = $1
          AND er.status = 'active'
-       ORDER BY updated_at DESC
+       ORDER BY er.updated_at DESC
        LIMIT 1`,
       [symbol]
     );
