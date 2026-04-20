@@ -2455,6 +2455,16 @@ function generateEarningsRemindersHTML(reminders) {
   </div>
 
   <script>
+    function formatDashboardSession(value) {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (!normalized) return 'Unknown';
+      if (normalized === 'bmo' || normalized === 'pre_market') return 'Pre-market';
+      if (normalized === 'amc' || normalized === 'post_market') return 'Post-market';
+      return normalized
+        .replace(/_/g, ' ')
+        .replace(/\\b\\w/g, char => char.toUpperCase());
+    }
+
     const searchInput = document.getElementById('symbolSearch');
     const suggestionsEl = document.getElementById('suggestions');
     const detailsEl = document.getElementById('details');

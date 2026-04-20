@@ -134,12 +134,26 @@ export function calculateScheduledSendAt(earningsDate, earningsSession) {
 function normalizeSession(rawText = '') {
   const text = ` ${String(rawText || '').toLowerCase()} `;
   if (!text) return 'unknown';
-  if (text.includes('before market open') || text.includes('before open') || text.includes('bmo') || text.includes(' 8 am') || text.includes(' 7 am') || text.includes(' 6 am') || text.includes(' 9 am')) {
+  if (text.includes('before market open') || text.includes('before open') || text.includes('bmo')) {
     return 'pre_market';
   }
-  if (text.includes('after market close') || text.includes('after close') || text.includes('amc') || text.includes(' 4 pm') || text.includes(' 5 pm') || text.includes(' 6 pm') || text.includes('pm')) {
+  if (text.includes('after market close') || text.includes('after close') || text.includes('amc')) {
     return 'post_market';
   }
+
+  const clockMatch = text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+  if (clockMatch) {
+    let hour = Number(clockMatch[1]);
+    const minute = Number(clockMatch[2] || '0');
+    const meridiem = clockMatch[3];
+
+    if (meridiem === 'pm' && hour !== 12) hour += 12;
+    if (meridiem === 'am' && hour === 12) hour = 0;
+
+    const minutesSinceMidnight = (hour * 60) + minute;
+    return minutesSinceMidnight < 12 * 60 ? 'pre_market' : 'post_market';
+  }
+
   return 'unknown';
 }
 
