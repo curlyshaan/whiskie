@@ -132,7 +132,7 @@ export function calculateScheduledSendAt(earningsDate, earningsSession) {
 }
 
 function normalizeSession(rawText = '') {
-  const text = String(rawText || '').toLowerCase();
+  const text = ` ${String(rawText || '').toLowerCase()} `;
   if (!text) return 'unknown';
   if (text.includes('before market open') || text.includes('before open') || text.includes('bmo') || text.includes(' 8 am') || text.includes(' 7 am') || text.includes(' 6 am') || text.includes(' 9 am')) {
     return 'pre_market';
@@ -141,6 +141,33 @@ function normalizeSession(rawText = '') {
     return 'post_market';
   }
   return 'unknown';
+}
+
+function formatEasternCallTime(rawSeconds) {
+  if (!Number.isFinite(rawSeconds)) return null;
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: EASTERN_TIMEZONE,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short'
+  });
+
+  return formatter.format(new Date(rawSeconds * 1000));
+}
+
+function extractYahooQuoteSummaryPayload(html) {
+  const matches = [...String(html || '').matchAll(/<script type="application\/json" data-sveltekit-fetched[^>]*data-url="https:\/\/query1\.finance\.yahoo\.com\/v10\/finance\/quoteSummary\/[^>]*>([\s\S]*?)<\/script>/g)];
+  for (const match of matches) {
+    try {
+      const envelope = JSON.parse(match[1]);
+      if (!envelope?.body) continue;
+      const body = JSON.parse(envelope.body);
+      const result = body?.quoteSummary?.result?.[0];
+      if (result) return result;
+    } catch {}
+  }
+  return null;
 }
 
 function mapLegacyEarningsTime(value) {
@@ -180,7 +207,8 @@ function classifyReaction(movePct, threshold = 1) {
 }
 
 export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
-  const url = `https://finance.yahoo.com/calendar/earnings?symbol=${encodeURIComponent(symbol)}`;
+  const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+  const url = `https://finance.yahoo.com/calendar/earnings?symbol=${encodeURIComponent(normalizedSymbol)}`;
   const response = await axios.get(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
@@ -190,7 +218,7 @@ export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
   const $ = cheerio.load(response.data);
   const scripts = $('script').map((_, el) => $(el).html()).get().filter(Boolean);
   const fallback = {
-    symbol,
+    symbol: normalizedSymbol,
     earningsDate: expectedDate,
     earningsTimeRaw: null,
     earningsSession: 'unknown',
@@ -198,26 +226,49 @@ export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
   };
 
   for (const script of scripts) {
-    if (!script.includes(symbol)) continue;
+    if (!script.includes(normalizedSymbol)) continue;
 
     const matches = script.match(/"rows":(\[[\s\S]*?\])\s*,\s*"sortFields"/);
     if (!matches) continue;
 
     try {
       const rows = JSON.parse(matches[1]);
-      const row = rows.find(item => String(item.symbol || '').toUpperCase() === symbol.toUpperCase());
+      const row = rows.find(item => String(item.symbol || '').toUpperCase() === normalizedSymbol);
       if (!row) continue;
 
       const isoDate = toIsoDate(row.startdatetime || row.startDate || row.earningsDate) || expectedDate;
       const rawText = row.startdatetimetype || row.time || row.epsestimate || null;
       return {
-        symbol,
+        symbol: normalizedSymbol,
         earningsDate: isoDate,
         earningsTimeRaw: rawText,
         earningsSession: normalizeSession(rawText),
         source: 'yahoo'
       };
     } catch {}
+  }
+
+  const quoteResponse = await axios.get(`https://finance.yahoo.com/quote/${encodeURIComponent(normalizedSymbol)}/`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    }
+  });
+
+  const quoteSummary = extractYahooQuoteSummaryPayload(quoteResponse.data);
+  const earnings = quoteSummary?.calendarEvents?.earnings || null;
+  const earningsCallDate = earnings?.earningsCallDate?.[0];
+  const earningsDate = earnings?.earningsDate?.[0];
+
+  if (earningsCallDate?.raw || earningsDate?.raw) {
+    const callDateIso = toIsoDate((earningsCallDate?.raw || earningsDate?.raw) * 1000) || expectedDate;
+    const rawTimeText = formatEasternCallTime(earningsCallDate?.raw);
+    return {
+      symbol: normalizedSymbol,
+      earningsDate: callDateIso,
+      earningsTimeRaw: rawTimeText,
+      earningsSession: normalizeSession(rawTimeText),
+      source: 'yahoo'
+    };
   }
 
   return fallback;

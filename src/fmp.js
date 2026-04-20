@@ -518,6 +518,25 @@ class FMPClient {
   }
 
   /**
+   * Get end-of-day historical price data for a symbol.
+   * Returns ascending date order to match existing profile builder expectations.
+   */
+  async getHistoricalPriceEodFull(symbol, from, to) {
+    const data = await this.request(`/historical-price-eod/full`, { symbol, from, to });
+    if (!Array.isArray(data)) return [];
+    return data
+      .map(row => ({
+        date: row.date,
+        open: Number(row.open) || 0,
+        high: Number(row.high) || 0,
+        low: Number(row.low) || 0,
+        close: Number(row.close) || 0,
+        volume: Number(row.volume) || 0
+      }))
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }
+
+  /**
    * Get earnings surprises (beat/miss history)
    */
   async getEarningsSurprises(symbol, limit = 8) {

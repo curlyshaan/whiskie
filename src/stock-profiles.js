@@ -242,11 +242,10 @@ export async function buildStockProfile(symbol) {
 
     console.log('  📊 Fetching fundamentals from FMP...');
 
-    console.log('  📈 Fetching historical data...');
+    console.log('  📈 Fetching historical data from FMP...');
     const formatDate = (date) => date.toISOString().split('T')[0];
-    const historicalData = await tradier.getHistory(
+    const historicalData = await fmp.getHistoricalPriceEodFull(
       symbol,
-      'daily',
       formatDate(new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)),
       formatDate(new Date())
     );
@@ -553,12 +552,12 @@ function parseResearchIntoProfile(symbol, researchText, fundamentals) {
     const nextEarningsMatch = metadata.match(/Next\s+earnings\s+date[:\s]+(\d{4}-\d{2}-\d{2})/i);
     if (nextEarningsMatch) nextEarningsDate = nextEarningsMatch[1];
 
-    const metricsMatch = metadata.match(/Key\s+metrics[:\s]+(\{[\s\S]*?\})/i);
+    const metricsMatch = metadata.match(/Key\s+metrics[:\s]+(\{[^\n]*\})/i);
     if (metricsMatch) {
       try {
         keyMetrics = JSON.parse(metricsMatch[1]);
       } catch (e) {
-        console.warn('Failed to parse key_metrics JSON:', e.message);
+        console.warn('Failed to parse key_metrics JSON, skipping metadata field:', e.message);
         // Attempt to sanitize common JSON errors
         const sanitized = metricsMatch[1]
           .replace(/,\s*}/g, '}')  // Remove trailing commas in objects
@@ -569,7 +568,6 @@ function parseResearchIntoProfile(symbol, researchText, fundamentals) {
           keyMetrics = JSON.parse(sanitized);
           console.log('Successfully parsed key_metrics after sanitization');
         } catch (e2) {
-          console.warn('Failed to parse key_metrics even after sanitization:', e2.message);
           keyMetrics = null;  // Fallback to null
         }
       }
