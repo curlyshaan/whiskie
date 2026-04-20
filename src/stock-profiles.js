@@ -51,7 +51,7 @@ export async function saveStockProfile(profile) {
         next_refresh_due, refresh_priority, coverage_score, research_quality,
         facts_last_verified_at, last_catalyst_refresh_at, last_news_refresh_at,
         last_updated, profile_version
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, CURRENT_TIMESTAMP, $29)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, CURRENT_TIMESTAMP, $30)
       ON CONFLICT (symbol)
       DO UPDATE SET
         business_model = $2,

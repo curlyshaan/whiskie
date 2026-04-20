@@ -1258,6 +1258,21 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      ALTER TABLE stock_profiles
+      ADD COLUMN IF NOT EXISTS competitive_landscape TEXT,
+      ADD COLUMN IF NOT EXISTS management_quality TEXT,
+      ADD COLUMN IF NOT EXISTS valuation_framework TEXT,
+      ADD COLUMN IF NOT EXISTS industry_sector VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS market_cap_category VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS growth_stage VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS insider_ownership_pct DECIMAL(8, 2),
+      ADD COLUMN IF NOT EXISTS institutional_ownership_pct DECIMAL(8, 2),
+      ADD COLUMN IF NOT EXISTS last_earnings_date DATE,
+      ADD COLUMN IF NOT EXISTS next_earnings_date DATE,
+      ADD COLUMN IF NOT EXISTS key_metrics_to_watch JSONB;
+    `);
+
+    await client.query(`
       UPDATE stock_profiles
       SET profile_status = COALESCE(profile_status, CASE
             WHEN quality_flag = 'active' THEN 'active'

@@ -512,8 +512,8 @@ class FMPClient {
    * Get earnings calendar (upcoming earnings dates)
    * Returns all upcoming earnings by default
    */
-  async getEarningsCalendar() {
-    const data = await this.request(`/earnings-calendar`, {});
+  async getEarningsCalendar(params = {}) {
+    const data = await this.request(`/earnings-calendar`, params);
     return data || [];
   }
 
