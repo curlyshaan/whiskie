@@ -10,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const symbols = ['AAPL', 'ABBV', 'ABNB', 'ACGL', 'ADBE', 'IREN', 'MSFT', 'GOOG'];
+const symbols = process.argv.slice(2).length ? process.argv.slice(2) : ['AAPL', 'ABBV', 'ABNB', 'ACGL', 'ADBE', 'IREN', 'MSFT', 'GOOG'];
 
 function cleanText(text, maxChars = 2000) {
   if (!text) return '';

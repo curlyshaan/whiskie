@@ -1,5 +1,4 @@
 import axios from 'axios';
-import yahooFinance from './yahoo-finance.js';
 
 /**
  * Financial Modeling Prep (FMP) API Integration
@@ -787,16 +786,6 @@ class FMPClient {
       const fcfPerShare = ratiosTTM.freeCashFlowPerShareTTM || 0;
       const freeCashflow = sharesOutstanding * fcfPerShare;
 
-      // Fetch short interest from Yahoo Finance (for short safety check)
-      let shortFloat = 0;
-      try {
-        const shortData = await yahooFinance.getShortInterest(symbol);
-        shortFloat = shortData?.shortPercentOfFloat || 0;
-      } catch (error) {
-        // Non-critical - continue without short float data
-        console.warn(`⚠️ ${symbol}: Could not fetch short interest (non-critical)`);
-      }
-
       return {
         symbol,
         marketCap: keyMetricsTTM?.marketCap || 0,
@@ -872,8 +861,8 @@ class FMPClient {
         dividendYield: ratiosTTM.dividendYieldTTM || 0,
         dividendPayoutRatio: ratiosTTM.dividendPayoutRatioTTM || 0,
 
-        // Short interest (from Yahoo Finance for short safety check)
-        shortFloat: shortFloat,
+        // Short interest not fetched here to keep FMP/profile flows Yahoo-free
+        shortFloat: 0,
 
         // Quarterly metrics for inflection detection
         revenueGrowthQ: revenueGrowthQ,
