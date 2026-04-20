@@ -591,7 +591,7 @@ class WhiskieBot {
       }
     });
 
-    app.post('/weekly-review', async (req, res) => {
+    const handleLegacyWeeklyReviewTrigger = async (req, res) => {
       try {
         console.log('📡 Manual weekly review triggered via API');
 
@@ -609,7 +609,10 @@ class WhiskieBot {
           error: error.message
         });
       }
-    });
+    };
+
+    app.post('/weekly-review', handleLegacyWeeklyReviewTrigger);
+    app.post('/api/trigger-weekly-review', handleLegacyWeeklyReviewTrigger);
 
     app.post('/api/trigger-saturday-screening', async (req, res) => {
       try {

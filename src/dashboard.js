@@ -448,7 +448,8 @@ router.get('/', async (req, res) => {
 });
 
 /**
- * API endpoint - Get latest analysis as JSON
+ * Deprecated dashboard helper endpoint.
+ * Prefer server-rendered dashboard data unless an external client still depends on this JSON shape.
  */
 router.get('/api/latest', async (req, res) => {
   try {
@@ -464,7 +465,8 @@ router.get('/api/latest', async (req, res) => {
 });
 
 /**
- * API endpoint - Get all today's analyses
+ * Deprecated dashboard helper endpoint.
+ * Prefer server-rendered dashboard data unless an external client still depends on this JSON shape.
  */
 router.get('/api/today', async (req, res) => {
   try {
@@ -482,7 +484,8 @@ router.get('/api/today', async (req, res) => {
 });
 
 /**
- * API endpoint - Get watchlist with earnings dates
+ * Deprecated legacy watchlist endpoint.
+ * This reads from the old watchlist table rather than the saturday_watchlist workflow.
  */
 router.get('/api/watchlist', async (req, res) => {
   try {
@@ -2066,7 +2069,7 @@ function generateCronStatusHTML(executions, days) {
     { name: 'Earnings Reminder Processor', type: 'daily', schedule: '3:00 PM ET Sun-Thu', endpoint: '/api/trigger-earnings-reminders' },
     { name: 'Stock Universe Refresh', type: 'weekly', schedule: 'Saturday 10:00 AM ET', endpoint: '/api/trigger-stock-universe-refresh' },
     { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET', endpoint: '/api/trigger-saturday-screening' },
-    { name: 'Weekly Portfolio Review', type: 'weekly', schedule: 'Sunday 1:00 PM ET', endpoint: '/weekly-review' },
+    { name: 'Weekly Portfolio Review', type: 'weekly', schedule: 'Sunday 1:00 PM ET', endpoint: '/api/trigger-weekly-portfolio-review' },
     { name: 'Profile Building', type: 'weekly', schedule: 'Sunday 3:00 PM ET', endpoint: '/api/trigger-profile-build-watchlist' },
     { name: 'Weekly Opus Review', type: 'weekly', schedule: 'Sunday 9:00 PM ET', endpoint: '/api/trigger-weekly-opus-review' },
     { name: 'Weekly Tactical-State Cleanup', type: 'weekly', schedule: 'Sunday 11:00 PM ET', endpoint: '/api/trigger-weekly-tactical-cleanup' }

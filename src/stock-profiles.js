@@ -251,7 +251,12 @@ export async function buildStockProfile(symbol) {
     );
 
     console.log('  📰 Fetching recent news...');
-    const news = await tavily.search(`${symbol} stock analysis business model competitive advantages`, 5);
+    const news = await tavily.searchStructuredStockContext(symbol, {
+      maxResults: 5,
+      depth: 'advanced',
+      topic: 'news',
+      timeRange: 'month'
+    });
 
     // Build context for Opus deep research
     const researchPrompt = `Conduct comprehensive research on ${symbol} and build a detailed stock profile.
@@ -337,7 +342,7 @@ Structure your response with clear section headers. Keep every descriptive secti
       [{ role: 'user', content: researchPrompt }],
       MODELS.GEMINI_PRO,
       null,
-      true,
+      false,
       20000
     );
     const researchDuration = ((Date.now() - researchStart) / 1000).toFixed(1);
@@ -415,7 +420,7 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
       [{ role: 'user', content: updatePrompt }],
       MODELS.GEMINI_PRO,
       null,
-      true,
+      false,
       5000
     );
     const updateDuration = ((Date.now() - updateStart) / 1000).toFixed(1);
