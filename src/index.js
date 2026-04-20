@@ -647,6 +647,89 @@ class WhiskieBot {
       }
     });
 
+    app.post('/api/trigger-weekly-earnings-refresh', async (req, res) => {
+      try {
+        console.log('📡 Manual weekly earnings refresh triggered via API');
+        (async () => {
+          const scheduledTime = new Date();
+          const jobId = await db.logCronJobStart('Weekly Earnings Refresh', 'weekly', scheduledTime);
+
+          try {
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const execAsync = promisify(exec);
+
+            console.log('📅 Running earnings calendar update from FMP...');
+            const { stdout, stderr } = await execAsync('node scripts/refresh-earnings-fmp.js');
+
+            if (stderr) console.error('Earnings update stderr:', stderr);
+            console.log(stdout);
+            console.log('✅ Weekly earnings refresh complete');
+            await db.logCronJobComplete(jobId, true);
+          } catch (error) {
+            console.error('❌ Error in manual weekly earnings refresh:', error);
+            await db.logCronJobComplete(jobId, false, error.message);
+          }
+        })();
+        res.json({ success: true, message: 'Weekly earnings refresh started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-stock-universe-refresh', async (req, res) => {
+      try {
+        console.log('📡 Manual stock universe refresh triggered via API');
+        (async () => {
+          const scheduledTime = new Date();
+          const jobId = await db.logCronJobStart('Stock Universe Refresh', 'weekly', scheduledTime);
+
+          try {
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const execAsync = promisify(exec);
+
+            console.log('📊 Running populate-universe-v2.js...');
+            const { stdout, stderr } = await execAsync('node scripts/populate-universe-v2.js');
+
+            if (stderr) console.error('Universe refresh stderr:', stderr);
+            console.log(stdout);
+            console.log('✅ Stock universe refresh complete');
+            await db.logCronJobComplete(jobId, true);
+          } catch (error) {
+            console.error('❌ Error in manual stock universe refresh:', error);
+            await db.logCronJobComplete(jobId, false, error.message);
+          }
+        })();
+        res.json({ success: true, message: 'Stock universe refresh started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-weekly-tactical-cleanup', async (req, res) => {
+      try {
+        console.log('📡 Manual weekly tactical-state cleanup triggered via API');
+        (async () => {
+          const scheduledTime = new Date();
+          const jobId = await db.logCronJobStart('Weekly Tactical-State Cleanup', 'weekly', scheduledTime);
+
+          try {
+            const expiredPromotions = await db.cleanupExpiredPromotions(7);
+            const cleanedStateRows = await db.cleanupDailySymbolState(30);
+            console.log(`🧹 Weekly cleanup complete: ${expiredPromotions} promotions expired, ${cleanedStateRows} daily state rows removed`);
+            await db.logCronJobComplete(jobId, true);
+          } catch (error) {
+            console.error('❌ Error in manual weekly tactical-state cleanup:', error);
+            await db.logCronJobComplete(jobId, false, error.message);
+          }
+        })();
+        res.json({ success: true, message: 'Weekly tactical-state cleanup started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
 
     app.post('/api/trigger-profile-build-watchlist', async (req, res) => {
       try {
@@ -656,10 +739,10 @@ class WhiskieBot {
             const db = await import('./db.js');
             const stockProfiles = await import('./stock-profiles.js');
 
-            // Get all stocks from saturday_watchlist
+            // Get pending stocks from saturday_watchlist for pre-Opus profile building
             const watchlistResult = await db.query(
               'SELECT DISTINCT symbol FROM saturday_watchlist WHERE status = $1 ORDER BY symbol',
-              ['active']
+              ['pending']
             );
 
             // Get existing profiles with their last_updated timestamps

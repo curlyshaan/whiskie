@@ -2062,14 +2062,14 @@ function generateCronStatusHTML(executions, days) {
     { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
     { name: 'Daily Summary', type: 'daily', schedule: '6:00 PM ET Mon-Fri', endpoint: '/api/trigger-eod-summary' },
     { name: 'Trade Executor', type: 'manual', schedule: 'Every 30 min (9:30am-4pm ET)', endpoint: '/api/trigger-trade-executor' },
-    { name: 'Weekly Earnings Refresh', type: 'weekly', schedule: 'Friday 8:00 PM ET', endpoint: null },
-    { name: 'Earnings Reminder Processor', type: 'daily', schedule: '3:00 PM ET Mon-Fri', endpoint: null },
-    { name: 'Stock Universe Refresh', type: 'weekly', schedule: 'Saturday 10:00 AM ET', endpoint: null },
+    { name: 'Weekly Earnings Refresh', type: 'weekly', schedule: 'Friday 8:00 PM ET', endpoint: '/api/trigger-weekly-earnings-refresh' },
+    { name: 'Earnings Reminder Processor', type: 'daily', schedule: '3:00 PM ET Mon-Fri', endpoint: '/api/trigger-earnings-reminders' },
+    { name: 'Stock Universe Refresh', type: 'weekly', schedule: 'Saturday 10:00 AM ET', endpoint: '/api/trigger-stock-universe-refresh' },
     { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET', endpoint: '/api/trigger-saturday-screening' },
     { name: 'Weekly Portfolio Review', type: 'weekly', schedule: 'Sunday 1:00 PM ET', endpoint: '/weekly-review' },
-    { name: 'Profile Building', type: 'weekly', schedule: 'Sunday 3:00 PM ET', endpoint: null },
+    { name: 'Profile Building', type: 'weekly', schedule: 'Sunday 3:00 PM ET', endpoint: '/api/trigger-profile-build-watchlist' },
     { name: 'Weekly Opus Review', type: 'weekly', schedule: 'Sunday 9:00 PM ET', endpoint: '/api/trigger-weekly-opus-review' },
-    { name: 'Weekly Tactical-State Cleanup', type: 'weekly', schedule: 'Sunday 11:00 PM ET', endpoint: null }
+    { name: 'Weekly Tactical-State Cleanup', type: 'weekly', schedule: 'Sunday 11:00 PM ET', endpoint: '/api/trigger-weekly-tactical-cleanup' }
   ];
 
   return `
@@ -2283,6 +2283,9 @@ function generateCronStatusHTML(executions, days) {
       const originalText = btn.textContent;
 
       try {
+        if (!endpoint) {
+          throw new Error('No manual endpoint is configured for this job yet.');
+        }
         btn.disabled = true;
         btn.textContent = '⏳ Starting...';
 
