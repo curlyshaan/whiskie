@@ -249,20 +249,53 @@ class PreRanking {
   }
 
   /**
+   * Return analysis universe and discovery universe separately.
+   * Analysis universe should stay tightly scoped to active/promoted saturday_watchlist names.
+   * Discovery universe remains broader for off-pathway opportunities and promotions.
+   */
+  async rankUniverses() {
+    const ranked = await this.rankStocks();
+
+    const analysisLongs = ranked.longs.filter(candidate => candidate.source === 'watchlist');
+    const analysisShorts = ranked.shorts.filter(candidate => candidate.source === 'watchlist');
+    const discoveryLongs = ranked.longs.filter(candidate => candidate.source !== 'watchlist');
+    const discoveryShorts = ranked.shorts.filter(candidate => candidate.source !== 'watchlist');
+
+    return {
+      analysis: {
+        longs: analysisLongs,
+        shorts: analysisShorts
+      },
+      discovery: {
+        longs: discoveryLongs,
+        shorts: discoveryShorts
+      },
+      scored: ranked.scored
+    };
+  }
+
+  /**
    * Get saturday_watchlist stocks with pathway tags
    */
   async getWatchlistStocks() {
-    const result = await db.query(
-      `SELECT symbol, intent, pathway, sector, industry, score, price
-       FROM saturday_watchlist
-       WHERE status = $1
-       ORDER BY score DESC`,
-      ['active']
-    );
+    const rows = await db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true });
+    const result = {
+      rows: rows.map(row => ({
+        symbol: row.symbol,
+        intent: row.intent,
+        pathway: row.primary_pathway || row.pathway,
+        secondary_pathways: row.secondary_pathways || [],
+        sector: row.sector,
+        industry: row.industry,
+        score: row.score,
+        price: row.price
+      }))
+    };
     return result.rows.map(row => ({
       symbol: row.symbol,
       intent: row.intent,
       pathway: row.pathway,
+      secondaryPathways: row.secondary_pathways || [],
       sector: row.sector,
       industry: row.industry,
       score: row.score,

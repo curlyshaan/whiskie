@@ -342,7 +342,7 @@ All schedules are configured for `America/New_York`.
 
 | Time | Job |
 |---|---|
-| Friday 3:00 PM | Earnings calendar refresh |
+| Friday 8:00 PM | Earnings calendar refresh |
 | Saturday 10:00 AM | Universe refresh |
 | Saturday 3:00 PM | Fundamental screening |
 | Sunday 1:00 PM | Weekly portfolio review |

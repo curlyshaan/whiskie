@@ -366,7 +366,7 @@ class WhiskieBot {
               if (lastUpdated) {
                 const daysSinceUpdate = (Date.now() - new Date(lastUpdated)) / (1000 * 60 * 60 * 24);
 
-                if (daysSinceUpdate < 12) {
+                if (daysSinceUpdate < 14) {
                   // Profile is fresh, skip
                   console.log(`   [${newProfiles + incrementalUpdates + skipped + failed + 1}/${watchlistSymbols.length}] Skipping ${symbol} (updated ${daysSinceUpdate.toFixed(1)} days ago)`);
                   skipped++;
@@ -411,7 +411,7 @@ class WhiskieBot {
       });
 
       // Schedule weekly Opus review - Sunday 9:00 PM ET
-      // Analyzes all saturday_watchlist candidates and activates top 15 per pathway
+      // Analyzes saturday_watchlist candidates and activates top 7 per pathway
       cron.schedule('0 21 * * 0', async () => {
         const scheduledTime = new Date();
         const jobId = await db.logCronJobStart('Weekly Opus Review', 'weekly', scheduledTime);
@@ -426,6 +426,19 @@ class WhiskieBot {
           console.error('❌ Error in weekly Opus review:', error);
           await db.logCronJobComplete(jobId, false, error.message);
           await email.sendErrorAlert(error, 'Weekly Opus review failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule weekly tactical-state cleanup - Sunday 11:00 PM ET
+      cron.schedule('0 23 * * 0', async () => {
+        try {
+          const expiredPromotions = await db.cleanupExpiredPromotions(7);
+          const cleanedStateRows = await db.cleanupDailySymbolState(30);
+          console.log(`🧹 Weekly cleanup complete: ${expiredPromotions} promotions expired, ${cleanedStateRows} daily state rows removed`);
+        } catch (error) {
+          console.error('❌ Error during weekly tactical-state cleanup:', error);
         }
       }, {
         timezone: 'America/New_York'
@@ -521,11 +534,11 @@ class WhiskieBot {
       console.log('   → Checks thesis validity, suggests stop-loss/take-profit adjustments');
       console.log('📅 Profile building: Sunday 3:00 PM ET');
       console.log('   → Builds/updates profiles for all saturday_watchlist stocks');
-      console.log('   → Fresh profiles (<12 days) skipped, stale profiles updated, new profiles built');
+      console.log('   → Fresh profiles (<14 days) skipped, stale profiles updated, new profiles built');
       console.log('📅 Weekly Opus review: Sunday 9:00 PM ET');
       console.log('   → Analyzes top 20 per pathway with Opus extended thinking');
       console.log('   → Uses fresh profiles from 3pm build');
-      console.log('   → Ranks by thesis strength, activates top 15 per pathway');
+      console.log('   → Ranks by thesis strength, activates top 7 per pathway');
       console.log('   → Sets top candidates to status=\'active\', rest to \'pending\'');
       console.log('💡 Press Ctrl+C to stop\n');
 
@@ -1009,6 +1022,7 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       console.log(`   Cash: $${portfolio.cash.toLocaleString()}`);
       console.log(`   Positions: ${portfolio.positions.length}`);
       console.log(`   Drawdown: ${(portfolio.drawdown * 100).toFixed(2)}%\n`);
+      const cashPercent = portfolio.totalValue > 0 ? portfolio.cash / portfolio.totalValue : 0;
 
       // Sync positions to database (reconcile Tradier with database)
       console.log('📦 Syncing positions with Tradier...');
@@ -1314,6 +1328,13 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
           optionsContext
         });
         marketContext = deepAnalysisResult?.marketContext || {};
+        if (deepAnalysisResult?.dailyStateSummary) {
+          console.log(`📝 Daily state updated for ${deepAnalysisResult.dailyStateSummary.updated} symbols`);
+          if (deepAnalysisResult.dailyStateSummary.promoted > 0) {
+            console.log(`🚀 Discovery promotions created: ${deepAnalysisResult.dailyStateSummary.promoted}`);
+          }
+          console.log('');
+        }
       } else {
         // Portfolio is healthy, but still scan watchlist and news for opportunities
         console.log('✅ Portfolio healthy - running watchlist scan and news review');
@@ -1423,7 +1444,14 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       recommendation: evaluation.analysis,
       reasoning: `Position down ${Math.abs(percentDown).toFixed(1)}%`,
       model: 'sonnet',
-      confidence: 'medium'
+      confidence: 'medium',
+      workflow_type: 'risk_review',
+      phase: 'position_review',
+      decision_scope: 'single_symbol',
+      symbol_count: 1,
+      symbols_snapshot: [symbol],
+      prompt_version: 'current',
+      run_profile: 'reactive'
     });
 
     console.log(`   📧 Alert email sent with AI analysis`);
@@ -1460,7 +1488,14 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       recommendation: `Sell ${action.percentage * 100}% of position`,
       reasoning: action.reason,
       model: 'risk-manager',
-      confidence: 'high'
+      confidence: 'high',
+      workflow_type: 'risk_review',
+      phase: 'take_profit',
+      decision_scope: 'single_symbol',
+      symbol_count: 1,
+      symbols_snapshot: [symbol],
+      prompt_version: 'current',
+      run_profile: 'reactive'
     });
 
     console.log(`   📧 Email sent for approval`);
@@ -1491,11 +1526,16 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         optionsContext = ''
       } = additionalContext;
 
-      // PHASE 1: Pre-rank stock universe to 100-150 candidates
+      const runProfile = this.getDailyRunProfile();
+      console.log(`🧭 Run profile: ${runProfile.label} (${runProfile.runType}/${runProfile.runTime})`);
+
+      // PHASE 1: Pre-rank stock universe to separate analysis vs discovery universes
       console.log('📊 PHASE 1: Pre-ranking stock universe...');
       const phase1Start = Date.now();
-      const preRankedStocks = await preRanking.rankStocks();
-      console.log(`   ✅ Pre-ranked to ${preRankedStocks.longs.length} long + ${preRankedStocks.shorts.length} short candidates`);
+      const rankedUniverses = await preRanking.rankUniverses();
+      const preRankedStocks = rankedUniverses.analysis;
+      console.log(`   ✅ Analysis universe: ${preRankedStocks.longs.length} long + ${preRankedStocks.shorts.length} short candidates`);
+      console.log(`   🔎 Discovery universe: ${rankedUniverses.discovery.longs.length} long + ${rankedUniverses.discovery.shorts.length} short candidates`);
       console.log('');
 
       // Fetch market context (indices + portfolio stocks + pre-ranked candidates)
@@ -1555,6 +1595,14 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         pathwayMap[candidate.symbol] = pathway;
         intentMap[candidate.symbol] = pathway ? PATHWAY_TO_INTENT[pathway] || 'momentum_short' : 'momentum_short';
       });
+
+      const canonicalPathwayContextBySymbol = Object.fromEntries(
+        Object.entries(watchlistMetadataBySymbol).map(([symbol, row]) => [symbol, {
+          primary: row.primary_pathway || row.pathway || null,
+          secondary: row.secondary_pathways || [],
+          selectionRule: row.pathway_selection_rule || 'legacy_pathway_passthrough'
+        }])
+      );
 
       // Refresh portfolio prices with phase 1 data
       console.log('💰 Refreshing portfolio prices...');
@@ -1713,7 +1761,7 @@ ${news}
 
 ${watchlistContext}
 
-**Pre-Ranked Candidates (algorithmic filter based on volume surge, momentum, sector strength):**
+**Analysis Universe (algorithmic filter scoped to active/promoted saturday_watchlist names):**
 
 **Long Candidates (${preRankedStocks.longs.length} stocks):**
 ${preRankedStocks.longs.map(c => c.symbol).join(', ')}
@@ -1760,7 +1808,7 @@ ${trendContext}`;
 
       // Use pre-ranked stocks directly as candidates (no Opus Phase 1 needed)
       const phase1Duration = ((Date.now() - phase1Start) / 1000).toFixed(1);
-      const candidates = preRankedStocks;
+      const candidates = this.selectCandidatesForRun(preRankedStocks, stateSnapshot.symbolStates, runProfile);
 
       console.log(`✅ Phase 1 complete (${phase1Duration}s)`);
       console.log('');
@@ -1796,25 +1844,21 @@ ${trendContext}`;
       console.log(`✅ Fetched ${Object.keys(fullMarketData).length} total quotes`);
       console.log('');
 
-      // Fetch technical indicators for all candidates
-      console.log('📊 Fetching technical indicators for all candidates...');
-      const technicalData = {};
-      let techCount = 0;
-
-      for (const symbol of allCandidates) {
-        try {
-          const indicators = await fmp.getTechnicalIndicators(symbol);
-          if (indicators) {
-            technicalData[symbol] = indicators;
-            techCount++;
-          }
-                  } catch (error) {
-          console.warn(`   ⚠️ Failed to fetch technicals for ${symbol}: ${error.message}`);
-        }
-      }
-
-      console.log(`✅ Fetched technical indicators for ${techCount}/${allCandidates.length} candidates`);
-      console.log('');
+      const technicalData = await this.fetchTechnicalSnapshot(allCandidates);
+      const stateSnapshot = await this.buildStateSnapshot({
+        portfolio,
+        analysisCandidates: preRankedStocks,
+        discoveryCandidates: rankedUniverses.discovery,
+        runProfile,
+        marketData: fullMarketData,
+        technicalData
+      });
+      const dailyStateSummary = await this.syncDailySymbolState(stateSnapshot);
+      const selectedStateSummary = this.buildSelectedStateSummary(candidates, stateSnapshot.symbolStates);
+      const activeWatchlistRows = await db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true });
+      const watchlistMetadataBySymbol = Object.fromEntries(
+        activeWatchlistRows.map(row => [row.symbol, row])
+      );
 
       // Get market regime for allocation guidance
       console.log('📈 Detecting market regime...');
@@ -1919,7 +1963,9 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 
 **Deep Analysis Approach:**
 Take your time with each stock. Don't rush through the analysis. For stocks with existing profiles, reference the profile and focus on what's changed (price action, news, catalysts). For stocks without profiles or with stale profiles (>14 days old), do a more comprehensive analysis. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
+Run mode: ${runProfile.runType}. If a stock was included because it is a light-refresh carryover rather than a deep-refresh trigger, keep the work concise and focus on whether anything important changed enough to overturn the prior thesis.
 ${learningContext}
+Use the weekly watchlist metadata, profile freshness metadata, and tactical review/change metadata as first-class decision inputs. If a stock is not analysis_ready, treat that as a negative unless the current change/catalyst clearly justifies overriding it.
 **Input:** ${candidates.longs.length} long candidates from Phase 1
 
 **Long Candidates:**
@@ -1927,14 +1973,19 @@ ${candidates.longs.map(c => {
   const price = fullMarketData[c.symbol]?.price || 'N/A';
   const change = fullMarketData[c.symbol]?.change_percentage || 0;
   const changeStr = change >= 0 ? `+${change}` : `${change}`;
-  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
+  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}${c.secondaryPathways?.length ? ` | secondary: ${c.secondaryPathways.join(',')}` : ''}]` : ' [momentum]';
   const scoreTag = c.score ? ` (score: ${c.score})` : '';
   const tech = technicalData[c.symbol];
+  const state = selectedStateSummary[c.symbol];
+  const stateTag = state ? ` | Refresh: ${state.reviewDepth} | Change: ${state.whatChanged}` : '';
+  const watchMeta = watchlistMetadataBySymbol[c.symbol];
+  const watchTag = watchMeta ? ` | Weekly: ${watchMeta.selection_source || watchMeta.source || 'unknown'} | Primary: ${watchMeta.primary_pathway || watchMeta.pathway || 'unknown'} | Secondary: ${(watchMeta.secondary_pathways || []).join(', ') || 'none'} | Ready: ${watchMeta.analysis_ready ? 'yes' : 'no'} | Rank: ${watchMeta.selection_rank_within_pathway ?? 'n/a'} | Priority: ${watchMeta.review_priority ?? 'n/a'}` : '';
   const techStr = tech ? ` | EMA50: $${tech.ema50.toFixed(2)} (${tech.aboveEma50 ? 'above' : 'below'}), EMA200: $${tech.ema200.toFixed(2)} (${tech.aboveEma200 ? 'above' : 'below'}), RSI: ${tech.rsi.toFixed(1)} (${tech.rsiBand})` : ' | Technicals: N/A';
-  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${techStr}${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
+  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${techStr}${stateTag}${watchTag}${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
 }).join('\n')}
 ${stockProfileContext}
 ${recentAnalysisContext}
+${weeklySelectionContext}
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
@@ -2077,7 +2128,9 @@ ${historyContext}`;
 
 **Deep Analysis Approach:**
 Take your time with each stock. Don't rush through the analysis. For stocks with existing profiles, reference the profile and focus on what's changed (price action, news, catalysts). For stocks without profiles or with stale profiles (>14 days old), do a more comprehensive analysis. Think through multiple scenarios, evaluate risks thoroughly, and consider second-order effects.
+Run mode: ${runProfile.runType}. If a stock was included because it is a light-refresh carryover rather than a deep-refresh trigger, keep the work concise and focus on whether anything important changed enough to overturn the prior thesis.
 ${learningContext}
+Use the weekly watchlist metadata, profile freshness metadata, and tactical review/change metadata as first-class decision inputs. If a stock is not analysis_ready, treat that as a negative unless the current change/catalyst clearly justifies overriding it.
 **Input:** ${candidates.shorts.length} short candidates from Phase 1
 
 **Short Candidates:**
@@ -2085,14 +2138,19 @@ ${candidates.shorts.map(c => {
   const price = fullMarketData[c.symbol]?.price || 'N/A';
   const change = fullMarketData[c.symbol]?.change_percentage || 0;
   const changeStr = change >= 0 ? `+${change}` : `${change}`;
-  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
+  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}${c.secondaryPathways?.length ? ` | secondary: ${c.secondaryPathways.join(',')}` : ''}]` : ' [momentum]';
   const scoreTag = c.score ? ` (score: ${c.score})` : '';
   const tech = technicalData[c.symbol];
+  const state = selectedStateSummary[c.symbol];
+  const stateTag = state ? ` | Refresh: ${state.reviewDepth} | Change: ${state.whatChanged}` : '';
+  const watchMeta = watchlistMetadataBySymbol[c.symbol];
+  const watchTag = watchMeta ? ` | Weekly: ${watchMeta.selection_source || watchMeta.source || 'unknown'} | Primary: ${watchMeta.primary_pathway || watchMeta.pathway || 'unknown'} | Secondary: ${(watchMeta.secondary_pathways || []).join(', ') || 'none'} | Ready: ${watchMeta.analysis_ready ? 'yes' : 'no'} | Rank: ${watchMeta.selection_rank_within_pathway ?? 'n/a'} | Priority: ${watchMeta.review_priority ?? 'n/a'}` : '';
   const techStr = tech ? ` | EMA50: $${tech.ema50.toFixed(2)} (${tech.aboveEma50 ? 'above' : 'below'}), EMA200: $${tech.ema200.toFixed(2)} (${tech.aboveEma200 ? 'above' : 'below'}), RSI: ${tech.rsi.toFixed(1)} (${tech.rsiBand})` : ' | Technicals: N/A';
-  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${techStr}${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
+  return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${techStr}${stateTag}${watchTag}${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
 }).join('\n')}
 ${shortProfileContext}
 ${shortRecentAnalysisContext}
+${weeklySelectionContext}
 
 **Current Portfolio:**
 - Positions: ${portfolio.positions.length}
@@ -2208,7 +2266,15 @@ ${historyContext}`;
         inputTokens: phase2Analysis.usage?.input_tokens,
         outputTokens: phase2Analysis.usage?.output_tokens,
         totalTokens: (phase2Analysis.usage?.input_tokens || 0) + (phase2Analysis.usage?.output_tokens || 0),
-        durationSeconds: parseInt(phase2Duration)
+        durationSeconds: parseInt(phase2Duration),
+        run_id: `daily-${new Date().toISOString().split('T')[0]}-${runProfile.runTime}`,
+        workflow_type: 'daily_analysis',
+        phase: 'phase2',
+        decision_scope: 'long_candidates',
+        symbol_count: candidates.longs.length,
+        symbols_snapshot: candidates.longs.map(c => c.symbol),
+        prompt_version: 'current',
+        run_profile: runProfile.runType
       });
 
       await db.logAIDecision({
@@ -2221,7 +2287,15 @@ ${historyContext}`;
         inputTokens: phase3Analysis.usage?.input_tokens,
         outputTokens: phase3Analysis.usage?.output_tokens,
         totalTokens: (phase3Analysis.usage?.input_tokens || 0) + (phase3Analysis.usage?.output_tokens || 0),
-        durationSeconds: parseInt(phase3Duration)
+        durationSeconds: parseInt(phase3Duration),
+        run_id: `daily-${new Date().toISOString().split('T')[0]}-${runProfile.runTime}`,
+        workflow_type: 'daily_analysis',
+        phase: 'phase3',
+        decision_scope: 'short_candidates',
+        symbol_count: candidates.shorts.length,
+        symbols_snapshot: candidates.shorts.map(c => c.symbol),
+        prompt_version: 'current',
+        run_profile: runProfile.runType
       });
 
       console.log('✅ Phase 2 and Phase 3 saved to database');
@@ -2279,9 +2353,10 @@ ${phase3Analysis.analysis}
 
 **CANDIDATE PATHWAY CONTEXT:**
 The following stocks came from Saturday's fundamental screening with specific pathways:
-${Object.entries(pathwayMap).filter(([_, pathway]) => pathway).map(([symbol, pathway]) =>
-  `- ${symbol}: ${pathway} (intent: ${intentMap[symbol]})`
-).join('\n') || 'No pathway-tagged stocks in this batch'}
+${Object.entries(pathwayMap).filter(([_, pathway]) => pathway).map(([symbol, pathway]) => {
+  const watchMeta = watchlistMetadataBySymbol[symbol];
+  return `- ${symbol}: primary=${pathway} secondary=${(watchMeta?.secondary_pathways || []).join(', ') || 'none'} (intent: ${intentMap[symbol]})`;
+}).join('\n') || 'No pathway-tagged stocks in this batch'}
 
 Pathway meanings:
 - deepValue/cashMachine/qarp → Value plays, consider for dip-buying
@@ -2292,6 +2367,13 @@ Pathway meanings:
 
 When constructing trades, preserve the pathway context and assign appropriate intent based on current setup.
 
+**WEEKLY SELECTION + TACTICAL STATE CONTEXT:**
+${[...new Set([...candidates.longs.map(c => c.symbol), ...candidates.shorts.map(c => c.symbol)])].map(symbol => {
+  const state = selectedStateSummary[symbol];
+  const watchMeta = watchlistMetadataBySymbol[symbol];
+  return `- ${symbol}: weekly_source=${watchMeta?.selection_source || watchMeta?.source || 'unknown'}, primary_pathway=${watchMeta?.primary_pathway || watchMeta?.pathway || 'unknown'}, secondary_pathways=${(watchMeta?.secondary_pathways || []).join(', ') || 'none'}, analysis_ready=${watchMeta?.analysis_ready ? 'yes' : 'no'}, rank=${watchMeta?.selection_rank_within_pathway ?? 'n/a'}, review_priority=${watchMeta?.review_priority ?? 'n/a'}, tactical_depth=${state?.reviewDepth || 'n/a'}, tactical_change=${state?.whatChanged || 'n/a'}`;
+}).join('\n')}
+
 **Current Market Prices:**
 All prices below are LIVE quotes - use these exact prices for entry calculations.
 
@@ -2300,7 +2382,7 @@ ${candidates.longs.map(c => {
   const price = fullMarketData[c.symbol]?.price || 'N/A';
   const change = fullMarketData[c.symbol]?.change_percentage || 0;
   const changeStr = change >= 0 ? `+${change}` : `${change}`;
-  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
+  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}${c.secondaryPathways?.length ? ` | secondary: ${c.secondaryPathways.join(',')}` : ''}]` : ' [momentum]';
   const scoreTag = c.score ? ` (score: ${c.score})` : '';
   return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
 }).join('\n')}
@@ -2310,7 +2392,7 @@ ${candidates.shorts.map(c => {
   const price = fullMarketData[c.symbol]?.price || 'N/A';
   const change = fullMarketData[c.symbol]?.change_percentage || 0;
   const changeStr = change >= 0 ? `+${change}` : `${change}`;
-  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}]` : ' [momentum]';
+  const sourceTag = c.source === 'watchlist' ? ` [${c.pathway || 'watchlist'}${c.secondaryPathways?.length ? ` | secondary: ${c.secondaryPathways.join(',')}` : ''}]` : ' [momentum]';
   const scoreTag = c.score ? ` (score: ${c.score})` : '';
   return `- ${c.symbol}${sourceTag}${scoreTag}: $${price} (${changeStr}%)${c.sourceReasons ? ` - ${c.sourceReasons}` : ''}`;
 }).join('\n')}
@@ -2471,7 +2553,15 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
         inputTokens: analysis.usage?.input_tokens,
         outputTokens: analysis.usage?.output_tokens,
         totalTokens: (analysis.usage?.input_tokens || 0) + (analysis.usage?.output_tokens || 0),
-        durationSeconds: parseInt(totalDuration)
+        durationSeconds: parseInt(totalDuration),
+        run_id: `daily-${new Date().toISOString().split('T')[0]}-${runProfile.runTime}`,
+        workflow_type: 'daily_analysis',
+        phase: 'phase4',
+        decision_scope: 'portfolio_construction',
+        symbol_count: allAnalyzedStocks.length,
+        symbols_snapshot: allAnalyzedStocks,
+        prompt_version: 'current',
+        run_profile: runProfile.runType
       });
 
       console.log('✅ Analysis saved to database');
@@ -2701,7 +2791,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
       }
       console.log('');
 
-      return { marketContext };
+      return { marketContext, dailyStateSummary };
     } catch (error) {
       console.error('');
       console.error('═══════════════════════════════════════');
@@ -2717,6 +2807,239 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
       console.error('');
       return { marketContext: {} };
     }
+  }
+
+  getDailyRunProfile(now = new Date()) {
+    const etFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      hour12: false
+    });
+    const hour = parseInt(etFormatter.format(now), 10);
+
+    if (hour >= 13) {
+      return {
+        runType: 'incremental',
+        runTime: 'afternoon',
+        label: 'Afternoon incremental refresh'
+      };
+    }
+
+    return {
+      runType: 'strategic',
+      runTime: 'morning',
+      label: 'Morning strategic refresh'
+    };
+  }
+
+  async fetchTechnicalSnapshot(symbols = []) {
+    console.log('📊 Fetching technical indicators for all candidates...');
+    const technicalData = {};
+    let techCount = 0;
+
+    for (const symbol of symbols) {
+      try {
+        const indicators = await fmp.getTechnicalIndicators(symbol);
+        if (indicators) {
+          technicalData[symbol] = indicators;
+          techCount++;
+        }
+      } catch (error) {
+        console.warn(`   ⚠️ Failed to fetch technicals for ${symbol}: ${error.message}`);
+      }
+    }
+
+    console.log(`✅ Fetched technical indicators for ${techCount}/${symbols.length} candidates`);
+    console.log('');
+    return technicalData;
+  }
+
+  buildSymbolStateCandidate({ candidate, previous, positionSymbols, runProfile, marketData, technicalData }) {
+    const market = marketData[candidate.symbol] || {};
+    const technicals = technicalData[candidate.symbol] || {};
+    const currentFingerprint = [
+      candidate.source,
+      runProfile.runType,
+      candidate.pathway || 'none',
+      positionSymbols.has(candidate.symbol) ? 'held' : 'candidate',
+      market.change_percentage ?? 'na',
+      technicals.rsi ?? 'na'
+    ].join('|');
+    const previousFingerprint = previous
+      ? [previous.source, previous.review_depth, previous.primary_pathway, previous.last_action, previous.technical_fingerprint].filter(Boolean).join('|')
+      : null;
+    const hasChanged = previousFingerprint !== currentFingerprint;
+    const newsFingerprint = `${candidate.source}|${candidate.sourceReasons || 'none'}`;
+    const technicalFingerprint = [
+      candidate.score,
+      market.change_percentage ?? 'na',
+      technicals.rsi ?? 'na',
+      technicals.aboveEma200 ?? 'na'
+    ].join('|');
+    const earningsDate = candidate.earningsDate ? new Date(candidate.earningsDate) : null;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const daysUntilEarnings = earningsDate
+      ? Math.floor((earningsDate - today) / (1000 * 60 * 60 * 24))
+      : null;
+    const earningsProximityTrigger = daysUntilEarnings !== null && daysUntilEarnings >= 0 && daysUntilEarnings <= 3;
+    const shouldDeepReview = runProfile.runType === 'strategic' || !previous || hasChanged || earningsProximityTrigger;
+    const nextReviewDue = new Date();
+    nextReviewDue.setHours(nextReviewDue.getHours() + (shouldDeepReview ? 4 : 20));
+
+    return {
+      symbol: candidate.symbol,
+      runDate: new Date().toISOString().split('T')[0],
+      runTime: runProfile.runTime,
+      runType: runProfile.runType,
+      reviewDepth: shouldDeepReview ? 'deep' : 'light',
+      primaryPathway: candidate.pathway || null,
+      secondaryPathways: [],
+      source: candidate.source,
+      sourceReasons: candidate.sourceReasons || null,
+      lastAction: positionSymbols.has(candidate.symbol) ? 'held' : 'watch',
+      lastConfidence: candidate.score >= 60 ? 'high' : candidate.score >= 35 ? 'medium' : 'low',
+      thesisState: previous?.thesis_state || null,
+      holdingPosture: previous?.holding_posture || null,
+      whatChanged: !previous
+        ? 'First tracked daily state entry'
+        : earningsProximityTrigger
+          ? `Upcoming earnings within ${daysUntilEarnings} day(s) requires deep review`
+        : hasChanged
+          ? `Market/technical fingerprint changed from ${previousFingerprint} to ${currentFingerprint}`
+          : 'No significant market/technical change since prior run',
+      newsFingerprint,
+      technicalFingerprint,
+      catalystFingerprint: candidate.earningsDate || null,
+      thesisSummary: `${candidate.symbol} in ${candidate.source} analysis universe`,
+      catalystSummary: candidate.sourceReasons || null,
+      earningsDate: candidate.earningsDate || null,
+      insiderSignal: null,
+      nextReviewDue: nextReviewDue.toISOString(),
+      escalationReason: !previous ? 'initial_coverage' : earningsProximityTrigger ? 'earnings_proximity' : hasChanged ? 'market_delta' : null,
+      changeMagnitude: !previous ? 'new' : earningsProximityTrigger ? 'earnings' : hasChanged ? 'material' : 'stable',
+      reviewReasonCode: !previous ? 'initial_coverage' : earningsProximityTrigger ? 'earnings_proximity' : hasChanged ? 'market_delta' : 'scheduled_monitor',
+      materialChangeDetected: !previous || hasChanged || earningsProximityTrigger,
+      candidateBucketAtRun: candidate.source || 'watchlist',
+      decisionRunId: `${runProfile.runType}-${runProfile.runTime}-${new Date().toISOString().split('T')[0]}`,
+      stateVersion: 1
+    };
+  }
+
+  async buildStateSnapshot({ portfolio, analysisCandidates, discoveryCandidates, runProfile, marketData, technicalData }) {
+    const analysisSymbols = [
+      ...analysisCandidates.longs,
+      ...analysisCandidates.shorts
+    ];
+    const uniqueAnalysisSymbols = [...new Map(analysisSymbols.map(candidate => [candidate.symbol, candidate])).values()];
+    const previousStates = await db.getLatestDailySymbolStates(uniqueAnalysisSymbols.map(candidate => candidate.symbol));
+    const previousStateMap = new Map(previousStates.map(state => [state.symbol, state]));
+    const positionSymbols = new Set(portfolio.positions.map(position => position.symbol));
+
+    const symbolStates = uniqueAnalysisSymbols.map(candidate => this.buildSymbolStateCandidate({
+      candidate,
+      previous: previousStateMap.get(candidate.symbol),
+      positionSymbols,
+      runProfile,
+      marketData,
+      technicalData
+    }));
+
+    const discoveryLong = discoveryCandidates.longs
+      .sort((a, b) => b.score - a.score)
+      .slice(0, runProfile.runType === 'strategic' ? 2 : 1);
+
+    const promotions = [];
+    for (const candidate of discoveryLong) {
+      const insiderTrades = await fmp.getInsiderTrading(candidate.symbol);
+      const insiderSummary = fmp.analyzeInsiderActivity(insiderTrades);
+      const market = marketData[candidate.symbol] || {};
+      const technicals = technicalData[candidate.symbol] || {};
+      const hasStrongSignal =
+        candidate.score >= 65 ||
+        insiderSummary.signal.startsWith('bullish') ||
+        ((market.change_percentage || 0) >= 3 && (technicals.rsi || 0) >= 55);
+
+      if (!hasStrongSignal) continue;
+
+      promotions.push({
+        symbol: candidate.symbol,
+        intent: 'LONG',
+        pathway: candidate.pathway || 'discovery',
+        score: candidate.score,
+        reasons: `${candidate.sourceReasons || 'Discovery trigger'} | Insider: ${insiderSummary.summary}`,
+        promotionReason: `discovery_${runProfile.runTime}`,
+        source: 'discovery'
+      });
+    }
+
+    return { symbolStates, promotions };
+  }
+
+  async syncDailySymbolState({ symbolStates = [], promotions = [] }) {
+    let updated = 0;
+
+    for (const state of symbolStates) {
+      await db.upsertDailySymbolState(state);
+      updated++;
+    }
+
+    let promoted = 0;
+    for (const promotion of promotions) {
+      await db.promoteDiscoveryCandidate(promotion);
+      promoted++;
+    }
+
+    return { updated, promoted };
+  }
+
+  buildSelectedStateSummary(candidates, symbolStates = []) {
+    const selectedSymbols = new Set([
+      ...candidates.longs.map(candidate => candidate.symbol),
+      ...candidates.shorts.map(candidate => candidate.symbol)
+    ]);
+    return Object.fromEntries(
+      symbolStates
+        .filter(state => selectedSymbols.has(state.symbol))
+        .map(state => [state.symbol, {
+          reviewDepth: state.reviewDepth,
+          whatChanged: state.whatChanged
+        }])
+    );
+  }
+
+  selectCandidatesForRun(preRankedStocks, symbolStates = [], runProfile) {
+    if (runProfile.runType === 'strategic') {
+      return preRankedStocks;
+    }
+
+    const stateMap = new Map(symbolStates.map(state => [state.symbol, state]));
+    const filterCandidates = (candidates, fallbackCount) => {
+      const deep = candidates.filter(candidate => stateMap.get(candidate.symbol)?.reviewDepth === 'deep');
+      const light = candidates.filter(candidate => stateMap.get(candidate.symbol)?.reviewDepth !== 'deep');
+
+      if (deep.length > 0) {
+        return [
+          ...deep,
+          ...light.slice(0, Math.max(0, fallbackCount - deep.length))
+        ];
+      }
+
+      return candidates.slice(0, fallbackCount);
+    };
+
+    const selectedLongs = filterCandidates(preRankedStocks.longs, 8);
+    const selectedShorts = filterCandidates(preRankedStocks.shorts, 6);
+
+    console.log('🎯 Incremental run candidate selection:');
+    console.log(`   Longs selected: ${selectedLongs.length}/${preRankedStocks.longs.length}`);
+    console.log(`   Shorts selected: ${selectedShorts.length}/${preRankedStocks.shorts.length}`);
+    console.log('');
+
+    return {
+      longs: selectedLongs,
+      shorts: selectedShorts
+    };
   }
 
   /**
@@ -3146,6 +3469,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
         // Get sector for symbol
         const sector = await this.getSector(trade.symbol);
 
+        const canonicalPathways = canonicalPathwayContextBySymbol[trade.symbol] || {};
         recommendations.push({
           type: trade.type,
           symbol: trade.symbol,
@@ -3154,7 +3478,9 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
           stopLoss: trade.stopLoss,
           takeProfit: trade.takeProfit,
           assetClass: sector,
-          pathway: trade.pathway || null,
+          pathway: canonicalPathways.primary || trade.pathway || null,
+          secondaryPathways: canonicalPathways.secondary || [],
+          pathwaySelectionRule: canonicalPathways.selectionRule || (trade.pathway ? 'phase4_primary_pathway' : 'unclassified'),
           intent: trade.intent || (trade.type === 'long' ? 'momentum' : 'momentum_short'),
           reasoning: reasoning || `${trade.type === 'long' ? 'Long' : 'Short'} position in ${trade.symbol}`,
           investmentThesis: extractField('THESIS'),

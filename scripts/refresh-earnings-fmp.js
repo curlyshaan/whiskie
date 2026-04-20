@@ -3,7 +3,7 @@ import * as db from '../src/db.js';
 
 /**
  * Refresh earnings calendar from FMP
- * Only fetches for stocks in our universe (370 stocks)
+ * Only fetches for stocks in our universe and persists a durable window
  */
 
 async function refreshEarningsCalendar() {
@@ -12,7 +12,7 @@ async function refreshEarningsCalendar() {
   try {
     // Get all symbols from our universe
     const universeResult = await db.query(
-      'SELECT symbol FROM stock_universe WHERE status = $1',
+      'SELECT symbol FROM stock_universe WHERE status = $1 AND COALESCE(earnings_tracking_eligible, TRUE) = TRUE',
       ['active']
     );
 
@@ -22,10 +22,10 @@ async function refreshEarningsCalendar() {
     let totalInserted = 0;
     const now = new Date();
     const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
-    const sevenDaysAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const fourteenDaysAhead = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
     console.log(`   Fetching earnings for ${symbols.length} stocks...`);
-    console.log(`   Window: 3 days ago to 7 days ahead`);
+    console.log(`   Window: 3 days ago to 14 days ahead`);
 
     for (const symbol of symbols) {
       try {
@@ -40,17 +40,60 @@ async function refreshEarningsCalendar() {
 
             const earningDate = new Date(earning.date);
 
-            // Include earnings within 3 days ago to 7 days ahead window
-            const isInWindow = earningDate >= threeDaysAgo && earningDate <= sevenDaysAhead;
+            // Include earnings within 3 days ago to 14 days ahead window
+            const isInWindow = earningDate >= threeDaysAgo && earningDate <= fourteenDaysAhead;
 
             if (isInWindow) {
               try {
                 await db.query(
-                  `INSERT INTO earnings_calendar (symbol, earnings_date, earnings_time, source, last_updated)
-                   VALUES ($1, $2, $3, 'fmp', NOW())
+                  `INSERT INTO earnings_calendar (
+                     symbol, earnings_date, earnings_time, source, source_primary,
+                     timing_raw, timing_source, session_normalized, source_priority,
+                     last_updated, last_verified_at, manual_override
+                   )
+                   VALUES (
+                     $1, $2, $3, 'fmp', 'fmp',
+                     $3, 'fmp',
+                     CASE
+                       WHEN LOWER(COALESCE($3, '')) = 'bmo' THEN 'pre_market'
+                       WHEN LOWER(COALESCE($3, '')) = 'amc' THEN 'post_market'
+                       ELSE 'unknown'
+                     END,
+                     100,
+                     NOW(),
+                     NOW(),
+                     FALSE
+                   )
                    ON CONFLICT (symbol, earnings_date) DO UPDATE SET
-                     earnings_time = $3,
-                     last_updated = NOW()`,
+                     earnings_time = CASE
+                       WHEN earnings_calendar.manual_override THEN earnings_calendar.earnings_time
+                       ELSE $3
+                     END,
+                     source = CASE
+                       WHEN earnings_calendar.manual_override THEN earnings_calendar.source
+                       ELSE 'fmp'
+                     END,
+                     source_primary = 'fmp',
+                     timing_raw = CASE
+                       WHEN earnings_calendar.manual_override THEN earnings_calendar.timing_raw
+                       ELSE $3
+                     END,
+                     timing_source = CASE
+                       WHEN earnings_calendar.manual_override THEN earnings_calendar.timing_source
+                       ELSE 'fmp'
+                     END,
+                     session_normalized = CASE
+                       WHEN earnings_calendar.manual_override THEN earnings_calendar.session_normalized
+                       WHEN LOWER(COALESCE($3, '')) = 'bmo' THEN 'pre_market'
+                       WHEN LOWER(COALESCE($3, '')) = 'amc' THEN 'post_market'
+                       ELSE 'unknown'
+                     END,
+                     source_priority = CASE
+                       WHEN earnings_calendar.manual_override THEN earnings_calendar.source_priority
+                       ELSE 100
+                     END,
+                     last_updated = NOW(),
+                     last_verified_at = NOW()`,
                   [symbol, earning.date, earning.time || null]
                 );
                 totalInserted++;
@@ -72,7 +115,13 @@ async function refreshEarningsCalendar() {
       }
     }
 
-    console.log(`   ✅ Inserted/updated ${totalInserted} earnings events (upcoming + recent past 90 days)`);
+    await db.query(
+      `DELETE FROM earnings_calendar
+       WHERE earnings_date < CURRENT_DATE - INTERVAL '3 days'
+          OR earnings_date > CURRENT_DATE + INTERVAL '14 days'`
+    );
+
+    console.log(`   ✅ Inserted/updated ${totalInserted} earnings events (durable window: -3d to +14d)`);
     process.exit(0);
 
   } catch (error) {

@@ -159,12 +159,24 @@ async function populateDatabase(stocks) {
         else if (marketCapB >= 2) tier = 'mid';
         else tier = 'small';
 
+        const avgDailyVolume = Number.isFinite(Number(stock.volume)) ? Number(stock.volume) : 0;
+        const liquidityScore = avgDailyVolume >= 5000000
+          ? 'high'
+          : avgDailyVolume >= 1000000
+            ? 'medium'
+            : avgDailyVolume > 0
+              ? 'low'
+              : 'unknown';
+        const isGrowthExpansion = stock.universe_bucket === 'growth_expansion';
+
         await client.query(
           `INSERT INTO stock_universe
            (symbol, company_name, sector, industry, market_cap, market_cap_tier,
             price, avg_daily_volume, exchange, country, is_etf, is_actively_trading, status,
-            is_growth_candidate, universe_bucket)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+            is_growth_candidate, universe_bucket, source_primary, source_last_synced_at,
+            price_last_updated_at, universe_reason, analysis_eligible, discovery_eligible,
+            earnings_tracking_eligible, liquidity_score, data_quality_status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'fmp', NOW(), NOW(), $16, $17, $18, $19, $20, $21)`,
           [
             stock.symbol,
             stock.companyName,
@@ -173,14 +185,20 @@ async function populateDatabase(stocks) {
             stock.marketCap,
             tier,
             stock.price,
-            Math.floor(stock.volume || 0),
+            avgDailyVolume,
             stock.exchangeShortName,
             stock.country || 'US',
             stock.isEtf || false,
             stock.isActivelyTrading !== false,
             'active',
             stock.is_growth_candidate || false,
-            stock.universe_bucket || 'core'
+            stock.universe_bucket || 'core',
+            isGrowthExpansion ? 'growth_expansion' : 'core_market_cap',
+            true,
+            isGrowthExpansion,
+            true,
+            liquidityScore,
+            stock.companyName && stock.sector && stock.industry ? 'ok' : 'incomplete'
           ]
         );
 

@@ -5,6 +5,50 @@ import { getSectorConfig, normalizeSectorName } from './sector-config.js';
 import tradier from './tradier.js';
 import { resolveMarketPrice } from './utils.js';
 
+const PATHWAY_PRIORITY = [
+  'deepValue',
+  'cashMachine',
+  'qarp',
+  'qualityCompounder',
+  'highGrowth',
+  'inflection',
+  'turnaround',
+  'overvalued',
+  'deteriorating',
+  'overextended',
+  'discovery'
+];
+
+function getPathwayPriority(pathway) {
+  const index = PATHWAY_PRIORITY.indexOf(pathway);
+  return index === -1 ? 999 : index;
+}
+
+function pickCanonicalPathway(matches = []) {
+  const normalized = (matches || []).filter(Boolean);
+  if (normalized.length === 0) {
+    return {
+      primaryPathway: null,
+      secondaryPathways: [],
+      scoreSnapshot: {},
+      selectionRule: 'no_pathway_matches'
+    };
+  }
+
+  const sorted = [...normalized].sort((a, b) => {
+    const scoreDiff = Number(b.score || 0) - Number(a.score || 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    return getPathwayPriority(a.pathway) - getPathwayPriority(b.pathway);
+  });
+
+  return {
+    primaryPathway: sorted[0].pathway || null,
+    secondaryPathways: sorted.slice(1).map(row => row.pathway).filter(Boolean),
+    scoreSnapshot: Object.fromEntries(sorted.map(row => [row.pathway, Number(row.score || 0)])),
+    selectionRule: sorted.length > 1 ? 'highest_score_then_priority' : 'single_pathway_match'
+  };
+}
+
 /**
  * Combined Fundamental Screener
  * Single pass over FMP-based universe - identifies BOTH long and short candidates
@@ -1315,43 +1359,114 @@ class FundamentalScreener {
    */
   async updateSaturdayWatchlist(longCandidates, shortCandidates) {
     try {
+      const screeningRunAt = new Date();
+      const activationCycleId = `weekly-screen-${screeningRunAt.toISOString()}`;
+      const matchesBySymbol = new Map();
+
+      const addMatch = (symbol, match) => {
+        if (!matchesBySymbol.has(symbol)) {
+          matchesBySymbol.set(symbol, []);
+        }
+        matchesBySymbol.get(symbol).push(match);
+      };
+
+      longCandidates.forEach(c => addMatch(c.symbol, {
+        pathway: c.longPathway,
+        score: c.longScore,
+        reasons: c.longReasons.join(', ')
+      }));
+      shortCandidates.forEach(c => addMatch(c.symbol, {
+        pathway: c.shortPathway || 'overvalued',
+        score: c.shortScore,
+        reasons: c.shortReasons.join(', ')
+      }));
+
       // Expire old entries
-      await db.query(`UPDATE saturday_watchlist SET status = 'expired' WHERE status = 'active' OR status = 'pending'`);
+      await db.query(`
+        UPDATE saturday_watchlist
+        SET status = 'expired',
+            analysis_ready = FALSE,
+            selection_status_reason = 'superseded_by_new_weekly_screen',
+            expires_at = CURRENT_TIMESTAMP
+        WHERE status = 'active' OR status = 'pending'
+      `);
 
       // Insert long candidates with 'pending' status (Sunday Opus review will activate top 15)
       for (const c of longCandidates) {
+        const canonical = pickCanonicalPathway(matchesBySymbol.get(c.symbol) || []);
         await db.query(
           `INSERT INTO saturday_watchlist
-           (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date)
-           VALUES ($1, 'LONG', $2, $3, $4, $5, $6, $7, $8, 'pending', NOW())
+           (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date,
+            selection_source, screening_run_at, activation_cycle_id, screening_score, review_priority,
+            selection_status_reason, analysis_ready, profile_required, primary_pathway, secondary_pathways,
+            pathway_scores_snapshot, pathway_selection_rule)
+           VALUES ($1, 'LONG', $2, $3, $4, $5, $6, $7, $8, 'pending', NOW(),
+            'weekly_screen', $9, $10, $5, 60, 'awaiting_weekly_opus_review', FALSE, TRUE, $11, $12::jsonb, $13::jsonb, $14)
            ON CONFLICT (symbol, pathway) DO UPDATE SET
              intent = 'LONG', score = $5, metrics = $6, reasons = $7,
-             price = $8, status = 'pending', added_date = NOW()`,
+             price = $8, status = 'pending', added_date = NOW(),
+             selection_source = 'weekly_screen',
+             screening_run_at = $9,
+             activation_cycle_id = $10,
+             screening_score = $5,
+             review_priority = 60,
+             selection_status_reason = 'awaiting_weekly_opus_review',
+             analysis_ready = FALSE,
+             profile_required = TRUE,
+             primary_pathway = $11,
+             secondary_pathways = $12::jsonb,
+             pathway_scores_snapshot = $13::jsonb,
+             pathway_selection_rule = $14`,
           [
             c.symbol, c.longPathway, c.sector, c.industry, c.longScore,
-            JSON.stringify(c.metrics), c.longReasons.join(', '), parseFloat(c.price)
+            JSON.stringify(c.metrics), c.longReasons.join(', '), parseFloat(c.price), screeningRunAt, activationCycleId,
+            canonical.primaryPathway || c.longPathway,
+            JSON.stringify(canonical.secondaryPathways || []),
+            JSON.stringify(canonical.scoreSnapshot || {}),
+            canonical.selectionRule || 'highest_score_then_priority'
           ]
         );
       }
 
       // Insert short candidates with 'pending' status
       for (const c of shortCandidates) {
+        const canonical = pickCanonicalPathway(matchesBySymbol.get(c.symbol) || []);
         await db.query(
           `INSERT INTO saturday_watchlist
-           (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date)
-           VALUES ($1, 'SHORT', $2, $3, $4, $5, $6, $7, $8, 'pending', NOW())
+           (symbol, intent, pathway, sector, industry, score, metrics, reasons, price, status, added_date,
+            selection_source, screening_run_at, activation_cycle_id, screening_score, review_priority,
+            selection_status_reason, analysis_ready, profile_required, primary_pathway, secondary_pathways,
+            pathway_scores_snapshot, pathway_selection_rule)
+           VALUES ($1, 'SHORT', $2, $3, $4, $5, $6, $7, $8, 'pending', NOW(),
+            'weekly_screen', $9, $10, $5, 60, 'awaiting_weekly_opus_review', FALSE, TRUE, $11, $12::jsonb, $13::jsonb, $14)
            ON CONFLICT (symbol, pathway) DO UPDATE SET
              intent = 'SHORT', score = $5, metrics = $6, reasons = $7,
-             price = $8, status = 'pending', added_date = NOW()`,
+             price = $8, status = 'pending', added_date = NOW(),
+             selection_source = 'weekly_screen',
+             screening_run_at = $9,
+             activation_cycle_id = $10,
+             screening_score = $5,
+             review_priority = 60,
+             selection_status_reason = 'awaiting_weekly_opus_review',
+             analysis_ready = FALSE,
+             profile_required = TRUE,
+             primary_pathway = $11,
+             secondary_pathways = $12::jsonb,
+             pathway_scores_snapshot = $13::jsonb,
+             pathway_selection_rule = $14`,
           [
             c.symbol, c.shortPathway || 'overvalued', c.sector, c.industry, c.shortScore,
-            JSON.stringify(c.metrics), c.shortReasons.join(', '), parseFloat(c.price)
+            JSON.stringify(c.metrics), c.shortReasons.join(', '), parseFloat(c.price), screeningRunAt, activationCycleId,
+            canonical.primaryPathway || (c.shortPathway || 'overvalued'),
+            JSON.stringify(canonical.secondaryPathways || []),
+            JSON.stringify(canonical.scoreSnapshot || {}),
+            canonical.selectionRule || 'highest_score_then_priority'
           ]
         );
       }
 
       console.log(`   ✅ Saturday watchlist updated: ${longCandidates.length} longs, ${shortCandidates.length} shorts (status: pending)`);
-      console.log(`   ⏭️  Sunday Opus review will analyze and activate top 15 per pathway`);
+      console.log(`   ⏭️  Sunday Opus review will analyze top candidates and activate top 7 per pathway`);
     } catch (error) {
       console.error('Error updating saturday watchlist:', error);
       throw error;

@@ -127,7 +127,10 @@ class OpusScreener {
    */
   async getFundamentalCandidates() {
     const result = await db.query(
-      `SELECT symbol, intent, pathway, sector, industry, score, reasons
+      `SELECT DISTINCT ON (symbol) symbol, intent,
+              COALESCE(primary_pathway, pathway) AS pathway,
+              secondary_pathways,
+              sector, industry, score, reasons
        FROM saturday_watchlist
        WHERE status = 'pending'
        ORDER BY score DESC
@@ -139,6 +142,7 @@ class OpusScreener {
       symbol: row.symbol,
       intent: row.intent,
       pathway: row.pathway,
+      secondaryPathways: row.secondary_pathways || [],
       sector: row.sector,
       industry: row.industry,
       score: row.score,
@@ -196,7 +200,7 @@ class OpusScreener {
 **Stock Data (with fundamental screening context):**
 
 ${sortedStocks.map(s => {
-  const pathwayTag = s.pathway ? ` [${s.pathway}]` : '';
+  const pathwayTag = s.pathway ? ` [${s.pathway}${s.secondaryPathways?.length ? ` | secondary: ${s.secondaryPathways.join(',')}` : ''}]` : '';
   const scoreTag = s.fundamentalScore ? ` (fundamental score: ${s.fundamentalScore})` : '';
   const reasonsTag = s.fundamentalReasons ? `\n  Fundamental screening reasons: ${s.fundamentalReasons}` : '';
   return `

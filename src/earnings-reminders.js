@@ -247,15 +247,16 @@ export async function getEarningsReminderDetails(symbol) {
   let timing = {
     symbol: normalizedSymbol,
     earningsDate: upcoming.earnings_date,
-    earningsTimeRaw: upcoming.earnings_time || null,
-    earningsSession: mapLegacyEarningsTime(upcoming.earnings_time),
-    source: upcoming.source || 'unknown'
+    earningsTimeRaw: upcoming.timing_raw || upcoming.earnings_time || null,
+    earningsSession: upcoming.session_normalized || mapLegacyEarningsTime(upcoming.earnings_time),
+    source: upcoming.timing_source || upcoming.source || 'unknown'
   };
 
   try {
     const yahooTiming = await enrichYahooEarningsTiming(normalizedSymbol, upcoming.earnings_date);
     if (yahooTiming?.earningsTimeRaw || yahooTiming?.earningsSession !== 'unknown') {
       timing = yahooTiming;
+      await db.enrichEarningTiming(normalizedSymbol, upcoming.earnings_date, yahooTiming).catch(() => null);
     }
   } catch (error) {
     console.warn(`⚠️ Yahoo timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
@@ -273,6 +274,14 @@ export async function getEarningsReminderDetails(symbol) {
     timing,
     catalystSummary,
     reminder: existingReminder,
+    watchlistContext: existingReminder ? {
+      primaryPathway: existingReminder.primary_pathway || null,
+      secondaryPathways: existingReminder.secondary_pathways || [],
+      analysisReady: existingReminder.analysis_ready ?? null,
+      selectionSource: existingReminder.selection_source || null,
+      selectionRank: existingReminder.selection_rank_within_pathway ?? null,
+      reviewPriority: existingReminder.review_priority ?? null
+    } : null,
     scheduledSendAt
   };
 }

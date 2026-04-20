@@ -66,7 +66,10 @@ class QualityScreener {
 
     // Get active long candidates from saturday watchlist
     const result = await db.query(
-      `SELECT symbol, intent, pathway, score, metrics, reasons, price
+      `SELECT DISTINCT ON (symbol) symbol, intent,
+              COALESCE(primary_pathway, pathway) AS pathway,
+              secondary_pathways,
+              score, metrics, reasons, price
        FROM saturday_watchlist
        WHERE status = 'active' AND intent = 'LONG' AND position_entered = FALSE`
     );
@@ -91,21 +94,22 @@ class QualityScreener {
         await db.query(
           `UPDATE saturday_watchlist
            SET price = $1, last_reviewed = CURRENT_TIMESTAMP
-           WHERE symbol = $2 AND pathway = $3`,
-          [marketData.price, stock.symbol, stock.pathway]
+           WHERE symbol = $2`,
+          [marketData.price, stock.symbol]
         );
 
         // Package data for Opus analysis
         opportunities.push({
           symbol: stock.symbol,
           pathway: stock.pathway,
+          secondaryPathways: stock.secondary_pathways || [],
           score: stock.score,
           savedReasons: stock.reasons,
           targetEntry: stock.price,
           ...marketData
         });
 
-        console.log(`   📊 ${stock.symbol} (${stock.pathway}): $${marketData.price} (${marketData.dipFromHigh}% from high, spread: ${marketData.spread}%)`);
+        console.log(`   📊 ${stock.symbol} (${stock.pathway}${stock.secondary_pathways?.length ? ` | secondary: ${stock.secondary_pathways.join(',')}` : ''}): $${marketData.price} (${marketData.dipFromHigh}% from high, spread: ${marketData.spread}%)`);
 
       } catch (error) {
         console.warn(`   ⚠️ Error checking ${stock.symbol}:`, error.message);
@@ -136,8 +140,8 @@ class QualityScreener {
     await db.query(
       `UPDATE saturday_watchlist
        SET position_entered = TRUE, position_entry_date = CURRENT_TIMESTAMP
-       WHERE symbol = $1 AND pathway = $2`,
-      [symbol, pathway]
+       WHERE symbol = $1`,
+      [symbol]
     );
   }
 }

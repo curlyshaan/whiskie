@@ -43,7 +43,7 @@ export async function getPositionsWithUpcomingEarnings(daysAhead = 1) {
           positionsWithEarnings.push({
             symbol,
             earningsDate: earning.earnings_date,
-            earningsTime: earning.earnings_time,
+            earningsTime: earning.session_normalized || earning.earnings_time,
             daysUntil,
             lots: symbolLots,
             isShort
@@ -96,7 +96,7 @@ export async function analyzeBeforeEarnings(position) {
 
     // Ask Claude Opus for analysis
     const prompt = `
-You are analyzing ${position.symbol} which has earnings ${position.earningsTime === 'bmo' ? 'BEFORE market open' : 'AFTER market close'} on ${position.earningsDate}.
+You are analyzing ${position.symbol} which has earnings ${(position.earningsTime === 'bmo' || position.earningsTime === 'pre_market') ? 'BEFORE market open' : (position.earningsTime === 'amc' || position.earningsTime === 'post_market') ? 'AFTER market close' : 'with unknown session'} on ${position.earningsDate}.
 
 POSITION DETAILS:
 - Type: ${position.isShort ? 'SHORT' : 'LONG'}

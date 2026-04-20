@@ -78,7 +78,7 @@ class PathwayExitMonitor {
    * Check individual position for exit conditions
    */
   async checkPositionExits(position) {
-    const { symbol, pathway, quantity, cost_basis, peak_price, trailing_stop_activated } = position;
+    const { symbol, pathway, quantity, cost_basis, peak_price, trailing_stop_activated, pathway_selection_rule, secondary_pathways } = position;
 
     // Skip if no pathway assigned
     if (!pathway) {
@@ -117,6 +117,10 @@ class PathwayExitMonitor {
     const strategy = pathwayStrategies.getExitStrategy(pathway);
     if (!strategy) {
       return null;
+    }
+
+    if (secondary_pathways?.length) {
+      console.log(`   ℹ️ ${symbol} exit monitor using primary pathway ${pathway} (${pathway_selection_rule || 'primary_pathway'}) with secondary context: ${secondary_pathways.join(', ')}`);
     }
 
     // Check for trim opportunities

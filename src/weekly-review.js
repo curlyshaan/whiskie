@@ -120,7 +120,7 @@ export async function reviewPosition(symbol, lots) {
     // Get next earnings
     const earning = await db.getNextEarning(symbol);
     const earningsInfo = earning
-      ? `${earning.earnings_date} (${earning.earnings_time})`
+      ? `${earning.earnings_date} (${earning.session_normalized || earning.earnings_time || 'unknown'} | ${earning.timing_raw || earning.earnings_time || 'unknown'})`
       : 'No upcoming earnings';
 
     // Get structured recent news/context
@@ -707,6 +707,24 @@ async function checkPortfolioBalance() {
  */
 async function sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthesis, weeklyPerf, watchlistAudit) {
   try {
+    const latestPhaseDecisions = await db.query(
+      `SELECT phase, input_tokens, output_tokens, duration_seconds, symbol_count, created_at
+       FROM ai_decisions
+       WHERE workflow_type = 'daily_analysis'
+         AND phase IN ('phase2', 'phase3', 'phase4')
+       ORDER BY created_at DESC
+       LIMIT 3`
+    );
+
+    const phaseMetrics = latestPhaseDecisions.rows.reduce((acc, row) => {
+      acc[row.phase] = row;
+      return acc;
+    }, {});
+
+    const totalInputTokens = latestPhaseDecisions.rows.reduce((sum, row) => sum + (Number(row.input_tokens) || 0), 0);
+    const totalOutputTokens = latestPhaseDecisions.rows.reduce((sum, row) => sum + (Number(row.output_tokens) || 0), 0);
+    const totalDurationSeconds = latestPhaseDecisions.rows.reduce((sum, row) => sum + (Number(row.duration_seconds) || 0), 0);
+
     let html = `
       <h2>📅 Weekly Portfolio Review</h2>
       <p><strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
@@ -724,6 +742,14 @@ async function sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthe
       <p><strong>Stale entries removed:</strong> ${watchlistAudit.stale.length}</p>
       <p><strong>Missed opportunities:</strong> ${watchlistAudit.missed.length}</p>
       <p><strong>Active watchlist entries:</strong> ${watchlistAudit.remaining}</p>
+
+      <h3>🧪 Daily Analysis Validation Metrics</h3>
+      <p><strong>Total Input Tokens (latest run):</strong> ${totalInputTokens.toLocaleString()}</p>
+      <p><strong>Total Output Tokens (latest run):</strong> ${totalOutputTokens.toLocaleString()}</p>
+      <p><strong>Total Phase Duration:</strong> ${totalDurationSeconds}s</p>
+      <p><strong>Phase 2:</strong> ${phaseMetrics.phase2 ? `${phaseMetrics.phase2.symbol_count || 0} symbols, ${phaseMetrics.phase2.duration_seconds || 0}s` : 'N/A'}</p>
+      <p><strong>Phase 3:</strong> ${phaseMetrics.phase3 ? `${phaseMetrics.phase3.symbol_count || 0} symbols, ${phaseMetrics.phase3.duration_seconds || 0}s` : 'N/A'}</p>
+      <p><strong>Phase 4:</strong> ${phaseMetrics.phase4 ? `${phaseMetrics.phase4.symbol_count || 0} symbols, ${phaseMetrics.phase4.duration_seconds || 0}s` : 'N/A'}</p>
 
       <h3>Portfolio Summary</h3>
       <p><strong>Total Value:</strong> $${portfolio.totalValue?.toLocaleString() || 'N/A'}</p>

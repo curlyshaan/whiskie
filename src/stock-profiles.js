@@ -47,8 +47,11 @@ export async function saveStockProfile(profile) {
         industry_sector, market_cap_category, growth_stage,
         insider_ownership_pct, institutional_ownership_pct,
         last_earnings_date, next_earnings_date, key_metrics_to_watch,
+        profile_status, refresh_tier, last_full_refresh_at, last_incremental_refresh_at,
+        next_refresh_due, refresh_priority, coverage_score, research_quality,
+        facts_last_verified_at, last_catalyst_refresh_at, last_news_refresh_at,
         last_updated, profile_version
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, CURRENT_TIMESTAMP, $19)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, CURRENT_TIMESTAMP, $29)
       ON CONFLICT (symbol)
       DO UPDATE SET
         business_model = $2,
@@ -68,6 +71,17 @@ export async function saveStockProfile(profile) {
         last_earnings_date = $16,
         next_earnings_date = $17,
         key_metrics_to_watch = $18,
+        profile_status = $19,
+        refresh_tier = $20,
+        last_full_refresh_at = COALESCE($21, stock_profiles.last_full_refresh_at),
+        last_incremental_refresh_at = COALESCE($22, stock_profiles.last_incremental_refresh_at),
+        next_refresh_due = $23,
+        refresh_priority = $24,
+        coverage_score = $25,
+        research_quality = $26,
+        facts_last_verified_at = $27,
+        last_catalyst_refresh_at = $28,
+        last_news_refresh_at = $28,
         last_updated = CURRENT_TIMESTAMP,
         profile_version = stock_profiles.profile_version + 1
       RETURNING *`,
@@ -90,6 +104,17 @@ export async function saveStockProfile(profile) {
         profile.last_earnings_date,
         profile.next_earnings_date,
         profile.key_metrics_to_watch ? JSON.stringify(profile.key_metrics_to_watch) : null,
+        profile.profile_status || 'active',
+        profile.refresh_tier || 'full',
+        profile.last_full_refresh_at || null,
+        profile.last_incremental_refresh_at || null,
+        profile.next_refresh_due || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        profile.refresh_priority ?? 50,
+        profile.coverage_score ?? 80,
+        profile.research_quality || 'standard',
+        profile.facts_last_verified_at || new Date(),
+        profile.last_catalyst_refresh_at || new Date(),
+        profile.last_news_refresh_at || new Date(),
         profile.profile_version || 1
       ]
     );
@@ -144,10 +169,10 @@ export async function getStockProfiles(symbols) {
 export async function getStaleProfiles(daysOld = 14) {
   try {
     const result = await db.query(
-      `SELECT symbol, last_updated
+      `SELECT symbol, last_updated, next_refresh_due, refresh_priority
        FROM stock_profiles
-       WHERE last_updated < NOW() - INTERVAL '${daysOld} days'
-       ORDER BY last_updated ASC`,
+       WHERE COALESCE(next_refresh_due, last_updated + INTERVAL '${daysOld} days') <= NOW()
+       ORDER BY refresh_priority DESC, last_updated ASC`,
       []
     );
     return result.rows;
@@ -201,11 +226,14 @@ export async function buildStockProfile(symbol) {
       console.log(`  ⚠️  Stock failed quality check: ${qualityCheck.reason}`);
       // Save profile with skip flag
       await db.query(
-        `INSERT INTO stock_profiles (symbol, quality_flag, skip_reason, last_updated)
-         VALUES ($1, $2, $3, NOW())
+        `INSERT INTO stock_profiles (symbol, quality_flag, skip_reason, profile_status, refresh_priority, next_refresh_due, last_updated)
+         VALUES ($1, $2, $3, 'skipped', 5, NOW() + INTERVAL '30 days', NOW())
          ON CONFLICT (symbol) DO UPDATE SET
            quality_flag = $2,
            skip_reason = $3,
+           profile_status = 'skipped',
+           refresh_priority = 5,
+           next_refresh_due = NOW() + INTERVAL '30 days',
            last_updated = NOW()`,
         [symbol, 'low_quality', qualityCheck.reason]
       );
@@ -319,6 +347,17 @@ Structure your response with clear section headers. STAY WITHIN CHARACTER LIMITS
 
     // Parse Opus response into structured profile
     const profile = parseResearchIntoProfile(symbol, research.analysis, fundamentals);
+    profile.profile_status = 'active';
+    profile.refresh_tier = 'full';
+    profile.last_full_refresh_at = new Date();
+    profile.last_incremental_refresh_at = null;
+    profile.next_refresh_due = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    profile.refresh_priority = 50;
+    profile.coverage_score = 80;
+    profile.research_quality = 'standard';
+    profile.facts_last_verified_at = new Date();
+    profile.last_catalyst_refresh_at = new Date();
+    profile.last_news_refresh_at = new Date();
 
     // Save to database
     console.log('  💾 Saving profile to database...');
@@ -408,6 +447,17 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
       last_earnings_date: existingProfile.last_earnings_date,
       next_earnings_date: existingProfile.next_earnings_date,
       key_metrics_to_watch: existingProfile.key_metrics_to_watch,
+      profile_status: existingProfile.profile_status || 'active',
+      refresh_tier: 'incremental',
+      last_full_refresh_at: existingProfile.last_full_refresh_at || existingProfile.last_updated || new Date(),
+      last_incremental_refresh_at: new Date(),
+      next_refresh_due: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      refresh_priority: existingProfile.refresh_priority ?? 50,
+      coverage_score: existingProfile.coverage_score ?? 80,
+      research_quality: existingProfile.research_quality || 'standard',
+      facts_last_verified_at: new Date(),
+      last_catalyst_refresh_at: new Date(),
+      last_news_refresh_at: new Date(),
       profile_version: (existingProfile.profile_version || 1) + 1
     };
 

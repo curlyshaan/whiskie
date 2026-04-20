@@ -12,23 +12,79 @@ const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
 class TavilyAPI {
   constructor() {
     this.baseURL = 'https://api.tavily.com';
+    this.defaultTTL = Number(process.env.TAVILY_CACHE_TTL_MS || 10 * 60 * 1000);
+    this.cache = new Map();
   }
 
   /**
    * Search for news and information
    */
+  getCacheKey(query, options = {}) {
+    return JSON.stringify({
+      query,
+      depth: options.depth || 'basic',
+      topic: options.topic || 'general',
+      maxResults: options.maxResults || 5,
+      timeRange: options.timeRange || null,
+      startDate: options.startDate || null,
+      endDate: options.endDate || null,
+      includeDomains: options.includeDomains || [],
+      excludeDomains: options.excludeDomains || []
+    });
+  }
+
+  getCachedResult(cacheKey) {
+    const cached = this.cache.get(cacheKey);
+    if (!cached) return null;
+    if (cached.expiresAt <= Date.now()) {
+      this.cache.delete(cacheKey);
+      return null;
+    }
+    return cached.results;
+  }
+
+  setCachedResult(cacheKey, results, ttlMs = this.defaultTTL) {
+    this.cache.set(cacheKey, {
+      results,
+      expiresAt: Date.now() + ttlMs
+    });
+  }
+
   async search(query, options = {}) {
+    const normalizedQuery = String(query || '').trim();
+    if (!normalizedQuery) return [];
+
+    const cacheTtlMs = options.cacheTtlMs ?? this.defaultTTL;
+    const useCache = options.useCache !== false;
+    const cacheKey = this.getCacheKey(normalizedQuery, options);
+
+    if (useCache) {
+      const cached = this.getCachedResult(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    }
+
     try {
       const response = await axios.post(`${this.baseURL}/search`, {
         api_key: TAVILY_API_KEY,
-        query,
+        query: normalizedQuery,
         search_depth: options.depth || 'basic',
+        topic: options.topic || 'general',
         max_results: options.maxResults || 5,
+        time_range: options.timeRange || undefined,
+        start_date: options.startDate || undefined,
+        end_date: options.endDate || undefined,
         include_domains: options.includeDomains || [],
         exclude_domains: options.excludeDomains || []
       });
 
-      return response.data.results;
+      const results = response.data.results || [];
+      if (useCache && cacheTtlMs > 0) {
+        this.setCachedResult(cacheKey, results, cacheTtlMs);
+      }
+
+      return results;
     } catch (error) {
       console.error('Tavily search error:', error.message);
       throw error;
@@ -38,27 +94,44 @@ class TavilyAPI {
   /**
    * Search for stock-specific news
    */
-  async searchStockNews(symbol, maxResults = 5) {
+  async searchStockNews(symbol, maxResults = 5, options = {}) {
     const query = `${symbol} stock news latest`;
-    return await this.search(query, { maxResults });
+    return await this.search(query, {
+      maxResults,
+      depth: options.depth || 'basic',
+      topic: options.topic || 'news',
+      timeRange: options.timeRange || 'week',
+      ...options
+    });
   }
 
   /**
    * Search for market news
    */
-  async searchMarketNews(maxResults = 5) {
-    return await this.search('stock market news today', { depth: 'advanced', maxResults });
+  async searchMarketNews(maxResults = 5, options = {}) {
+    return await this.search('stock market news today', {
+      depth: options.depth || 'basic',
+      topic: options.topic || 'news',
+      timeRange: options.timeRange || 'day',
+      maxResults,
+      ...options
+    });
   }
 
   /**
    * Generic news search (missing method referenced in weekly-review.js)
    */
-  async searchNews(query, maxResults = 5) {
-    return await this.search(query, { depth: 'advanced', maxResults });
+  async searchNews(query, maxResults = 5, options = {}) {
+    return await this.search(query, {
+      depth: options.depth || 'basic',
+      topic: options.topic || 'news',
+      timeRange: options.timeRange || 'week',
+      maxResults,
+      ...options
+    });
   }
 
   async searchStructuredStockContext(symbol, options = {}) {
-    const days = options.days || 14;
     const maxResults = options.maxResults || 5;
     const query = [
       `${symbol} earnings guidance`,
@@ -68,7 +141,9 @@ class TavilyAPI {
     ].join(' OR ');
 
     return await this.search(query, {
-      depth: 'advanced',
+      depth: options.depth || 'advanced',
+      topic: options.topic || 'news',
+      timeRange: options.timeRange || 'month',
       maxResults,
       includeDomains: options.includeDomains || []
     });
@@ -85,7 +160,9 @@ class TavilyAPI {
     ].join(' OR ');
 
     return await this.search(query, {
-      depth: 'advanced',
+      depth: options.depth || 'advanced',
+      topic: options.topic || 'news',
+      timeRange: options.timeRange || 'month',
       maxResults,
       includeDomains: options.includeDomains || []
     });
@@ -94,9 +171,15 @@ class TavilyAPI {
   /**
    * Search for sector news
    */
-  async searchSectorNews(sector, maxResults = 3) {
+  async searchSectorNews(sector, maxResults = 3, options = {}) {
     const query = `${sector} sector stocks news`;
-    return await this.search(query, { maxResults });
+    return await this.search(query, {
+      maxResults,
+      depth: options.depth || 'basic',
+      topic: options.topic || 'news',
+      timeRange: options.timeRange || 'week',
+      ...options
+    });
   }
 
   /**

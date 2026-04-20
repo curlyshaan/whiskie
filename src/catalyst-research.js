@@ -31,26 +31,50 @@ export function detectCatalysts(news = []) {
 
 export async function researchCatalysts(symbol, pathway) {
   const searches = [
-    `${symbol} earnings date 2026`,
-    `${symbol} analyst estimates consensus 2026`,
-    `${symbol} product launch 2026`,
-    `${symbol} partnership deal announcement 2026`,
-    `${symbol} insider buying recent`,
-    `${symbol} industry trends 2026 ${pathway || ''}`.trim()
+    {
+      label: 'catalysts',
+      query: [
+        `${symbol} analyst estimates`,
+        `${symbol} guidance`,
+        `${symbol} product launch`,
+        `${symbol} partnership`,
+        `${symbol} regulation`,
+        `${symbol} catalyst`
+      ].join(' OR '),
+      options: {
+        depth: 'advanced',
+        topic: 'news',
+        timeRange: 'month',
+        maxResults: 4,
+        includeDomains: SEARCH_DOMAINS
+      }
+    },
+    {
+      label: 'positioning',
+      query: [
+        `${symbol} insider buying`,
+        `${symbol} insider selling`,
+        `${symbol} analyst upgrade`,
+        `${symbol} analyst downgrade`,
+        `${symbol} industry trends ${pathway || ''}`.trim()
+      ].join(' OR '),
+      options: {
+        depth: 'basic',
+        topic: 'news',
+        timeRange: 'month',
+        maxResults: 3,
+        includeDomains: SEARCH_DOMAINS
+      }
+    }
   ];
 
   const results = [];
-  for (const query of searches) {
+  for (const search of searches) {
     try {
-      const searchResults = await tavily.search(query, {
-        depth: 'advanced',
-        maxResults: 3,
-        includeDomains: SEARCH_DOMAINS
-      });
-
-      results.push({ query, results: searchResults || [] });
+      const searchResults = await tavily.search(search.query, search.options);
+      results.push({ query: search.label, results: searchResults || [] });
     } catch (error) {
-      results.push({ query, results: [], error: error.message });
+      results.push({ query: search.label, results: [], error: error.message });
     }
   }
 

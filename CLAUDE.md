@@ -135,6 +135,17 @@ When changing trade-management logic, keep these invariants aligned across promp
 
 ## Data-source facts to preserve
 
+### Tavily
+
+For future sessions, use these Tavily docs as the canonical reference before changing Tavily integration code:
+
+- `https://docs.tavily.com/welcome`
+- `https://docs.tavily.com/documentation/api-reference/introduction`
+
+Current implementation lives in `src/tavily.js` and is used across analysis, weekly review, earnings reminders, chat, and stock profiles.
+
+Optimization rule: only expand Tavily usage when the extra call has a clear decision-quality benefit. Prefer tighter structured queries, smaller `maxResults`, and reuse existing helper methods instead of adding duplicate ad hoc searches. Check whether a current flow can share one Tavily result set before adding another API call.
+
 ### FMP
 
 - use `/stable` endpoints

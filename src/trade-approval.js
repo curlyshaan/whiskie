@@ -118,6 +118,8 @@ class TradeApprovalManager {
       takeProfit,
       orderType = 'limit',
       pathway,
+      secondaryPathways,
+      pathwaySelectionRule,
       intent,
       reasoning,
       investmentThesis,
@@ -154,15 +156,18 @@ class TradeApprovalManager {
       `INSERT INTO trade_approvals
        (symbol, action, quantity, entry_price, stop_loss, take_profit,
         order_type, pathway, intent, reasoning, investment_thesis, strategy_type,
+        secondary_pathways, pathway_selection_rule,
         thesis_state, holding_posture, catalysts, fundamentals, technical_setup,
         risk_factors, holding_period, confidence, growth_potential, news_links,
         stop_type, stop_reason, has_fixed_target, target_type, trailing_stop_pct,
         rebalance_threshold_pct, max_holding_days, fundamental_stop_conditions,
         override_phase2_decision, override_symbol, override_reason, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
        RETURNING id`,
       [symbol, action, quantity, entryPrice, stopLoss, takeProfit,
        orderType, pathway, intent, reasoning, investmentThesis || null, strategyType || null,
+       secondaryPathways ? JSON.stringify(secondaryPathways) : JSON.stringify([]),
+       pathwaySelectionRule || (pathway ? 'approval_primary_pathway' : 'unclassified'),
        thesisState || null, holdingPosture || null,
        catalysts ? JSON.stringify(catalysts) : null,
        fundamentals ? JSON.stringify(fundamentals) : null,

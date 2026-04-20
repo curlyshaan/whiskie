@@ -7,8 +7,8 @@ import email from './email.js';
 /**
  * Weekly Opus Review Module
  *
- * Analyzes all saturday_watchlist candidates with Opus extended thinking
- * to identify top 10-15 stocks per pathway based on thesis strength.
+ * Analyzes saturday_watchlist candidates with Opus extended thinking
+ * to identify the top 7 stocks per pathway based on thesis strength.
  *
  * This fixes the momentum bias issue where deepValue stocks get filtered out
  * if they don't have volume surge on a given day.
@@ -40,15 +40,8 @@ class WeeklyOpusReview {
     console.log('');
 
     try {
-      // Get all stocks from saturday_watchlist (status = 'pending' from Saturday screening)
-      const result = await db.query(
-        `SELECT symbol, intent, pathway, sector, industry, score, metrics, reasons, price
-         FROM saturday_watchlist
-         WHERE status = 'pending'
-         ORDER BY pathway, score DESC`
-      );
-
-      const candidates = result.rows;
+      // Get canonical candidate rows from saturday_watchlist (status = 'pending' from Saturday screening)
+      const candidates = await db.getCanonicalSaturdayWatchlistRows(['pending'], { includePromoted: true });
       console.log(`📋 Found ${candidates.length} candidates from Saturday screening`);
 
       if (candidates.length === 0) {
@@ -59,7 +52,7 @@ class WeeklyOpusReview {
       // Group by pathway
       const byPathway = {};
       for (const candidate of candidates) {
-        const pathway = candidate.pathway || 'unknown';
+        const pathway = candidate.primary_pathway || candidate.pathway || 'unknown';
         if (!byPathway[pathway]) {
           byPathway[pathway] = [];
         }
@@ -71,8 +64,17 @@ class WeeklyOpusReview {
         console.log(`   ${pathway}: ${stocks.length} stocks`);
       }
 
+      const reviewStartedAt = new Date();
+      const activationCycleId = `weekly-opus-${reviewStartedAt.toISOString()}`;
+
       // Set all to 'pending' before Opus review
-      await db.query(`UPDATE saturday_watchlist SET status = 'pending' WHERE status = 'active'`);
+      await db.query(`
+        UPDATE saturday_watchlist
+        SET status = 'pending',
+            analysis_ready = FALSE,
+            selection_status_reason = 'awaiting_weekly_opus_rerank'
+        WHERE status = 'active'
+      `);
       console.log(`\n⏸️  Set all ${candidates.length} stocks to 'pending' status`);
 
       // Analyze each pathway
@@ -91,17 +93,35 @@ class WeeklyOpusReview {
           .sort((a, b) => b.opusScore - a.opusScore)
           .slice(0, this.TOP_PER_PATHWAY);
 
+        let rank = 1;
         // Set top stocks to 'active'
         for (const stock of topStocks) {
           await db.query(
             `UPDATE saturday_watchlist
              SET status = 'active',
+                 source = 'weekly_opus',
+                 selection_source = 'weekly_opus',
+                 promotion_status = 'none',
+                 promotion_reason = NULL,
+                 promoted_at = NULL,
+                 expires_at = NULL,
                  last_reviewed = NOW(),
+                 weekly_reviewed_at = NOW(),
+                 activation_cycle_id = $5,
+                 selection_rank_within_pathway = $6,
+                 review_priority = 90,
+                 selection_status_reason = 'activated_by_weekly_opus',
+                 analysis_ready = TRUE,
+                 primary_pathway = $4,
+                 secondary_pathways = $7::jsonb,
+                 pathway_scores_snapshot = $8::jsonb,
+                 pathway_selection_rule = $9,
                  opus_conviction = $1,
                  opus_reasoning = $2
-             WHERE symbol = $3 AND pathway = $4`,
-            [stock.opusScore, stock.opusReasoning, stock.symbol, pathway]
+             WHERE symbol = $3`,
+            [stock.opusScore, stock.opusReasoning, stock.symbol, pathway, activationCycleId, rank, JSON.stringify(stock.secondaryPathways || []), JSON.stringify(stock.pathwayScoresSnapshot || {}), stock.pathwaySelectionRule || 'weekly_opus_primary_pathway']
           );
+          rank++;
         }
 
         totalActivated += topStocks.length;
@@ -152,7 +172,10 @@ class WeeklyOpusReview {
         analyzed.push({
           symbol: stock.symbol,
           opusScore: analysis.score,
-          opusReasoning: analysis.reasoning
+          opusReasoning: analysis.reasoning,
+          secondaryPathways: stock.secondary_pathways || [],
+          pathwayScoresSnapshot: stock.pathway_scores_snapshot || {},
+          pathwaySelectionRule: stock.pathway_selection_rule || 'weekly_screen_primary_pathway'
         });
 
         // Rate limiting: 2-second delay between calls
@@ -245,7 +268,9 @@ class WeeklyOpusReview {
     let prompt = `You are analyzing ${stock.symbol} for the ${pathway} pathway (${intent} position).
 
 SATURDAY SCREENING RESULTS:
-- Pathway: ${pathway}
+- Primary Pathway: ${stock.primary_pathway || pathway}
+- Secondary Pathways: ${(stock.secondary_pathways || []).join(', ') || 'None'}
+- Pathway Selection Rule: ${stock.pathway_selection_rule || 'weekly_screen_primary_pathway'}
 - Score: ${stock.score}
 - Reasons: ${stock.reasons}
 - Price: $${stock.price}
@@ -379,7 +404,7 @@ Take your time to think through this carefully. Consider both bull and bear case
       }
       emailBody += `</ul>`;
 
-      emailBody += `<p>Active stocks are now ready for daily analysis. Pending stocks remain in watchlist but won't be analyzed unless they show momentum.</p>`;
+      emailBody += `<p>Active stocks are now ready for daily analysis. Pending stocks remain in the weekly watchlist backlog until the next weekly refresh or an explicit discovery-promotion flow promotes them.</p>`;
 
       await email.sendEmail(
         email.alertEmail,

@@ -205,6 +205,16 @@ function formatTradeAction(action) {
     .replace(/\b\w/g, char => char.toUpperCase());
 }
 
+function formatDashboardSession(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'Unknown';
+  if (normalized === 'bmo') return 'Pre-market';
+  if (normalized === 'amc') return 'Post-market';
+  return normalized
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, char => char.toUpperCase());
+}
+
 function formatCurrency(value) {
   const num = Number(value);
   return Number.isFinite(num) ? `$${num.toFixed(2)}` : 'Market';
@@ -396,7 +406,40 @@ router.get('/', async (req, res) => {
       // Table doesn't exist yet
     }
 
-    const html = generateDashboardHTML(analyses.rows, portfolio.rows, trades.rows, snapshot.rows[0]);
+    let dailyState = { rows: [] };
+    try {
+      dailyState = await db.query(
+        `SELECT *
+         FROM daily_symbol_state
+         WHERE run_date = CURRENT_DATE
+         ORDER BY updated_at DESC
+         LIMIT 50`
+      );
+    } catch (err) {
+      // Table doesn't exist yet
+    }
+
+    let promotedDiscovery = { rows: [] };
+    try {
+      promotedDiscovery = await db.query(
+        `SELECT symbol, pathway, promotion_reason, promoted_at, score, reasons
+         FROM saturday_watchlist
+         WHERE promotion_status = 'promoted'
+         ORDER BY promoted_at DESC NULLS LAST, score DESC NULLS LAST
+         LIMIT 20`
+      );
+    } catch (err) {
+      // Table doesn't exist yet
+    }
+
+    const html = generateDashboardHTML(
+      analyses.rows,
+      portfolio.rows,
+      trades.rows,
+      snapshot.rows[0],
+      dailyState.rows,
+      promotedDiscovery.rows
+    );
     res.send(html);
   } catch (error) {
     console.error('Dashboard error:', error);
@@ -551,7 +594,7 @@ router.post('/api/earnings-reminders/save', async (req, res) => {
   }
 });
 
-function generateDashboardHTML(analyses, positions, trades, snapshot) {
+function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState = [], promotedDiscovery = []) {
   const totalValue = snapshot?.total_value || 100000;
   const cash = snapshot?.cash || snapshot?.cash_balance || 100000;
   const invested = totalValue - cash;
@@ -1093,6 +1136,72 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
     </div>
 
     <div class="section">
+      <div class="section-title">🧠 Daily Symbol State</div>
+      ${dailyState.length === 0 ?
+        '<div class="no-data">No daily symbol state recorded yet for today.</div>' :
+        `<table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Run</th>
+              <th>Depth</th>
+              <th>Reason</th>
+              <th>Source</th>
+              <th>Pathway Model</th>
+              <th>What Changed</th>
+              <th>Next Review</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${dailyState.map(state => `
+              <tr>
+                <td><strong>${escapeHtml(state.symbol)}</strong></td>
+                <td>${escapeHtml(`${state.run_time || '-'} / ${state.run_type || '-'}`)}</td>
+                <td>${escapeHtml(state.review_depth || '-')}</td>
+                <td>${escapeHtml(state.review_reason_code || state.escalation_reason || '-')}</td>
+                <td>${escapeHtml(state.source || '-')}</td>
+                <td>${escapeHtml(state.primary_pathway || '-')}</td>
+                <td>${escapeHtml(state.what_changed || '-')}</td>
+                <td>${escapeHtml(formatDashboardDateTime(state.next_review_due))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`
+      }
+    </div>
+
+    <div class="section">
+      <div class="section-title">🚀 Promoted Discovery Candidates</div>
+      ${promotedDiscovery.length === 0 ?
+        '<div class="no-data">No promoted discovery candidates right now.</div>' :
+        `<table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Pathway</th>
+              <th>Score</th>
+              <th>Selection Source</th>
+              <th>Promotion Reason</th>
+              <th>Promoted At</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${promotedDiscovery.map(row => `
+              <tr>
+                <td><strong>${escapeHtml(row.symbol)}</strong></td>
+                  <td>${escapeHtml(row.primary_pathway || row.pathway || '-')}<br><span class="timestamp">secondary: ${escapeHtml(((row.secondary_pathways || []).join(', ')) || 'none')}</span></td>
+                <td>${escapeHtml(row.score ?? '-')}</td>
+                <td>${escapeHtml(row.selection_source || row.source || '-')}</td>
+                <td title="${escapeHtml(row.reasons || '')}">${escapeHtml(row.promotion_reason || '-')}</td>
+                <td>${escapeHtml(formatDashboardDateTime(row.promoted_at))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`
+      }
+    </div>
+
+    <div class="section">
       <div class="section-title">💼 Current Positions</div>
       ${positions.length === 0 ?
         '<div class="no-data">No positions yet. Waiting for Opus recommendations.</div>' :
@@ -1104,7 +1213,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
               <th>Entry Price</th>
               <th>Current Price</th>
               <th>Gain/Loss</th>
-              <th>Pathway</th>
+              <th>Pathway Model</th>
               <th>Intent</th>
               <th>Management</th>
               <th>Stop Loss</th>
@@ -1129,7 +1238,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
                   <td class="${gainLoss >= 0 ? 'positive' : 'negative'}">
                     ${gainLoss >= 0 ? '+' : ''}${gainLoss}%
                   </td>
-                  <td>${p.pathway || '-'}</td>
+                  <td>${escapeHtml(p.pathway || '-')}<br><span class="timestamp">secondary: ${escapeHtml(((p.secondary_pathways || []).join(', ')) || 'none')}</span></td>
                   <td>${p.intent || '-'}</td>
                   <td class="position-management-cell">${renderPositionManagementPills(p)}</td>
                   <td>${stopLoss ? '$' + stopLoss.toFixed(2) : '-'}</td>
@@ -1138,7 +1247,6 @@ function generateDashboardHTML(analyses, positions, trades, snapshot) {
                   <td>${p.trailing_stop_pct ? p.trailing_stop_pct + '%' : '-'}</td>
                 </tr>
               `;
-            }).join('')}
             }).join('')}
           </tbody>
         </table>
@@ -1960,7 +2068,8 @@ function generateCronStatusHTML(executions, days) {
     { name: 'Saturday Screening', type: 'weekly', schedule: 'Saturday 3:00 PM ET', endpoint: '/api/trigger-saturday-screening' },
     { name: 'Weekly Portfolio Review', type: 'weekly', schedule: 'Sunday 1:00 PM ET', endpoint: '/weekly-review' },
     { name: 'Profile Building', type: 'weekly', schedule: 'Sunday 3:00 PM ET', endpoint: null },
-    { name: 'Weekly Opus Review', type: 'weekly', schedule: 'Sunday 9:00 PM ET', endpoint: '/api/trigger-weekly-opus-review' }
+    { name: 'Weekly Opus Review', type: 'weekly', schedule: 'Sunday 9:00 PM ET', endpoint: '/api/trigger-weekly-opus-review' },
+    { name: 'Weekly Tactical-State Cleanup', type: 'weekly', schedule: 'Sunday 11:00 PM ET', endpoint: null }
   ];
 
   return `
@@ -2319,6 +2428,7 @@ function generateEarningsRemindersHTML(reminders) {
             <th>Symbol</th>
             <th>Earnings Date</th>
             <th>Session</th>
+            <th>Pathway Model</th>
             <th>Reminder Time</th>
             <th>Status</th>
             <th>Notes</th>
@@ -2329,7 +2439,8 @@ function generateEarningsRemindersHTML(reminders) {
             <tr>
               <td><strong>${escapeHtml(reminder.symbol)}</strong></td>
               <td>${escapeHtml(reminder.earnings_date)}</td>
-              <td>${escapeHtml((reminder.earnings_session || 'unknown').replace(/_/g, ' '))}</td>
+              <td>${escapeHtml(formatDashboardSession(reminder.earnings_session || reminder.session_normalized || 'unknown'))}</td>
+              <td>${escapeHtml(reminder.primary_pathway || '-')}<br><span class="timestamp">secondary: ${escapeHtml(((reminder.secondary_pathways || []).join(', ')) || 'none')}</span></td>
               <td>${escapeHtml(formatDashboardDateTime(reminder.scheduled_send_at))}</td>
               <td><span class="status-pill">${escapeHtml(reminder.status)}</span></td>
               <td>${escapeHtml((reminder.notes || '').slice(0, 140) || '-')}</td>
@@ -2374,7 +2485,7 @@ function generateEarningsRemindersHTML(reminders) {
       }
 
       suggestionsEl.innerHTML = results.map(item => {
-        const session = (item.earnings_time || 'unknown').toUpperCase();
+        const session = formatDashboardSession(item.session_normalized || item.earnings_time || 'unknown');
         return '<div class="suggestion" data-symbol="' + item.symbol + '">' +
           '<strong>' + item.symbol + '</strong> · ' + item.earnings_date + ' · ' + session +
           '</div>';
@@ -2401,7 +2512,7 @@ function generateEarningsRemindersHTML(reminders) {
 
       document.getElementById('detailSymbol').textContent = payload.symbol;
       document.getElementById('detailDate').textContent = payload.timing.earningsDate || payload.nextEarning.earnings_date;
-      document.getElementById('detailSession').textContent = (payload.timing.earningsSession || 'unknown').replace(/_/g, ' ');
+      document.getElementById('detailSession').textContent = formatDashboardSession(payload.timing.earningsSession || payload.nextEarning.session_normalized || 'unknown');
       const scheduled = payload.scheduledSendAt ? new Date(payload.scheduledSendAt) : null;
       document.getElementById('detailSendAt').textContent = scheduled && !Number.isNaN(scheduled.getTime())
         ? scheduled.toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET'
@@ -2471,7 +2582,15 @@ function formatDashboardDateTime(value) {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
-  return `${date.toLocaleString('en-US', { timeZone: 'America/New_York' })} ET`;
+  return `${date.toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  })} ET`;
 }
 
 export default router;

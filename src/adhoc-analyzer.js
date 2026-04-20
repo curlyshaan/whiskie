@@ -521,8 +521,13 @@ router.post('/analyze', async (req, res) => {
     );
     const inWatchlist = watchlistCheck.rows.length > 0;
     const watchlistStatus = inWatchlist ? watchlistCheck.rows[0].status : null;
-    const watchlistPathway = inWatchlist ? watchlistCheck.rows[0].pathway : null;
+    const watchlistPathway = inWatchlist ? (watchlistCheck.rows[0].primary_pathway || watchlistCheck.rows[0].pathway) : null;
+    const watchlistSecondaryPathways = inWatchlist ? (watchlistCheck.rows[0].secondary_pathways || []) : [];
     const opusConviction = inWatchlist ? watchlistCheck.rows[0].opus_conviction : null;
+    const watchlistSelectionSource = inWatchlist ? watchlistCheck.rows[0].selection_source || watchlistCheck.rows[0].source : null;
+    const watchlistAnalysisReady = inWatchlist ? watchlistCheck.rows[0].analysis_ready : null;
+    const watchlistSelectionRank = inWatchlist ? watchlistCheck.rows[0].selection_rank_within_pathway : null;
+    const watchlistReviewPriority = inWatchlist ? watchlistCheck.rows[0].review_priority : null;
     
     // Check if there's an active position with thesis management
     let positionDetails = null;
@@ -616,6 +621,11 @@ router.post('/analyze', async (req, res) => {
       watchlistStatus,
       watchlistPathway,
       opusConviction,
+      watchlistSelectionSource,
+      watchlistAnalysisReady,
+      watchlistSelectionRank,
+      watchlistReviewPriority,
+      watchlistSecondaryPathways,
       positionDetails
     });
 
@@ -650,6 +660,10 @@ router.post('/analyze', async (req, res) => {
         watchlistStatus,
         watchlistPathway,
         opusConviction,
+        watchlistSelectionSource,
+        watchlistAnalysisReady,
+        watchlistSelectionRank,
+        watchlistReviewPriority,
         hasProfile
       },
       profile: profile ? {
@@ -693,10 +707,15 @@ function buildOpusPrompt(data) {
     watchlistStatus,
     watchlistPathway,
     opusConviction,
+    watchlistSelectionSource,
+    watchlistAnalysisReady,
+    watchlistSelectionRank,
+    watchlistReviewPriority,
+    watchlistSecondaryPathways,
     positionDetails
   } = data;
 
-  let prompt = `You are Whiskie. Analyze ${symbol} using the same core process Whiskie's trading bot uses: pathway-aware context, stock profile context, technical confirmation, catalyst review, risk/reward discipline, and strategy-consistent position management.
+  let prompt = `You are Whiskie. Analyze ${symbol} using the same core process Whiskie's trading bot uses: pathway-aware context, weekly selection metadata, stock profile context, technical confirmation, catalyst review, earnings-aware risk handling, tactical-state awareness, risk/reward discipline, and strategy-consistent position management.
 
 This is an ADHOC single-stock review, not a portfolio-construction pass. Be consistent with Whiskie's PHASE 2/3 style analysis and management language.
 
@@ -743,7 +762,12 @@ ACTIVE POSITION MANAGEMENT:
 WHISKIE SYSTEM STATUS:
 - In Stock Universe: ${inUniverse ? 'Yes' : 'No'}
 - In Saturday Watchlist: ${inWatchlist ? `Yes (${watchlistStatus})` : 'No'}
-- Watchlist Pathway: ${watchlistPathway || 'None'}
+- Primary Watchlist Pathway: ${watchlistPathway || 'None'}
+- Secondary Watchlist Pathways: ${(watchlistSecondaryPathways || []).join(', ') || 'None'}
+- Watchlist Selection Source: ${watchlistSelectionSource || 'None'}
+- Watchlist Analysis Ready: ${watchlistAnalysisReady === null ? 'N/A' : (watchlistAnalysisReady ? 'Yes' : 'No')}
+- Watchlist Rank Within Pathway: ${watchlistSelectionRank ?? 'N/A'}
+- Watchlist Review Priority: ${watchlistReviewPriority ?? 'N/A'}
 - Weekly Opus Conviction: ${opusConviction ?? 'N/A'}
 - Has Stock Profile: ${profile ? 'Yes' : 'No'}
 
@@ -818,7 +842,8 @@ PRICE ACTION:
     const daysUntil = Math.ceil((new Date(nextEarnings.earnings_date) - new Date()) / (1000 * 60 * 60 * 24));
     prompt += `UPCOMING EARNINGS:
 - Date: ${nextEarnings.earnings_date} (${daysUntil} days away)
-- Time: ${nextEarnings.earnings_time || 'Unknown'}
+- Session: ${nextEarnings.session_normalized || nextEarnings.earnings_time || 'Unknown'}
+- Timing Detail: ${nextEarnings.timing_raw || nextEarnings.earnings_time || 'Unknown'}
 
 `;
   }

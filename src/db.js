@@ -127,6 +127,30 @@ export async function initDatabase() {
       );
     `);
 
+    await client.query(`
+      ALTER TABLE ai_decisions
+      ADD COLUMN IF NOT EXISTS run_id VARCHAR(64),
+      ADD COLUMN IF NOT EXISTS workflow_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS phase VARCHAR(30),
+      ADD COLUMN IF NOT EXISTS decision_scope VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS symbol_count INTEGER,
+      ADD COLUMN IF NOT EXISTS symbols_snapshot JSONB,
+      ADD COLUMN IF NOT EXISTS prompt_version VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS run_profile VARCHAR(30);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_ai_decisions_run_id ON ai_decisions(run_id);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_ai_decisions_workflow_type ON ai_decisions(workflow_type);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_ai_decisions_phase ON ai_decisions(phase);
+    `);
+
     // Alerts - track all alerts sent
     await client.query(`
       CREATE TABLE IF NOT EXISTS alerts (
@@ -204,11 +228,57 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      ALTER TABLE earnings_calendar
+      ADD COLUMN IF NOT EXISTS source_primary VARCHAR(20) DEFAULT 'fmp',
+      ADD COLUMN IF NOT EXISTS session_normalized VARCHAR(20) DEFAULT 'unknown',
+      ADD COLUMN IF NOT EXISTS timing_raw TEXT,
+      ADD COLUMN IF NOT EXISTS timing_source VARCHAR(20) DEFAULT 'fmp',
+      ADD COLUMN IF NOT EXISTS source_priority INTEGER DEFAULT 100,
+      ADD COLUMN IF NOT EXISTS last_verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS manual_override BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS notes TEXT;
+    `);
+
+    await client.query(`
+      UPDATE earnings_calendar
+      SET source_primary = COALESCE(source_primary, source, 'fmp'),
+          timing_raw = COALESCE(timing_raw, earnings_time),
+          timing_source = COALESCE(timing_source, source, 'fmp'),
+          source_priority = COALESCE(source_priority, CASE
+            WHEN COALESCE(source, 'fmp') = 'manual' THEN 300
+            WHEN COALESCE(source, 'fmp') = 'yahoo' THEN 200
+            ELSE 100
+          END),
+          session_normalized = COALESCE(session_normalized, CASE
+            WHEN LOWER(COALESCE(earnings_time, '')) = 'bmo' THEN 'pre_market'
+            WHEN LOWER(COALESCE(earnings_time, '')) = 'amc' THEN 'post_market'
+            ELSE 'unknown'
+          END),
+          last_verified_at = COALESCE(last_verified_at, last_updated, CURRENT_TIMESTAMP),
+          manual_override = COALESCE(manual_override, FALSE)
+      WHERE source_primary IS NULL
+         OR timing_raw IS NULL
+         OR timing_source IS NULL
+         OR source_priority IS NULL
+         OR session_normalized IS NULL
+         OR last_verified_at IS NULL
+         OR manual_override IS NULL;
+    `);
+
+    await client.query(`
       CREATE INDEX IF NOT EXISTS idx_earnings_symbol ON earnings_calendar(symbol);
     `);
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_earnings_date ON earnings_calendar(earnings_date);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_earnings_session_normalized ON earnings_calendar(session_normalized);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_earnings_last_verified_at ON earnings_calendar(last_verified_at);
     `);
 
     await client.query(`
@@ -445,7 +515,67 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      ALTER TABLE stock_universe
+      ADD COLUMN IF NOT EXISTS source_primary VARCHAR(20) DEFAULT 'fmp',
+      ADD COLUMN IF NOT EXISTS source_last_synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS price_last_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS universe_reason VARCHAR(50) DEFAULT 'core_market_cap',
+      ADD COLUMN IF NOT EXISTS analysis_eligible BOOLEAN DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS discovery_eligible BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS earnings_tracking_eligible BOOLEAN DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS liquidity_score VARCHAR(20) DEFAULT 'unknown',
+      ADD COLUMN IF NOT EXISTS data_quality_status VARCHAR(20) DEFAULT 'ok';
+    `);
+
+    await client.query(`
+      ALTER TABLE stock_universe
+      ALTER COLUMN avg_daily_volume TYPE DECIMAL(18, 2)
+      USING avg_daily_volume::DECIMAL(18, 2);
+    `);
+
+    await client.query(`
+      UPDATE stock_universe
+      SET source_primary = COALESCE(source_primary, 'fmp'),
+          source_last_synced_at = COALESCE(source_last_synced_at, added_date, CURRENT_TIMESTAMP),
+          price_last_updated_at = COALESCE(price_last_updated_at, added_date, CURRENT_TIMESTAMP),
+          universe_reason = COALESCE(universe_reason, CASE
+            WHEN COALESCE(universe_bucket, 'core') = 'growth_expansion' THEN 'growth_expansion'
+            ELSE 'core_market_cap'
+          END),
+          analysis_eligible = COALESCE(analysis_eligible, status = 'active'),
+          discovery_eligible = COALESCE(discovery_eligible, COALESCE(universe_bucket, 'core') = 'growth_expansion'),
+          earnings_tracking_eligible = COALESCE(earnings_tracking_eligible, status = 'active'),
+          liquidity_score = COALESCE(liquidity_score, CASE
+            WHEN COALESCE(avg_daily_volume, 0) >= 5000000 THEN 'high'
+            WHEN COALESCE(avg_daily_volume, 0) >= 1000000 THEN 'medium'
+            WHEN COALESCE(avg_daily_volume, 0) > 0 THEN 'low'
+            ELSE 'unknown'
+          END),
+          data_quality_status = COALESCE(data_quality_status, CASE
+            WHEN company_name IS NULL OR sector IS NULL OR industry IS NULL THEN 'incomplete'
+            ELSE 'ok'
+          END)
+      WHERE source_primary IS NULL
+         OR source_last_synced_at IS NULL
+         OR price_last_updated_at IS NULL
+         OR universe_reason IS NULL
+         OR analysis_eligible IS NULL
+         OR discovery_eligible IS NULL
+         OR earnings_tracking_eligible IS NULL
+         OR liquidity_score IS NULL
+         OR data_quality_status IS NULL;
+    `);
+
+    await client.query(`
       CREATE INDEX IF NOT EXISTS idx_stock_universe_growth_candidate ON stock_universe(is_growth_candidate);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_analysis_eligible ON stock_universe(analysis_eligible);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_universe_earnings_tracking_eligible ON stock_universe(earnings_tracking_eligible);
     `);
 
     // ETF watchlist table - track ETFs for hedging/exposure (separate from stock screening)
@@ -590,6 +720,142 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_status ON saturday_watchlist(status);
     `);
 
+    await client.query(`
+      ALTER TABLE saturday_watchlist
+      ADD COLUMN IF NOT EXISTS source VARCHAR(30) DEFAULT 'weekly_screen',
+      ADD COLUMN IF NOT EXISTS promotion_status VARCHAR(30) DEFAULT 'none',
+      ADD COLUMN IF NOT EXISTS promotion_reason TEXT,
+      ADD COLUMN IF NOT EXISTS promoted_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP;
+    `);
+
+    await client.query(`
+      ALTER TABLE saturday_watchlist
+      ADD COLUMN IF NOT EXISTS selection_source VARCHAR(30) DEFAULT 'weekly_screen',
+      ADD COLUMN IF NOT EXISTS screening_run_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS weekly_reviewed_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS activation_cycle_id VARCHAR(64),
+      ADD COLUMN IF NOT EXISTS screening_score INTEGER,
+      ADD COLUMN IF NOT EXISTS selection_rank_within_pathway INTEGER,
+      ADD COLUMN IF NOT EXISTS review_priority INTEGER DEFAULT 50,
+      ADD COLUMN IF NOT EXISTS selection_status_reason TEXT,
+      ADD COLUMN IF NOT EXISTS analysis_ready BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS profile_required BOOLEAN DEFAULT TRUE,
+      ADD COLUMN IF NOT EXISTS primary_pathway VARCHAR(30),
+      ADD COLUMN IF NOT EXISTS secondary_pathways JSONB DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS pathway_scores_snapshot JSONB DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS pathway_selection_rule TEXT;
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_source ON saturday_watchlist(source);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_promotion_status ON saturday_watchlist(promotion_status);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_expires_at ON saturday_watchlist(expires_at);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_selection_source ON saturday_watchlist(selection_source);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_analysis_ready ON saturday_watchlist(analysis_ready);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_saturday_watchlist_primary_pathway ON saturday_watchlist(primary_pathway);
+    `);
+
+    await client.query(`
+      UPDATE saturday_watchlist
+      SET source = COALESCE(source, 'weekly_screen'),
+          promotion_status = COALESCE(promotion_status, 'none'),
+          selection_source = COALESCE(selection_source, source, 'weekly_screen'),
+          screening_run_at = COALESCE(screening_run_at, added_date, CURRENT_TIMESTAMP),
+          screening_score = COALESCE(screening_score, score),
+          review_priority = COALESCE(review_priority, 50),
+          primary_pathway = COALESCE(primary_pathway, pathway),
+          secondary_pathways = COALESCE(secondary_pathways, '[]'::jsonb),
+          pathway_scores_snapshot = COALESCE(pathway_scores_snapshot, '{}'::jsonb),
+          pathway_selection_rule = COALESCE(pathway_selection_rule, 'legacy_pathway_passthrough'),
+          analysis_ready = COALESCE(analysis_ready, status = 'active'),
+          profile_required = COALESCE(profile_required, TRUE)
+      WHERE source IS NULL
+         OR promotion_status IS NULL
+         OR selection_source IS NULL
+         OR screening_run_at IS NULL
+         OR screening_score IS NULL
+         OR review_priority IS NULL
+         OR primary_pathway IS NULL
+         OR secondary_pathways IS NULL
+         OR pathway_scores_snapshot IS NULL
+         OR pathway_selection_rule IS NULL
+         OR analysis_ready IS NULL
+         OR profile_required IS NULL;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS daily_symbol_state (
+        symbol VARCHAR(10) NOT NULL,
+        run_date DATE NOT NULL,
+        run_time TIME NOT NULL,
+        run_type VARCHAR(30) NOT NULL,
+        review_depth VARCHAR(20) DEFAULT 'deep',
+        primary_pathway VARCHAR(30),
+        secondary_pathways JSONB DEFAULT '[]'::jsonb,
+        source VARCHAR(30) DEFAULT 'watchlist',
+        source_reasons TEXT,
+        last_action VARCHAR(20),
+        last_confidence VARCHAR(20),
+        thesis_state VARCHAR(20),
+        holding_posture VARCHAR(30),
+        what_changed TEXT,
+        news_fingerprint VARCHAR(64),
+        technical_fingerprint VARCHAR(64),
+        catalyst_fingerprint VARCHAR(64),
+        thesis_summary TEXT,
+        catalyst_summary TEXT,
+        earnings_date DATE,
+        insider_signal VARCHAR(30),
+        next_review_due TIMESTAMP,
+        escalation_reason TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (symbol, run_date, run_time)
+      );
+    `);
+
+    await client.query(`
+      ALTER TABLE daily_symbol_state
+      ADD COLUMN IF NOT EXISTS change_magnitude VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS review_reason_code VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS material_change_detected BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS candidate_bucket_at_run VARCHAR(30),
+      ADD COLUMN IF NOT EXISTS decision_run_id VARCHAR(64),
+      ADD COLUMN IF NOT EXISTS state_version INTEGER DEFAULT 1;
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_daily_symbol_state_symbol ON daily_symbol_state(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_daily_symbol_state_run_date ON daily_symbol_state(run_date);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_daily_symbol_state_next_review_due ON daily_symbol_state(next_review_due);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_daily_symbol_state_decision_run_id ON daily_symbol_state(decision_run_id);
+    `);
+
     // Add industry column to saturday_watchlist if it doesn't exist (migration for existing databases)
     await client.query(`
       ALTER TABLE saturday_watchlist
@@ -679,6 +945,8 @@ export async function initDatabase() {
       ALTER TABLE trade_approvals
       ADD COLUMN IF NOT EXISTS order_type VARCHAR(20),
       ADD COLUMN IF NOT EXISTS pathway VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS secondary_pathways JSONB,
+      ADD COLUMN IF NOT EXISTS pathway_selection_rule TEXT,
       ADD COLUMN IF NOT EXISTS intent VARCHAR(50),
       ADD COLUMN IF NOT EXISTS investment_thesis TEXT,
       ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(50),
@@ -702,7 +970,8 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB,
       ADD COLUMN IF NOT EXISTS override_phase2_decision VARCHAR(10),
       ADD COLUMN IF NOT EXISTS override_symbol VARCHAR(10),
-      ADD COLUMN IF NOT EXISTS override_reason TEXT;
+      ADD COLUMN IF NOT EXISTS override_reason TEXT,
+      ADD COLUMN IF NOT EXISTS order_id VARCHAR(50);
     `);
 
     await client.query(`
@@ -748,9 +1017,22 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      UPDATE trade_approvals
+      SET secondary_pathways = COALESCE(secondary_pathways, '[]'::jsonb),
+          pathway_selection_rule = COALESCE(pathway_selection_rule, CASE WHEN pathway IS NOT NULL THEN 'approval_primary_pathway' ELSE 'unclassified' END)
+      WHERE secondary_pathways IS NULL OR pathway_selection_rule IS NULL;
+    `);
+
+    await client.query(`
       UPDATE positions
       SET thesis_state = COALESCE(thesis_state, 'unchanged')
       WHERE strategy_type IS NOT NULL AND thesis_state IS NULL;
+    `);
+
+    await client.query(`
+      ALTER TABLE positions
+      ADD COLUMN IF NOT EXISTS secondary_pathways JSONB,
+      ADD COLUMN IF NOT EXISTS pathway_selection_rule TEXT;
     `);
 
     await client.query(`
@@ -779,9 +1061,22 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      UPDATE positions
+      SET secondary_pathways = COALESCE(secondary_pathways, '[]'::jsonb),
+          pathway_selection_rule = COALESCE(pathway_selection_rule, CASE WHEN pathway IS NOT NULL THEN 'position_primary_pathway' ELSE 'unclassified' END)
+      WHERE secondary_pathways IS NULL OR pathway_selection_rule IS NULL;
+    `);
+
+    await client.query(`
       UPDATE position_lots
       SET thesis_state = COALESCE(thesis_state, 'unchanged')
       WHERE strategy_type IS NOT NULL AND thesis_state IS NULL;
+    `);
+
+    await client.query(`
+      ALTER TABLE position_lots
+      ADD COLUMN IF NOT EXISTS secondary_pathways JSONB,
+      ADD COLUMN IF NOT EXISTS pathway_selection_rule TEXT;
     `);
 
     await client.query(`
@@ -795,6 +1090,13 @@ export async function initDatabase() {
         ELSE 'hold'
       END
       WHERE holding_posture IS NULL;
+    `);
+
+    await client.query(`
+      UPDATE position_lots
+      SET secondary_pathways = COALESCE(secondary_pathways, '[]'::jsonb),
+          pathway_selection_rule = COALESCE(pathway_selection_rule, CASE WHEN pathway IS NOT NULL THEN 'lot_primary_pathway' ELSE 'unclassified' END)
+      WHERE secondary_pathways IS NULL OR pathway_selection_rule IS NULL;
     `);
 
     await client.query(`
@@ -941,7 +1243,67 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      ALTER TABLE stock_profiles
+      ADD COLUMN IF NOT EXISTS profile_status VARCHAR(20) DEFAULT 'active',
+      ADD COLUMN IF NOT EXISTS refresh_tier VARCHAR(20) DEFAULT 'full',
+      ADD COLUMN IF NOT EXISTS last_full_refresh_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS last_incremental_refresh_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS next_refresh_due TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS refresh_priority INTEGER DEFAULT 50,
+      ADD COLUMN IF NOT EXISTS coverage_score INTEGER DEFAULT 50,
+      ADD COLUMN IF NOT EXISTS research_quality VARCHAR(20) DEFAULT 'standard',
+      ADD COLUMN IF NOT EXISTS facts_last_verified_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS last_catalyst_refresh_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS last_news_refresh_at TIMESTAMP;
+    `);
+
+    await client.query(`
+      UPDATE stock_profiles
+      SET profile_status = COALESCE(profile_status, CASE
+            WHEN quality_flag = 'active' THEN 'active'
+            ELSE 'skipped'
+          END),
+          refresh_tier = COALESCE(refresh_tier, 'full'),
+          last_full_refresh_at = COALESCE(last_full_refresh_at, last_updated, created_at, CURRENT_TIMESTAMP),
+          next_refresh_due = COALESCE(next_refresh_due, COALESCE(last_updated, created_at, CURRENT_TIMESTAMP) + INTERVAL '14 days'),
+          refresh_priority = COALESCE(refresh_priority, CASE
+            WHEN quality_flag = 'active' THEN 50
+            ELSE 10
+          END),
+          coverage_score = COALESCE(coverage_score, CASE
+            WHEN business_model IS NOT NULL AND moats IS NOT NULL AND risks IS NOT NULL AND catalysts IS NOT NULL THEN 80
+            WHEN business_model IS NOT NULL OR moats IS NOT NULL OR risks IS NOT NULL OR catalysts IS NOT NULL THEN 55
+            ELSE 25
+          END),
+          research_quality = COALESCE(research_quality, CASE
+            WHEN quality_flag = 'active' THEN 'standard'
+            ELSE 'light'
+          END),
+          facts_last_verified_at = COALESCE(facts_last_verified_at, last_updated, created_at, CURRENT_TIMESTAMP),
+          last_catalyst_refresh_at = COALESCE(last_catalyst_refresh_at, last_updated, created_at, CURRENT_TIMESTAMP),
+          last_news_refresh_at = COALESCE(last_news_refresh_at, last_updated, created_at, CURRENT_TIMESTAMP)
+      WHERE profile_status IS NULL
+         OR refresh_tier IS NULL
+         OR last_full_refresh_at IS NULL
+         OR next_refresh_due IS NULL
+         OR refresh_priority IS NULL
+         OR coverage_score IS NULL
+         OR research_quality IS NULL
+         OR facts_last_verified_at IS NULL
+         OR last_catalyst_refresh_at IS NULL
+         OR last_news_refresh_at IS NULL;
+    `);
+
+    await client.query(`
       CREATE INDEX IF NOT EXISTS idx_stock_profiles_quality ON stock_profiles(quality_flag);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_profiles_status ON stock_profiles(profile_status);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_stock_profiles_next_refresh_due ON stock_profiles(next_refresh_due);
     `);
 
     await client.query(`
@@ -1144,12 +1506,12 @@ export async function upsertPosition(position) {
       `INSERT INTO positions (
          symbol, quantity, cost_basis, current_price, sector, industry, stock_type,
          stop_loss, take_profit, pathway, intent, peak_price, position_type,
-         strategy_type, thesis_state, holding_posture, holding_period, confidence,
+         strategy_type, thesis_state, holding_posture, holding_period, secondary_pathways, pathway_selection_rule, confidence,
          growth_potential, stop_type, stop_reason, target_type, has_fixed_target,
          trailing_stop_pct, rebalance_threshold_pct, max_holding_days,
          fundamental_stop_conditions, catalysts, news_links
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
        ON CONFLICT (symbol)
        DO UPDATE SET
          quantity = $2,
@@ -1168,18 +1530,20 @@ export async function upsertPosition(position) {
          thesis_state = $15,
          holding_posture = $16,
          holding_period = $17,
-         confidence = $18,
-         growth_potential = $19,
-         stop_type = $20,
-         stop_reason = $21,
-         target_type = $22,
-         has_fixed_target = $23,
-         trailing_stop_pct = $24,
-         rebalance_threshold_pct = $25,
-         max_holding_days = $26,
-         fundamental_stop_conditions = $27,
-         catalysts = $28,
-         news_links = $29,
+         secondary_pathways = $18,
+         pathway_selection_rule = $19,
+         confidence = $20,
+         growth_potential = $21,
+         stop_type = $22,
+         stop_reason = $23,
+         target_type = $24,
+         has_fixed_target = $25,
+         trailing_stop_pct = $26,
+         rebalance_threshold_pct = $27,
+         max_holding_days = $28,
+         fundamental_stop_conditions = $29,
+         catalysts = $30,
+         news_links = $31,
          updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [
@@ -1200,6 +1564,8 @@ export async function upsertPosition(position) {
         position.thesis_state || null,
         position.holding_posture || null,
         position.holding_period || null,
+        position.secondary_pathways ? JSON.stringify(position.secondary_pathways) : JSON.stringify([]),
+        position.pathway_selection_rule || (position.pathway ? 'position_primary_pathway' : 'unclassified'),
         position.confidence || null,
         position.growth_potential || null,
         position.stop_type || null,
@@ -1323,9 +1689,10 @@ export async function logAIDecision(decision) {
     const result = await pool.query(
       `INSERT INTO ai_decisions (
         decision_type, symbol, recommendation, reasoning, model_used, confidence, executed,
-        input_tokens, output_tokens, total_tokens, cost_estimate, duration_seconds
+        input_tokens, output_tokens, total_tokens, cost_estimate, duration_seconds,
+        run_id, workflow_type, phase, decision_scope, symbol_count, symbols_snapshot, prompt_version, run_profile
       )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20) RETURNING *`,
       [
         decision.type,
         decision.symbol,
@@ -1338,7 +1705,15 @@ export async function logAIDecision(decision) {
         decision.output_tokens || null,
         decision.total_tokens || null,
         decision.cost_estimate || null,
-        decision.duration_seconds || null
+        decision.duration_seconds || null,
+        decision.run_id || null,
+        decision.workflow_type || null,
+        decision.phase || null,
+        decision.decision_scope || null,
+        decision.symbol_count || null,
+        decision.symbols_snapshot ? JSON.stringify(decision.symbols_snapshot) : null,
+        decision.prompt_version || null,
+        decision.run_profile || null
       ]
     );
     return result.rows[0];
@@ -1601,16 +1976,52 @@ export async function getWatchlistBuyOpportunities() {
  * Upsert earnings date for a symbol
  */
 export async function upsertEarning(symbol, earningsDate, earningsTime = 'unknown') {
+  const normalizedTime = String(earningsTime || '').trim();
+  const lower = normalizedTime.toLowerCase();
+  const normalizedSession = lower === 'bmo'
+    ? 'pre_market'
+    : lower === 'amc'
+      ? 'post_market'
+      : 'unknown';
   try {
     const result = await pool.query(
-      `INSERT INTO earnings_calendar (symbol, earnings_date, earnings_time, last_updated)
-       VALUES ($1, $2, $3, CURRENT_TIMESTAMP)
+      `INSERT INTO earnings_calendar (
+         symbol, earnings_date, earnings_time, source, source_primary,
+         timing_raw, timing_source, session_normalized, source_priority,
+         last_updated, last_verified_at, manual_override
+       )
+       VALUES ($1, $2, $3, 'fmp', 'fmp', $3, 'fmp', $4, 100, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, FALSE)
        ON CONFLICT (symbol, earnings_date)
        DO UPDATE SET
          earnings_time = $3,
-         last_updated = CURRENT_TIMESTAMP
+         source = CASE
+           WHEN earnings_calendar.manual_override THEN earnings_calendar.source
+           ELSE 'fmp'
+         END,
+         source_primary = CASE
+           WHEN earnings_calendar.manual_override THEN earnings_calendar.source_primary
+           ELSE 'fmp'
+         END,
+         timing_raw = CASE
+           WHEN earnings_calendar.manual_override THEN earnings_calendar.timing_raw
+           ELSE $3
+         END,
+         timing_source = CASE
+           WHEN earnings_calendar.manual_override THEN earnings_calendar.timing_source
+           ELSE 'fmp'
+         END,
+         session_normalized = CASE
+           WHEN earnings_calendar.manual_override THEN earnings_calendar.session_normalized
+           ELSE $4
+         END,
+         source_priority = CASE
+           WHEN earnings_calendar.manual_override THEN earnings_calendar.source_priority
+           ELSE 100
+         END,
+         last_updated = CURRENT_TIMESTAMP,
+         last_verified_at = CURRENT_TIMESTAMP
        RETURNING *`,
-      [symbol, earningsDate, earningsTime]
+      [symbol, earningsDate, earningsTime, normalizedSession]
     );
     return result.rows[0];
   } catch (error) {
@@ -1628,7 +2039,7 @@ export async function getNextEarning(symbol) {
       `SELECT * FROM earnings_calendar
        WHERE symbol = $1
        AND earnings_date >= CURRENT_DATE
-       ORDER BY earnings_date ASC
+       ORDER BY earnings_date ASC, source_priority DESC, last_verified_at DESC
        LIMIT 1`,
       [symbol]
     );
@@ -1651,9 +2062,9 @@ export async function getUpcomingEarnings(days = 30) {
         su.market_cap
        FROM earnings_calendar ec
        LEFT JOIN stock_universe su ON su.symbol = ec.symbol
-       WHERE earnings_date >= CURRENT_DATE
-       AND earnings_date <= CURRENT_DATE + INTERVAL '${days} days'
-       ORDER BY earnings_date ASC`,
+       WHERE ec.earnings_date >= CURRENT_DATE
+       AND ec.earnings_date <= CURRENT_DATE + INTERVAL '${days} days'
+       ORDER BY ec.earnings_date ASC, ec.source_priority DESC, ec.last_verified_at DESC`,
       []
     );
     return result.rows;
@@ -1686,15 +2097,21 @@ export async function searchUpcomingEarningsSymbols(queryText = '', limit = 10) 
         ec.symbol,
         ec.earnings_date,
         ec.earnings_time,
+        ec.session_normalized,
+        ec.timing_raw,
         ec.source,
+        ec.timing_source,
         ec.last_updated,
+        ec.last_verified_at,
         su.company_name,
         su.market_cap
        FROM earnings_calendar ec
        LEFT JOIN stock_universe su ON su.symbol = ec.symbol
        ${whereClause}
        ORDER BY ec.symbol,
-                ec.earnings_date ASC
+                ec.earnings_date ASC,
+                ec.source_priority DESC,
+                ec.last_verified_at DESC
        LIMIT ${limitPlaceholder}`,
       params
     );
@@ -1713,8 +2130,12 @@ export async function getUpcomingEarningsForAutoReminders(days = 14, minMarketCa
         ec.symbol,
         ec.earnings_date,
         ec.earnings_time,
+        ec.session_normalized,
+        ec.timing_raw,
         ec.source,
+        ec.timing_source,
         ec.last_updated,
+        ec.last_verified_at,
         su.company_name,
         su.market_cap
        FROM earnings_calendar ec
@@ -1723,7 +2144,8 @@ export async function getUpcomingEarningsForAutoReminders(days = 14, minMarketCa
          AND ec.earnings_date <= CURRENT_DATE + ($1::text || ' days')::interval
          AND COALESCE(su.market_cap, 0) >= $2
          AND su.status = 'active'
-       ORDER BY ec.symbol, ec.earnings_date ASC`,
+         AND COALESCE(su.earnings_tracking_eligible, TRUE) = TRUE
+       ORDER BY ec.symbol, ec.earnings_date ASC, ec.source_priority DESC, ec.last_verified_at DESC`,
       [days, minMarketCap]
     );
     return result.rows;
@@ -1736,10 +2158,25 @@ export async function getUpcomingEarningsForAutoReminders(days = 14, minMarketCa
 export async function getActiveEarningsReminder(symbol) {
   try {
     const result = await pool.query(
-      `SELECT *
+      `SELECT er.*,
+              sw.primary_pathway,
+              sw.secondary_pathways,
+              sw.analysis_ready,
+              sw.selection_source,
+              sw.selection_rank_within_pathway,
+              sw.review_priority
        FROM earnings_reminders
+       LEFT JOIN LATERAL (
+         SELECT primary_pathway, secondary_pathways, analysis_ready, selection_source, selection_rank_within_pathway, review_priority
+         FROM saturday_watchlist
+         WHERE symbol = $1
+         ORDER BY CASE WHEN status = 'active' THEN 0 WHEN status = 'pending' THEN 1 ELSE 2 END,
+                  COALESCE(opus_conviction, score, 0) DESC,
+                  added_date DESC
+         LIMIT 1
+       ) sw ON TRUE
        WHERE symbol = $1
-         AND status = 'active'
+         AND er.status = 'active'
        ORDER BY updated_at DESC
        LIMIT 1`,
       [symbol]
@@ -1754,10 +2191,25 @@ export async function getActiveEarningsReminder(symbol) {
 export async function getAllActiveEarningsReminders() {
   try {
     const result = await pool.query(
-      `SELECT *
-       FROM earnings_reminders
-       WHERE status = 'active'
-       ORDER BY scheduled_send_at ASC NULLS LAST, earnings_date ASC, symbol ASC`
+      `SELECT er.*,
+              sw.primary_pathway,
+              sw.secondary_pathways,
+              sw.analysis_ready,
+              sw.selection_source,
+              sw.selection_rank_within_pathway,
+              sw.review_priority
+       FROM earnings_reminders er
+       LEFT JOIN LATERAL (
+         SELECT primary_pathway, secondary_pathways, analysis_ready, selection_source, selection_rank_within_pathway, review_priority
+         FROM saturday_watchlist
+         WHERE symbol = er.symbol
+         ORDER BY CASE WHEN status = 'active' THEN 0 WHEN status = 'pending' THEN 1 ELSE 2 END,
+                  COALESCE(opus_conviction, score, 0) DESC,
+                  added_date DESC
+         LIMIT 1
+       ) sw ON TRUE
+       WHERE er.status = 'active'
+       ORDER BY er.scheduled_send_at ASC NULLS LAST, er.earnings_date ASC, er.symbol ASC`
     );
     return result.rows;
   } catch (error) {
@@ -1880,6 +2332,70 @@ export async function upsertEarningsReminder(payload) {
   }
 }
 
+export async function enrichEarningTiming(symbol, earningsDate, timing = {}) {
+  const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+  if (!normalizedSymbol || !earningsDate) return null;
+
+  const sessionNormalized = timing.earningsSession || 'unknown';
+  const timingRaw = timing.earningsTimeRaw || null;
+  const timingSource = timing.source || 'yahoo';
+  const sourcePriority = timingSource === 'manual' ? 300 : timingSource === 'yahoo' ? 200 : 100;
+  const manualOverride = timingSource === 'manual';
+
+  try {
+    const result = await pool.query(
+      `UPDATE earnings_calendar
+       SET earnings_time = CASE
+             WHEN manual_override AND NOT $6 THEN earnings_time
+             ELSE COALESCE($3, earnings_time)
+           END,
+           timing_raw = CASE
+             WHEN manual_override AND NOT $6 THEN timing_raw
+             ELSE COALESCE($4, timing_raw)
+           END,
+           session_normalized = CASE
+             WHEN manual_override AND NOT $6 THEN session_normalized
+             ELSE COALESCE($5, session_normalized)
+           END,
+           timing_source = CASE
+             WHEN manual_override AND NOT $6 THEN timing_source
+             ELSE $2
+           END,
+           source = CASE
+             WHEN manual_override AND NOT $6 THEN source
+             ELSE CASE
+               WHEN source_primary = 'fmp' THEN source
+               ELSE $2
+             END
+           END,
+           source_priority = CASE
+             WHEN manual_override AND NOT $6 THEN source_priority
+             ELSE $7
+           END,
+           last_verified_at = CURRENT_TIMESTAMP,
+           last_updated = CURRENT_TIMESTAMP,
+           manual_override = manual_override OR $6
+       WHERE symbol = $1
+         AND earnings_date = $8
+       RETURNING *`,
+      [
+        normalizedSymbol,
+        timingSource,
+        timingRaw,
+        timingRaw,
+        sessionNormalized,
+        manualOverride,
+        sourcePriority,
+        earningsDate
+      ]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error(`Error enriching earnings timing for ${normalizedSymbol}:`, error);
+    throw error;
+  }
+}
+
 export async function markEarningsReminderSent(id, sentAt, predictionData = {}) {
   try {
     const result = await pool.query(
@@ -1967,10 +2483,11 @@ export async function createPositionLot(lot) {
         entry_date, stop_loss, take_profit, oco_order_id, thesis,
         days_to_long_term, original_intent, current_intent, position_type,
         pathway, strategy_type, thesis_state, holding_posture, holding_period,
+        secondary_pathways, pathway_selection_rule,
         confidence, growth_potential, stop_type, target_type, trailing_stop_pct,
         rebalance_threshold_pct, max_holding_days, fundamental_stop_conditions,
         catalysts, news_links
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20::jsonb, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
       RETURNING *`,
       [
         lot.symbol,
@@ -1992,6 +2509,8 @@ export async function createPositionLot(lot) {
         lot.thesis_state || null,
         lot.holding_posture || null,
         lot.holding_period || null,
+        lot.secondary_pathways ? JSON.stringify(lot.secondary_pathways) : JSON.stringify([]),
+        lot.pathway_selection_rule || (lot.pathway ? 'lot_primary_pathway' : 'unclassified'),
         lot.confidence || null,
         lot.growth_potential || null,
         lot.stop_type || null,
@@ -2137,9 +2656,11 @@ export async function upsertStockUniverse(stock) {
     const result = await pool.query(
       `INSERT INTO stock_universe (
          symbol, company_name, sector, industry, market_cap, market_cap_tier,
-         price, shortable, last_etb_check, is_growth_candidate, universe_bucket
+         price, shortable, last_etb_check, is_growth_candidate, universe_bucket,
+         source_primary, source_last_synced_at, price_last_updated_at, universe_reason,
+         analysis_eligible, discovery_eligible, earnings_tracking_eligible, liquidity_score, data_quality_status
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
        ON CONFLICT (symbol)
        DO UPDATE SET
          company_name = $2,
@@ -2152,6 +2673,15 @@ export async function upsertStockUniverse(stock) {
          last_etb_check = $9,
          is_growth_candidate = $10,
          universe_bucket = $11,
+         source_primary = $12,
+         source_last_synced_at = $13,
+         price_last_updated_at = $14,
+         universe_reason = $15,
+         analysis_eligible = $16,
+         discovery_eligible = $17,
+         earnings_tracking_eligible = $18,
+         liquidity_score = $19,
+         data_quality_status = $20,
          status = 'active'
        RETURNING *`,
       [
@@ -2165,7 +2695,16 @@ export async function upsertStockUniverse(stock) {
         stock.shortable || false,
         stock.last_etb_check || null,
         stock.is_growth_candidate || false,
-        stock.universe_bucket || 'core'
+        stock.universe_bucket || 'core',
+        stock.source_primary || 'fmp',
+        stock.source_last_synced_at || new Date(),
+        stock.price_last_updated_at || new Date(),
+        stock.universe_reason || (stock.universe_bucket === 'growth_expansion' ? 'growth_expansion' : 'core_market_cap'),
+        stock.analysis_eligible ?? true,
+        stock.discovery_eligible ?? (stock.universe_bucket === 'growth_expansion'),
+        stock.earnings_tracking_eligible ?? true,
+        stock.liquidity_score || 'unknown',
+        stock.data_quality_status || 'ok'
       ]
     );
     return result.rows[0];
@@ -2301,6 +2840,386 @@ export async function getStockInfo(symbol) {
   } catch (error) {
     console.error(`Error fetching stock info for ${symbol}:`, error);
     return null;
+  }
+}
+
+
+export async function expireSaturdayWatchlistStatuses(statuses = ['active', 'pending', 'promoted'], reason = 'weekly_refresh') {
+  try {
+    const result = await pool.query(
+      `UPDATE saturday_watchlist
+       SET status = 'expired',
+           promotion_status = CASE
+             WHEN promotion_status = 'promoted' THEN 'expired'
+             ELSE promotion_status
+           END,
+           promotion_reason = COALESCE(promotion_reason, $2),
+           expires_at = CURRENT_TIMESTAMP
+       WHERE status = ANY($1::text[])`,
+      [statuses, reason]
+    );
+    return result.rowCount;
+  } catch (error) {
+    console.error('Error expiring saturday watchlist statuses:', error);
+    throw error;
+  }
+}
+
+export async function cleanupExpiredPromotions(daysOld = 7) {
+  try {
+    const result = await pool.query(
+      `UPDATE saturday_watchlist
+       SET status = 'expired',
+           promotion_status = 'expired',
+           expires_at = CURRENT_TIMESTAMP
+       WHERE promotion_status = 'promoted'
+         AND promoted_at IS NOT NULL
+         AND promoted_at < NOW() - ($1::text || ' days')::interval`,
+      [daysOld]
+    );
+    return result.rowCount;
+  } catch (error) {
+    console.error('Error cleaning up expired promotions:', error);
+    throw error;
+  }
+}
+
+export async function cleanupDailySymbolState(daysOld = 30) {
+  try {
+    const result = await pool.query(
+      `DELETE FROM daily_symbol_state
+       WHERE run_date < CURRENT_DATE - ($1::text || ' days')::interval`,
+      [daysOld]
+    );
+    return result.rowCount;
+  } catch (error) {
+    console.error('Error cleaning up daily symbol state:', error);
+    throw error;
+  }
+}
+
+export async function upsertDailySymbolState(payload) {
+  const {
+    symbol,
+    runDate,
+    runTime,
+    runType,
+    reviewDepth = 'deep',
+    primaryPathway = null,
+    secondaryPathways = [],
+    source = 'watchlist',
+    sourceReasons = null,
+    lastAction = null,
+    lastConfidence = null,
+    thesisState = null,
+    holdingPosture = null,
+    whatChanged = null,
+    newsFingerprint = null,
+    technicalFingerprint = null,
+    catalystFingerprint = null,
+    thesisSummary = null,
+    catalystSummary = null,
+    earningsDate = null,
+    insiderSignal = null,
+    nextReviewDue = null,
+    escalationReason = null,
+    changeMagnitude = null,
+    reviewReasonCode = null,
+    materialChangeDetected = false,
+    candidateBucketAtRun = null,
+    decisionRunId = null,
+    stateVersion = 1
+  } = payload;
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO daily_symbol_state (
+        symbol, run_date, run_time, run_type, review_depth, primary_pathway, secondary_pathways, source,
+        source_reasons, last_action, last_confidence, thesis_state, holding_posture, what_changed,
+        news_fingerprint, technical_fingerprint, catalyst_fingerprint, thesis_summary, catalyst_summary,
+        earnings_date, insider_signal, next_review_due, escalation_reason, change_magnitude,
+        review_reason_code, material_change_detected, candidate_bucket_at_run, decision_run_id, state_version, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7::jsonb, $8,
+        $9, $10, $11, $12, $13, $14,
+        $15, $16, $17, $18, $19,
+        $20, $21, $22, $23, $24,
+        $25, $26, $27, $28, $29, CURRENT_TIMESTAMP
+      )
+      ON CONFLICT (symbol, run_date, run_time)
+      DO UPDATE SET
+        run_type = EXCLUDED.run_type,
+        review_depth = EXCLUDED.review_depth,
+        primary_pathway = EXCLUDED.primary_pathway,
+        secondary_pathways = EXCLUDED.secondary_pathways,
+        source = EXCLUDED.source,
+        source_reasons = EXCLUDED.source_reasons,
+        last_action = EXCLUDED.last_action,
+        last_confidence = EXCLUDED.last_confidence,
+        thesis_state = EXCLUDED.thesis_state,
+        holding_posture = EXCLUDED.holding_posture,
+        what_changed = EXCLUDED.what_changed,
+        news_fingerprint = EXCLUDED.news_fingerprint,
+        technical_fingerprint = EXCLUDED.technical_fingerprint,
+        catalyst_fingerprint = EXCLUDED.catalyst_fingerprint,
+        thesis_summary = EXCLUDED.thesis_summary,
+        catalyst_summary = EXCLUDED.catalyst_summary,
+        earnings_date = EXCLUDED.earnings_date,
+        insider_signal = EXCLUDED.insider_signal,
+        next_review_due = EXCLUDED.next_review_due,
+        escalation_reason = EXCLUDED.escalation_reason,
+        change_magnitude = EXCLUDED.change_magnitude,
+        review_reason_code = EXCLUDED.review_reason_code,
+        material_change_detected = EXCLUDED.material_change_detected,
+        candidate_bucket_at_run = EXCLUDED.candidate_bucket_at_run,
+        decision_run_id = EXCLUDED.decision_run_id,
+        state_version = EXCLUDED.state_version,
+        updated_at = CURRENT_TIMESTAMP
+      RETURNING *`,
+      [
+        symbol,
+        runDate,
+        runTime,
+        runType,
+        reviewDepth,
+        primaryPathway,
+        JSON.stringify(secondaryPathways || []),
+        source,
+        sourceReasons,
+        lastAction,
+        lastConfidence,
+        thesisState,
+        holdingPosture,
+        whatChanged,
+        newsFingerprint,
+        technicalFingerprint,
+        catalystFingerprint,
+        thesisSummary,
+        catalystSummary,
+        earningsDate,
+        insiderSignal,
+        nextReviewDue,
+        escalationReason,
+        changeMagnitude,
+        reviewReasonCode,
+        materialChangeDetected,
+        candidateBucketAtRun,
+        decisionRunId,
+        stateVersion
+      ]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error upserting daily symbol state:', error);
+    throw error;
+  }
+}
+
+export async function getLatestDailySymbolStates(symbols = [], runDate = null) {
+  try {
+    const params = [];
+    let filters = '';
+
+    if (Array.isArray(symbols) && symbols.length > 0) {
+      params.push(symbols);
+      filters += ` AND symbol = ANY($${params.length})`;
+    }
+
+    if (runDate) {
+      params.push(runDate);
+      filters += ` AND run_date = $${params.length}`;
+    }
+
+    const result = await pool.query(
+      `SELECT DISTINCT ON (symbol) *
+       FROM daily_symbol_state
+       WHERE 1 = 1 ${filters}
+       ORDER BY symbol, run_date DESC, run_time DESC`,
+      params
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching latest daily symbol states:', error);
+    throw error;
+  }
+}
+
+export async function getActiveSaturdayWatchlist({ includePromoted = true } = {}) {
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM saturday_watchlist
+       WHERE status = 'active'
+          OR ($1 = TRUE AND promotion_status = 'promoted' AND status IN ('pending', 'active'))
+       ORDER BY COALESCE(opus_conviction, score, 0) DESC, added_date DESC`,
+      [includePromoted]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching active saturday watchlist:', error);
+    throw error;
+  }
+}
+
+const PATHWAY_PRIORITY = [
+  'deepValue',
+  'cashMachine',
+  'qarp',
+  'qualityCompounder',
+  'highGrowth',
+  'inflection',
+  'turnaround',
+  'overvalued',
+  'deteriorating',
+  'overextended',
+  'discovery'
+];
+
+function getPathwayPriority(pathway) {
+  const index = PATHWAY_PRIORITY.indexOf(pathway);
+  return index === -1 ? 999 : index;
+}
+
+export function pickCanonicalPathway(matchRows = []) {
+  const normalized = (matchRows || []).filter(Boolean);
+  if (normalized.length === 0) {
+    return {
+      primaryPathway: null,
+      secondaryPathways: [],
+      scoreSnapshot: {},
+      selectionRule: 'no_pathway_matches'
+    };
+  }
+
+  const sorted = [...normalized].sort((a, b) => {
+    const scoreDiff = Number(b.score || 0) - Number(a.score || 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    return getPathwayPriority(a.pathway) - getPathwayPriority(b.pathway);
+  });
+
+  const primary = sorted[0];
+  return {
+    primaryPathway: primary.pathway || null,
+    secondaryPathways: sorted.slice(1).map(row => row.pathway).filter(Boolean),
+    scoreSnapshot: Object.fromEntries(sorted.map(row => [row.pathway, Number(row.score || 0)])),
+    selectionRule: sorted.length > 1 ? 'highest_score_then_priority' : 'single_pathway_match'
+  };
+}
+
+export async function getCanonicalSaturdayWatchlistRows(statuses = ['active'], { includePromoted = true } = {}) {
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM saturday_watchlist
+       WHERE status = ANY($1::text[])
+          OR ($2 = TRUE AND promotion_status = 'promoted' AND status IN ('pending', 'active'))
+       ORDER BY COALESCE(opus_conviction, score, 0) DESC, added_date DESC`,
+      [statuses, includePromoted]
+    );
+
+    const bySymbol = new Map();
+    for (const row of result.rows) {
+      if (!bySymbol.has(row.symbol)) {
+        bySymbol.set(row.symbol, []);
+      }
+      bySymbol.get(row.symbol).push(row);
+    }
+
+    return [...bySymbol.values()].map(rows => {
+      const canonical = pickCanonicalPathway(rows);
+      const primaryRow = rows.find(row => row.pathway === canonical.primaryPathway) || rows[0];
+      return {
+        ...primaryRow,
+        primary_pathway: canonical.primaryPathway,
+        secondary_pathways: canonical.secondaryPathways,
+        pathway_scores_snapshot: canonical.scoreSnapshot,
+        pathway_selection_rule: canonical.selectionRule,
+        matched_pathways: rows.map(row => ({
+          pathway: row.pathway,
+          score: row.score,
+          status: row.status,
+          reasons: row.reasons
+        }))
+      };
+    });
+  } catch (error) {
+    console.error('Error fetching canonical saturday watchlist rows:', error);
+    throw error;
+  }
+}
+
+export async function getPromotedDiscoveryCandidates() {
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM saturday_watchlist
+       WHERE promotion_status = 'promoted'
+       ORDER BY promoted_at DESC NULLS LAST, score DESC NULLS LAST, added_date DESC`
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching promoted discovery candidates:', error);
+    throw error;
+  }
+}
+
+export async function promoteDiscoveryCandidate(payload) {
+  const {
+    symbol,
+    intent = 'LONG',
+    pathway = 'discovery',
+    assetClass = null,
+    sector = null,
+    industry = null,
+    score = null,
+    metrics = null,
+    reasons = null,
+    price = null,
+    promotionReason = 'discovery_trigger',
+    source = 'discovery'
+  } = payload;
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO saturday_watchlist (
+        symbol, intent, pathway, asset_class, sector, industry, score, metrics, reasons, price,
+        status, source, promotion_status, promotion_reason, promoted_at, added_date,
+        selection_source, screening_run_at, screening_score, review_priority,
+        selection_status_reason, analysis_ready, profile_required
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10,
+        'pending', $11, 'promoted', $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+        'discovery_promotion', CURRENT_TIMESTAMP, $7, 80, $12, FALSE, TRUE
+      )
+      ON CONFLICT (symbol, pathway)
+      DO UPDATE SET
+        intent = EXCLUDED.intent,
+        asset_class = EXCLUDED.asset_class,
+        sector = EXCLUDED.sector,
+        industry = EXCLUDED.industry,
+        score = EXCLUDED.score,
+        metrics = EXCLUDED.metrics,
+        reasons = EXCLUDED.reasons,
+        price = EXCLUDED.price,
+        status = 'pending',
+        source = EXCLUDED.source,
+        promotion_status = 'promoted',
+        promotion_reason = EXCLUDED.promotion_reason,
+        promoted_at = CURRENT_TIMESTAMP,
+        selection_source = 'discovery_promotion',
+        screening_run_at = COALESCE(saturday_watchlist.screening_run_at, CURRENT_TIMESTAMP),
+        screening_score = EXCLUDED.score,
+        review_priority = GREATEST(COALESCE(saturday_watchlist.review_priority, 50), 80),
+        selection_status_reason = EXCLUDED.promotion_reason,
+        analysis_ready = FALSE,
+        profile_required = TRUE
+      RETURNING *`,
+      [symbol, intent, pathway, assetClass, sector, industry, score, metrics ? JSON.stringify(metrics) : null, reasons, price, source, promotionReason]
+    );
+    return result.rows[0];
+  } catch (error) {
+    console.error('Error promoting discovery candidate:', error);
+    throw error;
   }
 }
 

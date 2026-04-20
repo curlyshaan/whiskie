@@ -194,8 +194,11 @@ class EmailAlerts {
       <h2>Earnings Reminder</h2>
       <p><strong>Symbol:</strong> ${reminder.symbol}</p>
       <p><strong>Earnings Date:</strong> ${reminder.earnings_date}</p>
-      <p><strong>Session:</strong> ${(reminder.earnings_session || 'unknown').replace(/_/g, ' ')}</p>
+      <p><strong>Session:</strong> ${((reminder.earnings_session || reminder.session_normalized || 'unknown')).replace(/_/g, ' ')}</p>
       ${reminder.earnings_time_raw ? `<p><strong>Timing Detail:</strong> ${reminder.earnings_time_raw}</p>` : ''}
+      ${reminder.primary_pathway ? `<p><strong>Primary Pathway:</strong> ${reminder.primary_pathway}</p>` : ''}
+      ${(reminder.secondary_pathways && reminder.secondary_pathways.length) ? `<p><strong>Secondary Pathways:</strong> ${reminder.secondary_pathways.join(', ')}</p>` : ''}
+      ${reminder.analysis_ready !== undefined && reminder.analysis_ready !== null ? `<p><strong>Analysis Ready:</strong> ${reminder.analysis_ready ? 'Yes' : 'No'}</p>` : ''}
       <hr>
       <h3>Latest Catalysts</h3>
       <pre>${reminder.prediction_catalyst_summary || reminder.catalyst_summary || 'No catalyst summary available.'}</pre>
