@@ -70,7 +70,7 @@ export async function analyzeBeforeEarnings(position) {
     console.log(`   Days until: ${position.daysUntil}`);
 
     // Get latest news
-    const news = await tavily.searchNews(`${position.symbol} earnings preview`, 3);
+    const news = await tavily.searchStructuredEarningsContext(position.symbol, { maxResults: 3 });
     const newsText = tavily.formatResults(news);
 
     // Get current price

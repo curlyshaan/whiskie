@@ -30,55 +30,35 @@ export function detectCatalysts(news = []) {
 }
 
 export async function researchCatalysts(symbol, pathway) {
-  const searches = [
+  const [catalystResults, positioningResults] = await Promise.allSettled([
+    tavily.searchStructuredStockContext(symbol, {
+      maxResults: 4,
+      depth: 'advanced',
+      topic: 'news',
+      timeRange: 'month',
+      includeDomains: SEARCH_DOMAINS
+    }),
+    tavily.searchStructuredMonitoringContext(symbol, {
+      maxResults: 3,
+      depth: 'basic',
+      topic: 'news',
+      timeRange: 'month',
+      includeDomains: SEARCH_DOMAINS
+    })
+  ]);
+
+  return [
     {
-      label: 'catalysts',
-      query: [
-        `${symbol} analyst estimates`,
-        `${symbol} guidance`,
-        `${symbol} product launch`,
-        `${symbol} partnership`,
-        `${symbol} regulation`,
-        `${symbol} catalyst`
-      ].join(' OR '),
-      options: {
-        depth: 'advanced',
-        topic: 'news',
-        timeRange: 'month',
-        maxResults: 4,
-        includeDomains: SEARCH_DOMAINS
-      }
+      query: 'catalysts',
+      results: catalystResults.status === 'fulfilled' ? (catalystResults.value || []) : [],
+      error: catalystResults.status === 'rejected' ? catalystResults.reason?.message : undefined
     },
     {
-      label: 'positioning',
-      query: [
-        `${symbol} insider buying`,
-        `${symbol} insider selling`,
-        `${symbol} analyst upgrade`,
-        `${symbol} analyst downgrade`,
-        `${symbol} industry trends ${pathway || ''}`.trim()
-      ].join(' OR '),
-      options: {
-        depth: 'basic',
-        topic: 'news',
-        timeRange: 'month',
-        maxResults: 3,
-        includeDomains: SEARCH_DOMAINS
-      }
+      query: 'positioning',
+      results: positioningResults.status === 'fulfilled' ? (positioningResults.value || []) : [],
+      error: positioningResults.status === 'rejected' ? positioningResults.reason?.message : undefined
     }
   ];
-
-  const results = [];
-  for (const search of searches) {
-    try {
-      const searchResults = await tavily.search(search.query, search.options);
-      results.push({ query: search.label, results: searchResults || [] });
-    } catch (error) {
-      results.push({ query: search.label, results: [], error: error.message });
-    }
-  }
-
-  return results;
 }
 
 export default {

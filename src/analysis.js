@@ -690,7 +690,7 @@ class AnalysisEngine {
       const technicals = await this.getTechnicalIndicators(symbol);
 
       // Get news
-      const news = await tavily.searchStockNews(symbol, 3);
+      const news = await tavily.searchStructuredMonitoringContext(symbol, { maxResults: 3 });
       const formattedNews = tavily.formatResults(news);
 
       // Get fundamentals (if available)
@@ -740,7 +740,7 @@ class AnalysisEngine {
       const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
 
       // Get news
-      const news = await tavily.searchStockNews(position.symbol, 3);
+      const news = await tavily.searchStructuredMonitoringContext(position.symbol, { maxResults: 3 });
       const formattedNews = tavily.formatResults(news);
 
       // Ask Claude to evaluate

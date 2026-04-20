@@ -1270,10 +1270,7 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       const marketNews = await tavily.searchMarketNews(8);
       const techNews = await tavily.searchSectorNews('technology', 3);
       const healthNews = await tavily.searchSectorNews('healthcare', 3);
-      const macroResults = await tavily.searchNews(
-        'Federal Reserve interest rates inflation earnings season 2026',
-        5
-      );
+      const macroResults = await tavily.searchStructuredMacroContext({ maxResults: 5 });
       const allNews = [...marketNews, ...techNews, ...healthNews, ...macroResults];
 
       // Sanitize news content to prevent prompt injection

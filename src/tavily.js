@@ -149,6 +149,24 @@ class TavilyAPI {
     });
   }
 
+  async searchStructuredMonitoringContext(symbol, options = {}) {
+    const maxResults = options.maxResults || 4;
+    const query = [
+      `${symbol} earnings guidance OR outlook`,
+      `${symbol} analyst upgrade OR analyst downgrade OR price target`,
+      `${symbol} product launch OR customer announcement OR partnership`,
+      `${symbol} litigation OR investigation OR recall OR management change`
+    ].join(' OR ');
+
+    return await this.search(query, {
+      depth: options.depth || 'advanced',
+      topic: options.topic || 'news',
+      timeRange: options.timeRange || 'month',
+      maxResults,
+      includeDomains: options.includeDomains || []
+    });
+  }
+
   async searchStructuredEarningsContext(symbol, options = {}) {
     const maxResults = options.maxResults || 5;
     const query = [
@@ -163,6 +181,42 @@ class TavilyAPI {
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
       timeRange: options.timeRange || 'month',
+      maxResults,
+      includeDomains: options.includeDomains || []
+    });
+  }
+
+  async searchStructuredPremarketContext(symbol, options = {}) {
+    const maxResults = options.maxResults || 2;
+    const query = [
+      `${symbol} premarket move`,
+      `${symbol} earnings OR guidance OR analyst`,
+      `${symbol} upgrade OR downgrade OR price target`,
+      `${symbol} merger OR acquisition OR investigation`
+    ].join(' OR ');
+
+    return await this.search(query, {
+      depth: options.depth || 'basic',
+      topic: options.topic || 'news',
+      timeRange: options.timeRange || 'day',
+      maxResults,
+      includeDomains: options.includeDomains || []
+    });
+  }
+
+  async searchStructuredMacroContext(options = {}) {
+    const maxResults = options.maxResults || 5;
+    const query = [
+      'Federal Reserve interest rates',
+      'inflation CPI PPI',
+      'jobs unemployment payrolls',
+      'earnings season guidance'
+    ].join(' OR ');
+
+    return await this.search(query, {
+      depth: options.depth || 'advanced',
+      topic: options.topic || 'news',
+      timeRange: options.timeRange || 'week',
       maxResults,
       includeDomains: options.includeDomains || []
     });

@@ -298,7 +298,7 @@ class OrderManager {
       console.log(`\n🔍 Analyzing orders for ${symbol}...`);
 
       // Get recent news
-      const news = await tavily.searchStockNews(symbol, 5);
+      const news = await tavily.searchStructuredMonitoringContext(symbol, { maxResults: 5 });
       const formattedNews = tavily.formatResults(news);
 
       // Get order info

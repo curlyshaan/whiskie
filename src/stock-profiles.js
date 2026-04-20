@@ -386,7 +386,7 @@ async function updateStockProfile(symbol, existingProfile) {
     const fundamentals = await fmp.getFundamentals(symbol);
 
     console.log('  📰 Fetching recent news...');
-    const news = await tavily.search(`${symbol} stock news earnings catalyst`, 3);
+    const news = await tavily.searchStructuredStockContext(symbol, { maxResults: 3 });
 
     // Build incremental update prompt
     const updatePrompt = `Update the stock profile for ${symbol} with latest information.

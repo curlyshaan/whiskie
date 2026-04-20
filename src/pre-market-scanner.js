@@ -62,7 +62,7 @@ export async function runPreMarketScan() {
       // Fetch quick news for significant gaps (>3%)
       if (Math.abs(gapPct) > 3) {
         try {
-          const news = await tavily.searchNews(`${quote.symbol} stock news today`, 2);
+          const news = await tavily.searchStructuredPremarketContext(quote.symbol, { maxResults: 2 });
           gapInfo.newsHeadlines = tavily.formatResults(news);
         } catch (e) {
           gapInfo.newsHeadlines = 'News unavailable';
