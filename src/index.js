@@ -56,6 +56,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 8080;
 const CRON_JOBS_ENABLED = process.env.ENABLE_SCHEDULED_JOBS === 'true';
+let profileBuildRun = null;
 
 app.use(express.json());
 
@@ -741,11 +742,27 @@ class WhiskieBot {
 
     app.post('/api/trigger-profile-build-watchlist', async (req, res) => {
       try {
-        console.log('📡 Building/updating profiles for stocks in saturday_watchlist');
+        if (profileBuildRun?.isRunning) {
+          res.status(409).json({
+            success: false,
+            error: `Profile build already running (${profileBuildRun.runId}). Check logs for progress.`
+          });
+          return;
+        }
+
+        const runId = `profiles-${Date.now()}`;
+        profileBuildRun = {
+          isRunning: true,
+          runId,
+          startedAt: new Date().toISOString()
+        };
+
+        console.log(`📡 [${runId}] Building/updating profiles for stocks in saturday_watchlist`);
         (async () => {
           try {
             const db = await import('./db.js');
-            const stockProfiles = await import('./stock-profiles.js');
+            const stockProfilesModule = await import('./stock-profiles.js');
+            const stockProfiles = stockProfilesModule.default;
 
             // Get pending stocks from saturday_watchlist for pre-Opus profile building
             const watchlistResult = await db.query(
@@ -753,52 +770,36 @@ class WhiskieBot {
               ['pending']
             );
 
-            // Get existing profiles with their last_updated timestamps
-            const profilesResult = await db.query(
-              'SELECT symbol, last_updated FROM stock_profiles'
-            );
-
             const watchlistSymbols = watchlistResult.rows.map(r => r.symbol);
-            const existingProfiles = new Map(
-              profilesResult.rows.map(r => [r.symbol, r.last_updated])
-            );
+            console.log(`[${runId}] Watchlist stocks: ${watchlistSymbols.length}`);
 
-            console.log(`Watchlist stocks: ${watchlistSymbols.length}, Existing profiles: ${existingProfiles.size}`);
-
-            let newProfiles = 0;
-            let incrementalUpdates = 0;
+            let completed = 0;
             let failed = 0;
 
             for (const symbol of watchlistSymbols) {
               try {
-                const hasProfile = existingProfiles.has(symbol);
-
-                if (hasProfile) {
-                  // Incremental update for existing profiles
-                  console.log(`[${newProfiles + incrementalUpdates + failed + 1}/${watchlistSymbols.length}] Updating ${symbol} (incremental)...`);
-                  await stockProfiles.updateStockProfile(symbol); // Uses incremental update logic
-                  incrementalUpdates++;
-                } else {
-                  // Full build for new profiles
-                  console.log(`[${newProfiles + incrementalUpdates + failed + 1}/${watchlistSymbols.length}] Building ${symbol} (new)...`);
-                  await stockProfiles.buildStockProfile(symbol);
-                  newProfiles++;
-                }
+                console.log(`[${runId}] [${completed + failed + 1}/${watchlistSymbols.length}] Processing ${symbol}...`);
+                await stockProfiles.buildStockProfile(symbol);
+                completed++;
 
                 // 3-second delay between profiles to avoid rate limiting
                 await new Promise(resolve => setTimeout(resolve, 3000));
               } catch (error) {
-                console.error(`Failed ${symbol}: ${error.message}`);
+                console.error(`[${runId}] Failed ${symbol}: ${error.message}`);
                 failed++;
               }
             }
 
-            console.log(`✅ Profile building complete: ${newProfiles} new, ${incrementalUpdates} updated, ${failed} failed`);
+            console.log(`[${runId}] ✅ Profile building complete: ${completed} processed, ${failed} failed`);
           } catch (error) {
-            console.error('❌ Error in profile building:', error);
+            console.error(`[${runId}] ❌ Error in profile building:`, error);
+          } finally {
+            if (profileBuildRun?.runId === runId) {
+              profileBuildRun = null;
+            }
           }
         })();
-        res.json({ success: true, message: `Building/updating profiles for saturday_watchlist stocks. Check logs for progress.` });
+        res.json({ success: true, runId, message: `Building/updating profiles for saturday_watchlist stocks. Check logs for progress.` });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }

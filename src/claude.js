@@ -36,10 +36,10 @@ class ClaudeAPI {
    */
   async sendMessage(messages, model = MODELS.OPUS, systemPrompt = null, enableThinking = false, thinkingBudget = 50000, options = {}) {
     try {
-      const { quiet = false } = options;
+      const { quiet = false, maxTokens = 16000 } = options;
       const payload = {
         model,
-        max_tokens: 16000,
+        max_tokens: maxTokens,
         messages
       };
 

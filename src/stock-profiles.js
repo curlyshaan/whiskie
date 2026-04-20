@@ -4,6 +4,124 @@ import fmp from './fmp.js';
 import tradier from './tradier.js';
 import tavily from './tavily.js';
 
+function createProfileTimer(symbol, phase = 'full') {
+  const startedAt = Date.now();
+  let lastStepAt = startedAt;
+
+  return {
+    step(stepName) {
+      const now = Date.now();
+      const elapsedSeconds = ((now - lastStepAt) / 1000).toFixed(1);
+      const totalSeconds = ((now - startedAt) / 1000).toFixed(1);
+      console.log(`  ⏱️ [${symbol}] ${phase}:${stepName} took ${elapsedSeconds}s (total ${totalSeconds}s)`);
+      lastStepAt = now;
+    },
+    finish(label = 'complete') {
+      const totalSeconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      console.log(`  🏁 [${symbol}] ${phase}:${label} total ${totalSeconds}s`);
+    }
+  };
+}
+
+function buildProfileContext(symbol, fundamentals, historicalData, news) {
+  return `Build a detailed stock profile for ${symbol} using the data below.
+
+**Fundamentals (FMP):**
+${JSON.stringify(fundamentals, null, 2)}
+
+**Price History (1 year):**
+- Current: $${historicalData[historicalData.length - 1]?.close || 'N/A'}
+- 52-week high: $${Math.max(...historicalData.map(d => d.high)).toFixed(2)}
+- 52-week low: $${Math.min(...historicalData.map(d => d.low)).toFixed(2)}
+- YTD return: ${(((historicalData[historicalData.length - 1]?.close - historicalData[0]?.close) / historicalData[0]?.close) * 100).toFixed(1)}%
+
+**Recent News:**
+${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 200)}...`).join('\n\n')}`;
+}
+
+async function generateProfileSections(symbol, contextPrompt, timer) {
+  const sectionCalls = [
+    {
+      name: 'core-business',
+      maxTokens: 9000,
+      prompt: `${contextPrompt}
+
+Return only these sections with exact headers:
+
+BUSINESS_MODEL
+MOATS
+COMPETITIVE_ADVANTAGES
+
+Requirements:
+- Keep each section under 2000 characters
+- Be concise and decision-useful
+- For MOATS, identify 3-5 moats, rate each Strong/Moderate/Weak, and explain why`
+    },
+    {
+      name: 'competition-management',
+      maxTokens: 9000,
+      prompt: `${contextPrompt}
+
+Return only these sections with exact headers:
+
+COMPETITIVE_LANDSCAPE
+MANAGEMENT_QUALITY
+VALUATION_FRAMEWORK
+
+Requirements:
+- Keep each section under 2000 characters
+- Be concise and decision-useful
+- Include top competitors, management capital allocation, and valuation lens`
+    },
+    {
+      name: 'risks-catalysts-metadata',
+      maxTokens: 9000,
+      prompt: `${contextPrompt}
+
+Return only these sections with exact headers:
+
+FUNDAMENTALS_SUMMARY
+RISKS
+CATALYSTS
+METADATA
+
+Requirements:
+- Keep FUNDAMENTALS_SUMMARY, RISKS, and CATALYSTS under 2000 characters each
+- METADATA must use this exact format:
+Industry sector: [text]
+Market cap category: [mega/large/mid/small]
+Growth stage: [hyper_growth/growth/mature/turnaround/declining]
+Insider ownership: [X.X%]
+Institutional ownership: [X.X%]
+Last earnings date: [YYYY-MM-DD or "N/A"]
+Next earnings date: [YYYY-MM-DD or "N/A"]
+Key metrics: {"primary": ["revenue_growth", "operating_margin"], "thresholds": {"revenue_growth": {"concern": 0.10, "target": 0.20}}}`
+    }
+  ];
+
+  const sectionOutputs = [];
+
+  for (const sectionCall of sectionCalls) {
+    console.log(`  🤔 Running Gemini 3.1 Pro profile section: ${sectionCall.name}...`);
+    const startedAt = Date.now();
+    const response = await claude.sendMessage(
+      [{ role: 'user', content: sectionCall.prompt }],
+      MODELS.GEMINI_PRO,
+      null,
+      false,
+      20000,
+      { maxTokens: sectionCall.maxTokens }
+    );
+    const duration = ((Date.now() - startedAt) / 1000).toFixed(1);
+    console.log(`  ✅ Section ${sectionCall.name} complete (${duration}s)`);
+    timer.step(`llm-${sectionCall.name}`);
+    const text = response?.content?.map(block => block?.text || '').join('\n').trim() || '';
+    sectionOutputs.push(text);
+  }
+
+  return sectionOutputs.filter(Boolean).join('\n\n');
+}
+
 /**
  * Stock Profiles Module
  * Manages comprehensive stock research profiles for efficient daily analysis
@@ -188,10 +306,12 @@ export async function getStaleProfiles(daysOld = 14) {
  */
 export async function buildStockProfile(symbol) {
   console.log(`\n🔬 Building profile for ${symbol}...`);
+  const timer = createProfileTimer(symbol, 'full');
 
   try {
     // Check if profile already exists
     const existingProfile = await getStockProfile(symbol);
+    timer.step('load-existing-profile');
 
     // Check if stock should be skipped
     if (existingProfile && existingProfile.quality_flag !== 'active') {
@@ -219,6 +339,7 @@ export async function buildStockProfile(symbol) {
     // Fetch comprehensive data from multiple sources
     console.log('  📊 Fetching fundamentals from FMP...');
     const fundamentals = await fmp.getFundamentals(symbol);
+    timer.step('fetch-fundamentals');
 
     // Quality check: filter out low-quality stocks
     const qualityCheck = checkStockQuality(symbol, fundamentals);
@@ -240,8 +361,6 @@ export async function buildStockProfile(symbol) {
       return { symbol, skipped: true, reason: qualityCheck.reason };
     }
 
-    console.log('  📊 Fetching fundamentals from FMP...');
-
     console.log('  📈 Fetching historical data from FMP...');
     const formatDate = (date) => date.toISOString().split('T')[0];
     const historicalData = await fmp.getHistoricalPriceEodFull(
@@ -249,6 +368,7 @@ export async function buildStockProfile(symbol) {
       formatDate(new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)),
       formatDate(new Date())
     );
+    timer.step('fetch-historical-data');
 
     console.log('  📰 Fetching recent news...');
     const news = await tavily.searchStructuredStockContext(symbol, {
@@ -257,100 +377,14 @@ export async function buildStockProfile(symbol) {
       topic: 'news',
       timeRange: 'month'
     });
+    timer.step('fetch-news');
 
-    // Build context for Opus deep research
-    const researchPrompt = `Conduct comprehensive research on ${symbol} and build a detailed stock profile.
-
-**Available Data:**
-
-**Fundamentals (FMP):**
-${JSON.stringify(fundamentals, null, 2)}
-
-**Price History (1 year):**
-- Current: $${historicalData[historicalData.length - 1]?.close || 'N/A'}
-- 52-week high: $${Math.max(...historicalData.map(d => d.high)).toFixed(2)}
-- 52-week low: $${Math.min(...historicalData.map(d => d.low)).toFixed(2)}
-- YTD return: ${(((historicalData[historicalData.length - 1]?.close - historicalData[0]?.close) / historicalData[0]?.close) * 100).toFixed(1)}%
-
-**Recent News:**
-${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 200)}...`).join('\n\n')}
-
-**Your Task:** Create a comprehensive stock profile with the following sections. CRITICAL: Summarize each descriptive section in 2000 characters or less.
-
-1. **BUSINESS_MODEL** (MAX 2000 chars)
-   - What does the company do? How do they make money?
-   - Revenue streams, customer segments, key products/services
-   - Business model sustainability and scalability
-
-2. **MOATS** (MAX 2000 chars)
-   - Identify 3-5 competitive moats (network effects, brand, switching costs, scale, IP, regulatory)
-   - Rate strength of each moat (Strong/Moderate/Weak)
-   - Explain why each moat is defensible
-
-3. **COMPETITIVE_ADVANTAGES** (MAX 2000 chars)
-   - What makes this company better than competitors?
-   - Market position, technological edge, operational excellence
-
-4. **COMPETITIVE_LANDSCAPE** (MAX 2000 chars)
-   - Top 3-5 competitors and market share
-   - Pricing dynamics and competitive threats
-   - Industry structure and barriers to entry
-
-5. **MANAGEMENT_QUALITY** (MAX 2000 chars)
-   - Capital allocation track record (buybacks, dividends, M&A)
-   - Insider ownership percentage
-   - Execution history and strategic vision
-
-6. **VALUATION_FRAMEWORK** (MAX 2000 chars)
-   - Primary valuation method (DCF, P/E, EV/EBITDA, etc.)
-   - Key multiples vs peers and historical average
-   - Normalized earnings and growth assumptions
-
-7. **FUNDAMENTALS_SUMMARY** (structured analysis)
-   - Revenue growth trajectory and sustainability
-   - Profitability metrics (margins, ROIC, ROE)
-   - Balance sheet strength (debt levels, cash position)
-   - Capital allocation (buybacks, dividends, M&A)
-
-8. **RISKS** (MAX 2000 chars)
-   - Identify 5-7 key risks (competitive, regulatory, execution, macro, valuation)
-   - Rate severity (High/Medium/Low)
-   - Explain potential impact
-
-9. **CATALYSTS** (MAX 2000 chars)
-   - Near-term catalysts (next 3-6 months)
-   - Medium-term catalysts (6-18 months)
-   - Long-term thesis drivers (2+ years)
-
-10. **METADATA** (REQUIRED - use exact format below)
-
-   Industry sector: [e.g., "Technology - Software", "Healthcare - Biotech"]
-   Market cap category: [mega/large/mid/small based on: mega >$200B, large $10-200B, mid $2-10B, small <$2B]
-   Growth stage: [hyper_growth/growth/mature/turnaround/declining]
-   Insider ownership: [X.X%]
-   Institutional ownership: [X.X%]
-   Last earnings date: [YYYY-MM-DD or "N/A"]
-   Next earnings date: [YYYY-MM-DD or "N/A"]
-   Key metrics: {"primary": ["revenue_growth", "operating_margin"], "thresholds": {"revenue_growth": {"concern": 0.10, "target": 0.20}}}
-
-**Output Format:**
-Structure your response with clear section headers. Keep every descriptive section at 2000 characters or less. The METADATA section is REQUIRED and must use the exact format shown above. Be thorough but concise. Focus on insights that will be useful for daily trading decisions.`;
-
-    console.log('  🤔 Running Gemini 3.1 Pro deep research (10-20k tokens)...');
-    const researchStart = Date.now();
-    const research = await claude.sendMessage(
-      [{ role: 'user', content: researchPrompt }],
-      MODELS.GEMINI_PRO,
-      null,
-      false,
-      20000
-    );
-    const researchDuration = ((Date.now() - researchStart) / 1000).toFixed(1);
-    console.log(`  ✅ Research complete (${researchDuration}s)`);
+    const profileContext = buildProfileContext(symbol, fundamentals, historicalData, news);
+    const researchText = await generateProfileSections(symbol, profileContext, timer);
 
     // Parse model response into structured profile
-    const researchText = research?.content?.map(block => block?.text || '').join('\n').trim() || '';
     const profile = parseResearchIntoProfile(symbol, researchText, fundamentals);
+    timer.step('parse-profile');
     profile.profile_status = 'active';
     profile.refresh_tier = 'full';
     profile.last_full_refresh_at = new Date();
@@ -366,11 +400,14 @@ Structure your response with clear section headers. Keep every descriptive secti
     // Save to database
     console.log('  💾 Saving profile to database...');
     await saveStockProfile(profile);
+    timer.step('save-profile');
 
     console.log(`✅ Profile for ${symbol} complete`);
+    timer.finish();
     return profile;
 
   } catch (error) {
+    timer.finish('failed');
     console.error(`❌ Error building profile for ${symbol}:`, error.message);
     throw error;
   }
@@ -380,13 +417,16 @@ Structure your response with clear section headers. Keep every descriptive secti
  * Incremental update for existing profile (5k tokens)
  */
 async function updateStockProfile(symbol, existingProfile) {
+  const timer = createProfileTimer(symbol, 'incremental');
   try {
     // Fetch latest fundamentals and news
     console.log('  📊 Fetching latest fundamentals...');
     const fundamentals = await fmp.getFundamentals(symbol);
+    timer.step('fetch-fundamentals');
 
     console.log('  📰 Fetching recent news...');
     const news = await tavily.searchStructuredStockContext(symbol, { maxResults: 3 });
+    timer.step('fetch-news');
 
     // Build incremental update prompt
     const updatePrompt = `Update the stock profile for ${symbol} with latest information.
@@ -425,6 +465,7 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
     );
     const updateDuration = ((Date.now() - updateStart) / 1000).toFixed(1);
     console.log(`  ✅ Update complete (${updateDuration}s)`);
+    timer.step('llm-update');
     const updateText = update?.content?.map(block => block?.text || '').join('\n').trim() || '';
 
     // Merge updates with existing profile (apply cleanText to enforce character limits)
@@ -468,11 +509,14 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
     // Save updated profile
     console.log('  💾 Saving updated profile...');
     await saveStockProfile(updatedProfile);
+    timer.step('save-profile');
 
     console.log(`✅ Incremental update for ${symbol} complete (saved 15k tokens vs full rebuild)`);
+    timer.finish();
     return updatedProfile;
 
   } catch (error) {
+    timer.finish('failed');
     console.error(`❌ Error updating profile for ${symbol}:`, error.message);
     throw error;
   }
