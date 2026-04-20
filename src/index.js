@@ -186,8 +186,8 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule earnings reminder processor at 3:00 PM ET
-      cron.schedule('0 15 * * 1-5', async () => {
+      // Schedule earnings reminder processor at 3:00 PM ET Sunday-Thursday
+      cron.schedule('0 15 * * 0-4', async () => {
         const scheduledTime = new Date();
         const jobId = await db.logCronJobStart('Earnings Reminder Processor', 'daily', scheduledTime);
 
