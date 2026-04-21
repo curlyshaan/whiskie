@@ -410,7 +410,9 @@ router.get('/', async (req, res) => {
         // Display results
         displayResults(data);
       } catch (error) {
-        alert('Error: ' + error.message);
+        console.error('Adhoc analysis request failed:', error);
+        const message = error && error.message ? error.message : String(error || 'Analysis failed');
+        alert('Error: ' + message);
       } finally {
         clearLoadingState();
       }
@@ -445,7 +447,9 @@ router.get('/', async (req, res) => {
 
         alert('Profile built successfully for ' + normalized + '. You can now rerun analysis.');
       } catch (error) {
-        alert('Profile build failed: ' + error.message);
+        console.error('Adhoc profile build request failed:', error);
+        const message = error && error.message ? error.message : String(error || 'Profile build failed');
+        alert('Profile build failed: ' + message);
       } finally {
         clearLoadingState();
       }
@@ -812,6 +816,25 @@ router.post('/build-profile', async (req, res) => {
   } catch (error) {
     console.error('❌ Error building adhoc stock profile:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/debug-build-profile', async (req, res) => {
+  try {
+    const symbol = String(req.query?.ticker || '').trim().toUpperCase();
+    if (!symbol) {
+      return res.status(400).json({ error: 'Ticker is required' });
+    }
+
+    console.log(`\n🔬 Debug stock profile build requested: ${symbol}`);
+    const profile = await stockProfiles.buildStockProfile(symbol);
+    res.json({ success: true, symbol, profile });
+  } catch (error) {
+    console.error('❌ Error in adhoc debug stock profile build:', error);
+    res.status(500).json({
+      error: error.message,
+      stack: error.stack
+    });
   }
 });
 
