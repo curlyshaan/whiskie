@@ -361,8 +361,18 @@ router.get('/', async (req, res) => {
     const loading = document.getElementById('loading');
     const loadingTitle = document.getElementById('loadingTitle');
     const loadingStatus = document.getElementById('loadingStatus');
+    const analyzerForm = document.getElementById('analyzerForm');
+    const analyzeButton = analyzerForm.querySelector('button[type="submit"]');
+    const buildProfileButton = document.getElementById('buildProfileButton');
+    let pendingProfileBuildTicker = null;
+
+    function setBusyState(isBusy) {
+      analyzeButton.disabled = isBusy;
+      buildProfileButton.disabled = isBusy;
+    }
 
     function setLoadingState(title, status = '') {
+      setBusyState(true);
       loadingTitle.textContent = title;
       loadingStatus.textContent = status;
       loading.classList.add('active');
@@ -370,6 +380,7 @@ router.get('/', async (req, res) => {
     }
 
     function clearLoadingState() {
+      setBusyState(false);
       loading.classList.remove('active');
       loadingTitle.textContent = 'Analyzing with Opus extended thinking (30k tokens)...';
       loadingStatus.textContent = '';
@@ -440,6 +451,12 @@ router.get('/', async (req, res) => {
     async function buildProfile(symbol) {
       const normalized = String(symbol || '').toUpperCase().trim();
       if (!normalized) return;
+      if (pendingProfileBuildTicker === normalized) {
+        console.log('Adhoc profile build already in progress for', normalized);
+        return;
+      }
+
+      pendingProfileBuildTicker = normalized;
 
       setLoadingState(
         'Building stock profile...',
@@ -470,6 +487,7 @@ router.get('/', async (req, res) => {
         const message = error && error.message ? error.message : String(error || 'Profile build failed');
         alert('Profile build failed: ' + message);
       } finally {
+        pendingProfileBuildTicker = null;
         clearLoadingState();
       }
     }

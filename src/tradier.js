@@ -205,6 +205,11 @@ class TradierAPI {
       });
       return response.data.order;
     } catch (error) {
+      const status = error.response?.status;
+      const method = (error.config?.method || 'post').toUpperCase();
+      const path = error.request?.path || error.config?.url || `/accounts/${accountId}/orders`;
+      const body = JSON.stringify(error.response?.data || {}).slice(0, 500);
+      console.error(`[TradierOrderError] status=${status || 'unknown'} method=${method} path=${path} body=${body}`);
       console.error(`Error placing ${side} order for ${symbol}:`, error.message);
       throw error;
     }
