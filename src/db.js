@@ -1436,6 +1436,11 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      ALTER TABLE options_analysis_runs
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    `);
+
+    await client.query(`
       CREATE INDEX IF NOT EXISTS idx_options_analysis_runs_symbol ON options_analysis_runs(symbol);
     `);
 
@@ -3005,14 +3010,29 @@ export async function saveOptionsAnalysisRun(run) {
 }
 
 export async function getRecentOptionsAnalysisRuns(limit = 20) {
-  const result = await pool.query(
-    `SELECT *
-     FROM options_analysis_runs
-     ORDER BY created_at DESC
-     LIMIT $1`,
-    [limit]
-  );
-  return result.rows;
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM options_analysis_runs
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+    return result.rows;
+  } catch (error) {
+    if (error?.code === '42703') {
+      const fallback = await pool.query(
+        `SELECT *,
+                CURRENT_TIMESTAMP AS created_at
+         FROM options_analysis_runs
+         ORDER BY id DESC
+         LIMIT $1`,
+        [limit]
+      );
+      return fallback.rows;
+    }
+    throw error;
+  }
 }
 
 /**
