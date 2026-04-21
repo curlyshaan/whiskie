@@ -195,13 +195,23 @@ function mapLegacyEarningsTime(value) {
 
 function normalizeTimingPayload(rawTiming, fallbackDate) {
   const earningsDate = toIsoDate(rawTiming?.earningsDate) || toIsoDate(fallbackDate) || fallbackDate || null;
-  const earningsTimeRaw = rawTiming?.earningsTimeRaw || null;
+  const rawTimeInput = String(rawTiming?.earningsTimeRaw || '').trim();
+  const normalizedShortTime = rawTimeInput
+    ? rawTimeInput
+        .replace(/\s*(EDT|EST|ET|UTC|GMT)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 10)
+    : null;
+  const source = String(rawTiming?.source || 'unknown').trim().toLowerCase().slice(0, 20) || 'unknown';
+  const mappedSession = rawTiming?.earningsSession || mapLegacyEarningsTime(rawTimeInput) || normalizeSession(rawTimeInput) || 'unknown';
+  const earningsSession = String(mappedSession).trim().toLowerCase().replace(/\s+/g, '_').slice(0, 20) || 'unknown';
   return {
     symbol: rawTiming?.symbol || null,
     earningsDate,
-    earningsTimeRaw,
-    earningsSession: rawTiming?.earningsSession || mapLegacyEarningsTime(earningsTimeRaw) || 'unknown',
-    source: rawTiming?.source || 'unknown'
+    earningsTimeRaw: normalizedShortTime,
+    earningsSession,
+    source
   };
 }
 
