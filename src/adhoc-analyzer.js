@@ -394,7 +394,8 @@ router.get('/', async (req, res) => {
       setLoadingState('Checking stock profile and running adhoc analysis...', 'If no stock profile exists in the DB, Whiskie will build it first and then continue automatically.');
 
       try {
-        const response = await fetch('/adhoc-analyzer/analyze', {
+        const analysisUrl = new URL('/adhoc-analyzer/analyze', window.location.origin);
+        const response = await fetch(analysisUrl.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -425,7 +426,8 @@ router.get('/', async (req, res) => {
       );
 
       try {
-        const response = await fetch('/adhoc-analyzer/build-profile', {
+        const buildUrl = new URL('/adhoc-analyzer/build-profile', window.location.origin);
+        const response = await fetch(buildUrl.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ticker: normalized })

@@ -65,6 +65,49 @@ class PreRanking {
     return 0;
   }
 
+  async getEarningsMap() {
+    const result = await db.query(
+      `SELECT DISTINCT ON (symbol)
+         symbol,
+         earnings_date,
+         earnings_time,
+         session_normalized,
+         timing_raw,
+         timing_source,
+         source_primary,
+         source_priority,
+         last_verified_at
+       FROM earnings_calendar
+       WHERE earnings_date >= CURRENT_DATE - INTERVAL '3 days'
+         AND earnings_date <= CURRENT_DATE + INTERVAL '7 days'
+       ORDER BY symbol,
+                earnings_date ASC,
+                source_priority DESC,
+                last_verified_at DESC`
+    );
+
+    const earningsMap = new Map();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    for (const earning of result.rows) {
+      const earningsDate = new Date(earning.earnings_date);
+      earningsDate.setHours(0, 0, 0, 0);
+      const daysUntilEarnings = Math.floor((earningsDate - today) / (1000 * 60 * 60 * 24));
+
+      earningsMap.set(earning.symbol, {
+        date: earning.earnings_date,
+        daysUntil: daysUntilEarnings,
+        earningsTime: earning.earnings_time || null,
+        sessionNormalized: earning.session_normalized || 'unknown',
+        timingRaw: earning.timing_raw || earning.earnings_time || null,
+        timingSource: earning.timing_source || earning.source_primary || 'unknown'
+      });
+    }
+
+    return earningsMap;
+  }
+
   /**
    * Pre-rank all stocks and return top candidates
    * Returns: { longs: [], shorts: [], filtered: [] }
@@ -198,19 +241,7 @@ class PreRanking {
 
     // Get earnings calendar and filter candidates
     console.log(`\n   📅 Fetching earnings calendar...`);
-    const earningsCalendar = await fmp.getEarningsCalendar();
-    const earningsMap = new Map();
-    const today = new Date();
-
-    for (const earning of earningsCalendar) {
-      const earningDate = new Date(earning.date);
-      const daysUntilEarnings = Math.floor((earningDate - today) / (1000 * 60 * 60 * 24));
-
-      // Track earnings from -3 days (just reported) to +7 days (upcoming)
-      if (daysUntilEarnings >= -3 && daysUntilEarnings <= 7) {
-        earningsMap.set(earning.symbol, { date: earning.date, daysUntil: daysUntilEarnings });
-      }
-    }
+    const earningsMap = await this.getEarningsMap();
 
     console.log(`   ✅ Found ${earningsMap.size} stocks with earnings in range (-3 to +7 days)`);
     console.log(`   💡 Stocks with earnings -1 to -3 days (just reported) are ALLOWED for post-earnings dip opportunities`);
