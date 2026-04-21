@@ -8,11 +8,30 @@ import { researchCatalysts } from './catalyst-research.js';
 import stockProfiles from './stock-profiles.js';
 
 const router = express.Router();
+const activeProfileBuilds = new Map();
 
 /**
  * AdhocAnalyzer - Manual stock analysis tool
  * Analyzes any stock with Opus extended thinking
  */
+
+function ensureSingleProfileBuild(symbol, logLabel, buildFn) {
+  if (activeProfileBuilds.has(symbol)) {
+    console.log(`   ⏳ Reusing in-progress stock profile build for ${symbol} (${logLabel})`);
+    return activeProfileBuilds.get(symbol);
+  }
+
+  const buildPromise = (async () => {
+    try {
+      return await buildFn();
+    } finally {
+      activeProfileBuilds.delete(symbol);
+    }
+  })();
+
+  activeProfileBuilds.set(symbol, buildPromise);
+  return buildPromise;
+}
 
 /**
  * Main analyzer page
@@ -660,7 +679,7 @@ router.post('/analyze', async (req, res) => {
 
     if (!hasProfile) {
       console.log(`   🔬 No stock profile found for ${symbol}; building before adhoc analysis...`);
-      await stockProfiles.buildStockProfile(symbol);
+      await ensureSingleProfileBuild(symbol, 'adhoc-analysis', () => stockProfiles.buildStockProfile(symbol));
       profileCheck = await db.query(
         'SELECT * FROM stock_profiles WHERE symbol = $1',
         [symbol]
@@ -811,8 +830,9 @@ router.post('/build-profile', async (req, res) => {
     }
 
     console.log(`\n🔬 Manual stock profile build requested: ${symbol}`);
-    const profile = await stockProfiles.buildStockProfile(symbol);
-    res.json({ success: true, symbol, profile });
+    const reusedExistingBuild = activeProfileBuilds.has(symbol);
+    const profile = await ensureSingleProfileBuild(symbol, 'manual-build', () => stockProfiles.buildStockProfile(symbol));
+    res.json({ success: true, symbol, profile, reusedExistingBuild });
   } catch (error) {
     console.error('❌ Error building adhoc stock profile:', error);
     res.status(500).json({ error: error.message });
@@ -827,8 +847,9 @@ router.get('/debug-build-profile', async (req, res) => {
     }
 
     console.log(`\n🔬 Debug stock profile build requested: ${symbol}`);
-    const profile = await stockProfiles.buildStockProfile(symbol);
-    res.json({ success: true, symbol, profile });
+    const reusedExistingBuild = activeProfileBuilds.has(symbol);
+    const profile = await ensureSingleProfileBuild(symbol, 'debug-build', () => stockProfiles.buildStockProfile(symbol));
+    res.json({ success: true, symbol, profile, reusedExistingBuild });
   } catch (error) {
     console.error('❌ Error in adhoc debug stock profile build:', error);
     res.status(500).json({
