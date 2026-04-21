@@ -1902,7 +1902,7 @@ ${trendContext}`;
 
       // Use pre-ranked stocks directly as candidates (no Opus Phase 1 needed)
       const phase1Duration = ((Date.now() - phase1Start) / 1000).toFixed(1);
-      const candidates = this.selectCandidatesForRun(preRankedStocks, stateSnapshot.symbolStates, runProfile);
+      const candidates = this.selectCandidatesForRun(preRankedStocks, [], runProfile);
 
       console.log(`✅ Phase 1 complete (${phase1Duration}s)`);
       console.log('');
@@ -1948,7 +1948,18 @@ ${trendContext}`;
         technicalData
       });
       const dailyStateSummary = await this.syncDailySymbolState(stateSnapshot);
-      const selectedStateSummary = this.buildSelectedStateSummary(candidates, stateSnapshot.symbolStates);
+      const candidatesForPrompting = this.selectCandidatesForRun(preRankedStocks, stateSnapshot.symbolStates, runProfile);
+      const selectedStateSummary = this.buildSelectedStateSummary(candidatesForPrompting, stateSnapshot.symbolStates);
+      const weeklySelectionContext = '\n\n**WEEKLY SELECTION CONTEXT (hard prior):**\n'
+        + [...new Set([...candidatesForPrompting.longs.map(c => c.symbol), ...candidatesForPrompting.shorts.map(c => c.symbol)])]
+          .map(symbol => {
+            const watchMeta = watchlistMetadataBySymbol[symbol];
+            if (!watchMeta) {
+              return `- ${symbol}: no weekly metadata; treat deterministic pre-ranking score/order as primary prior`;
+            }
+            return `- ${symbol}: weekly_source=${watchMeta.selection_source || watchMeta.source || 'unknown'}, primary_pathway=${watchMeta.primary_pathway || watchMeta.pathway || 'unknown'}, secondary_pathways=${(watchMeta.secondary_pathways || []).join(', ') || 'none'}, analysis_ready=${watchMeta.analysis_ready ? 'yes' : 'no'}, rank=${watchMeta.selection_rank_within_pathway ?? 'n/a'}, review_priority=${watchMeta.review_priority ?? 'n/a'}`;
+          })
+          .join('\n');
 
       // Get market regime for allocation guidance
       console.log('📈 Detecting market regime...');
@@ -2056,6 +2067,7 @@ Take your time with each stock. Don't rush through the analysis. For stocks with
 Run mode: ${runProfile.runType}. If a stock was included because it is a light-refresh carryover rather than a deep-refresh trigger, keep the work concise and focus on whether anything important changed enough to overturn the prior thesis.
 ${learningContext}
 Use the weekly watchlist metadata, profile freshness metadata, and tactical review/change metadata as first-class decision inputs. If a stock is not analysis_ready, treat that as a negative unless the current change/catalyst clearly justifies overriding it.
+Treat the deterministic Phase 1 score/order as a HARD PRIOR, not a suggestion. A lower-scored stock should only beat a higher-scored stock when there is a material reason such as a stronger fresh catalyst, clearer tactical change, superior risk/reward, better regime fit, or a diversification need. If you override a higher-ranked stock, explicitly say so in the reasoning for that stock.
 **Input:** ${candidates.longs.length} long candidates from Phase 1
 
 **Long Candidates:**
@@ -2221,6 +2233,7 @@ Take your time with each stock. Don't rush through the analysis. For stocks with
 Run mode: ${runProfile.runType}. If a stock was included because it is a light-refresh carryover rather than a deep-refresh trigger, keep the work concise and focus on whether anything important changed enough to overturn the prior thesis.
 ${learningContext}
 Use the weekly watchlist metadata, profile freshness metadata, and tactical review/change metadata as first-class decision inputs. If a stock is not analysis_ready, treat that as a negative unless the current change/catalyst clearly justifies overriding it.
+Treat the deterministic Phase 1 score/order as a HARD PRIOR, not a suggestion. A lower-scored stock should only beat a higher-scored stock when there is a material reason such as a stronger fresh catalyst, clearer tactical change, superior risk/reward, better regime fit, or a diversification need. If you override a higher-ranked stock, explicitly say so in the reasoning for that stock.
 **Input:** ${candidates.shorts.length} short candidates from Phase 1
 
 **Short Candidates:**
@@ -2525,6 +2538,14 @@ This is NOT about "safe diversification" - it's about beating the benchmark thro
 3. Diversification Check: Max 30% in any single sector, balance growth/value and cyclical/defensive
 4. Position Sizing: High conviction + low vol (10-12%), High conviction + high vol (8-10%), Medium conviction (6-8%), Shorts (5-10%)
 5. Final Risk Assessment: Portfolio beta, sector concentration, event risk, liquidity
+6. Hard-prior override discipline: treat deterministic Phase 1 scores/order and Phase 2/3 decisions as the default prior. Only override a higher-ranked or previously preferred symbol when there is a material reason. Every override must explicitly populate:
+   - OVERRIDE_PHASE2_DECISION: YES
+   - OVERRIDE_SYMBOL: the symbol being displaced
+   - OVERRIDE_REASON: the concrete reason
+   If there is no override, set:
+   - OVERRIDE_PHASE2_DECISION: NO
+   - OVERRIDE_SYMBOL: NONE
+   - OVERRIDE_REASON: NONE
 
 **Output Format:**
 
