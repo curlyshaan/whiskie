@@ -58,6 +58,26 @@ const PORT = process.env.PORT || 8080;
 const CRON_JOBS_ENABLED = process.env.ENABLE_SCHEDULED_JOBS !== 'false';
 let profileBuildRun = null;
 
+function getEasternDateString(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(date);
+}
+
+function getNextTradingDayDateString(date = new Date()) {
+  const parts = getEasternDateString(date).split('-').map(Number);
+  const cursor = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+
+  do {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  } while ([0, 6].includes(cursor.getUTCDay()));
+
+  return cursor.toISOString().split('T')[0];
+}
+
 app.use(express.json());
 
 // Mount dashboard routes
@@ -230,12 +250,29 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      cron.schedule('15 16 * * 1-5', async () => {
+      cron.schedule('0 19 * * 0-4', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Earnings Next-Day Profile Prep', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ 7:00 PM ET - Preparing stock profiles for next-trading-day earnings');
+          await this.prepareProfilesForNextDayEarnings();
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Next-day earnings profile prep failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await email.sendErrorAlert(error, 'Next-day earnings profile prep failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      cron.schedule('0 11 * * 1-5', async () => {
         const scheduledTime = new Date();
         const jobId = await db.logCronJobStart('Earnings Predictor Grader', 'daily', scheduledTime);
 
         try {
-          console.log('\n⏰ 4:15 PM ET - Grading sent earnings predictors');
+          console.log('\n⏰ 11:00 AM ET - Grading eligible earnings predictors');
           await this.gradeEarningsReminders();
           await db.logCronJobComplete(jobId, true);
         } catch (error) {
@@ -398,13 +435,13 @@ class WhiskieBot {
                 } else {
                   // Profile is stale, incremental update
                   console.log(`   [${newProfiles + incrementalUpdates + skipped + failed + 1}/${watchlistSymbols.length}] Updating ${symbol} (incremental, ${daysSinceUpdate.toFixed(1)} days old)`);
-                  await stockProfiles.updateStockProfile(symbol);
+                  await stockProfiles.updateStockProfile(symbol, { last_updated: lastUpdated, symbol });
                   incrementalUpdates++;
                 }
               } else {
                 // No profile exists, full build
                 console.log(`   [${newProfiles + incrementalUpdates + skipped + failed + 1}/${watchlistSymbols.length}] Building ${symbol} (new profile)`);
-                await stockProfiles.buildStockProfile(symbol);
+                await stockProfiles.ensureFreshStockProfile(symbol);
                 newProfiles++;
               }
 
@@ -800,7 +837,7 @@ class WhiskieBot {
             for (const symbol of watchlistSymbols) {
               try {
                 console.log(`[${runId}] [${completed + failed + 1}/${watchlistSymbols.length}] Processing ${symbol}...`);
-                await stockProfiles.buildStockProfile(symbol);
+                await stockProfiles.ensureFreshStockProfile(symbol);
                 completed++;
 
                 // 3-second delay between profiles to avoid rate limiting
@@ -3923,8 +3960,7 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
       for (const reminder of dueReminders) {
         console.log(`⏰ Processing earnings reminder for ${reminder.symbol}`);
         const prediction = await earningsReminders.runOfficialReminderPrediction(reminder);
-        const updatedReminder = await db.markEarningsReminderSent(reminder.id, now, prediction);
-        await email.sendEarningsReminderEmail(updatedReminder);
+        const updatedReminder = await db.markEarningsReminderPredicted(reminder.id, now, prediction);
         processed.push(updatedReminder);
       }
 
@@ -3959,6 +3995,38 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
       console.error('Error grading earnings reminders:', error);
       throw error;
     }
+  }
+
+  async prepareProfilesForNextDayEarnings(now = new Date()) {
+    const nextTradingDay = getNextTradingDayDateString(now);
+    const result = await db.query(
+      `SELECT DISTINCT ec.symbol
+       FROM earnings_calendar ec
+       JOIN stock_universe su ON su.symbol = ec.symbol
+       WHERE ec.earnings_date = $1
+         AND COALESCE(su.earnings_tracking_eligible, TRUE) = TRUE
+         AND su.status = 'active'
+       ORDER BY ec.symbol ASC`,
+      [nextTradingDay]
+    );
+
+    if (!result.rows.length) {
+      console.log(`ℹ️ No earnings_calendar rows found for next trading day (${nextTradingDay})`);
+      return [];
+    }
+
+    const prepared = [];
+    for (const row of result.rows) {
+      try {
+        const ensured = await stockProfiles.ensureFreshStockProfile(row.symbol, { staleAfterDays: 14 });
+        console.log(`   ✅ ${row.symbol}: ${ensured.action}`);
+        prepared.push({ symbol: row.symbol, action: ensured.action });
+      } catch (error) {
+        console.error(`   ❌ ${row.symbol}: ${error.message}`);
+      }
+    }
+
+    return prepared;
   }
 
   /**

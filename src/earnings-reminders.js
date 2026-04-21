@@ -5,6 +5,7 @@ import fmp from './fmp.js';
 import tavily from './tavily.js';
 import claude, { MODELS } from './claude.js';
 import { resolveMarketPrice } from './utils.js';
+import { ensureFreshStockProfile } from './stock-profiles.js';
 
 const EASTERN_TIMEZONE = 'America/New_York';
 const TIMING_RAW_LIMIT = 10;
@@ -121,6 +122,18 @@ function nextTradingDay(dateString) {
   } while (isWeekend(year, month, day));
 
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function calculateGradeEligibleAt(earningsDate, earningsSession) {
+  if (!earningsDate) return null;
+
+  const session = String(earningsSession || 'unknown').toLowerCase();
+  const gradeDate = session === 'pre_market'
+    ? earningsDate
+    : nextTradingDay(earningsDate);
+
+  const [year, month, day] = String(gradeDate).split('-').map(Number);
+  return easternDateToUtcDate(year, month, day, 11, 0, 0);
 }
 
 export function calculateScheduledSendAt(earningsDate, earningsSession) {
@@ -599,6 +612,7 @@ function parsePredictorResponse(text) {
 
 export async function runOfficialReminderPrediction(reminder) {
   const symbol = reminder.symbol;
+  await ensureFreshStockProfile(symbol, { staleAfterDays: 14 });
   const marketOpen = false;
   const [quote, rawCatalystSummary] = await Promise.all([
     fmp.getQuote(symbol).catch(() => null),
@@ -750,5 +764,6 @@ export default {
   buildEarningsCatalystBrief,
   buildLiveReminderPreview,
   enrichYahooEarningsTiming,
-  calculateScheduledSendAt
+  calculateScheduledSendAt,
+  calculateGradeEligibleAt
 };

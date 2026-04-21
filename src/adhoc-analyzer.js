@@ -5,7 +5,7 @@ import fmp from './fmp.js';
 import tradier from './tradier.js';
 import tavily from './tavily.js';
 import { researchCatalysts } from './catalyst-research.js';
-import stockProfiles from './stock-profiles.js';
+import stockProfiles, { getProfileFreshness } from './stock-profiles.js';
 
 const router = express.Router();
 const activeProfileBuilds = new Map();
@@ -694,17 +694,24 @@ router.post('/analyze', async (req, res) => {
     let hasProfile = profileCheck.rows.length > 0;
     let profile = hasProfile ? profileCheck.rows[0] : null;
     let profileWasAutoBuilt = false;
+    let profileWasAutoRefreshed = false;
 
-    if (!hasProfile) {
-      console.log(`   🔬 No stock profile found for ${symbol}; building before adhoc analysis...`);
-      await ensureSingleProfileBuild(symbol, 'adhoc-analysis', () => stockProfiles.buildStockProfile(symbol));
+    const profileFreshness = getProfileFreshness(profile, 14);
+    if (!hasProfile || profileFreshness.isStale) {
+      console.log(
+        !hasProfile
+          ? `   🔬 No stock profile found for ${symbol}; building before adhoc analysis...`
+          : `   🔄 Stock profile for ${symbol} is stale (${profileFreshness.daysOld} days); refreshing before adhoc analysis...`
+      );
+      await ensureSingleProfileBuild(symbol, 'adhoc-analysis', () => stockProfiles.ensureFreshStockProfile(symbol, { staleAfterDays: 14 }));
       profileCheck = await db.query(
         'SELECT * FROM stock_profiles WHERE symbol = $1',
         [symbol]
       );
       hasProfile = profileCheck.rows.length > 0;
       profile = hasProfile ? profileCheck.rows[0] : null;
-      profileWasAutoBuilt = hasProfile;
+      profileWasAutoBuilt = !profileFreshness.hasProfile && hasProfile;
+      profileWasAutoRefreshed = profileFreshness.isStale && hasProfile;
     }
 
     // Step 4: Get current market data
@@ -822,7 +829,8 @@ router.post('/analyze', async (req, res) => {
         watchlistSelectionRank,
         watchlistReviewPriority,
         hasProfile,
-        profileWasAutoBuilt
+        profileWasAutoBuilt,
+        profileWasAutoRefreshed
       },
       profile: profile ? {
         business_model: profile.business_model,

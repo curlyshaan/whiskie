@@ -300,13 +300,63 @@ export async function getStaleProfiles(daysOld = 14) {
   }
 }
 
+export function getProfileFreshness(profile, staleAfterDays = 14) {
+  if (!profile?.last_updated) {
+    return {
+      hasProfile: false,
+      isFresh: false,
+      isStale: false,
+      daysOld: null,
+      staleAfterDays,
+      needsBuild: true,
+      needsRefresh: false
+    };
+  }
+
+  const daysOld = Math.floor((Date.now() - new Date(profile.last_updated).getTime()) / (1000 * 60 * 60 * 24));
+  const isStale = daysOld >= staleAfterDays;
+
+  return {
+    hasProfile: true,
+    isFresh: !isStale,
+    isStale,
+    daysOld,
+    staleAfterDays,
+    needsBuild: false,
+    needsRefresh: isStale
+  };
+}
+
+export async function ensureFreshStockProfile(symbol, options = {}) {
+  const {
+    staleAfterDays = 14,
+    incrementalRefreshDays = 14
+  } = options;
+
+  const existingProfile = await getStockProfile(symbol);
+  const freshness = getProfileFreshness(existingProfile, staleAfterDays);
+
+  if (!existingProfile) {
+    const profile = await buildStockProfile(symbol, { staleAfterDays: incrementalRefreshDays });
+    return { profile, action: 'built', freshness };
+  }
+
+  if (freshness.isStale) {
+    const profile = await updateStockProfile(symbol, existingProfile, { staleAfterDays: incrementalRefreshDays });
+    return { profile, action: 'refreshed', freshness };
+  }
+
+  return { profile: existingProfile, action: 'reused', freshness };
+}
+
 /**
  * Build comprehensive stock profile using deep research
  * Checks for existing profile and does incremental update if fresh
  */
-export async function buildStockProfile(symbol) {
+export async function buildStockProfile(symbol, options = {}) {
   console.log(`\n🔬 Building profile for ${symbol}...`);
   const timer = createProfileTimer(symbol, 'full');
+  const staleAfterDays = options.staleAfterDays ?? 14;
 
   try {
     // Check if profile already exists
@@ -320,16 +370,18 @@ export async function buildStockProfile(symbol) {
     }
 
     if (existingProfile) {
-      const daysOld = Math.floor((Date.now() - new Date(existingProfile.last_updated).getTime()) / (1000 * 60 * 60 * 24));
+      const freshness = getProfileFreshness(existingProfile, staleAfterDays);
+      const daysOld = freshness.daysOld ?? 0;
 
       // If profile is fresh (<14 days), do incremental update (5k tokens)
-      if (daysOld < 14) {
+      if (!freshness.isStale) {
         console.log(`  ✅ Profile exists and is fresh (${daysOld} days old)`);
         console.log(`  🔄 Running incremental update (5k tokens)...`);
-        return await updateStockProfile(symbol, existingProfile);
+        return await updateStockProfile(symbol, existingProfile, { staleAfterDays });
       } else {
         console.log(`  ⚠️ Profile exists but is stale (${daysOld} days old)`);
-        console.log(`  🔬 Running full rebuild (20k tokens)...`);
+        console.log(`  🔄 Running incremental refresh before analysis...`);
+        return await updateStockProfile(symbol, existingProfile, { staleAfterDays });
       }
     } else {
       console.log(`  🆕 No existing profile found`);
@@ -416,9 +468,18 @@ export async function buildStockProfile(symbol) {
 /**
  * Incremental update for existing profile (5k tokens)
  */
-async function updateStockProfile(symbol, existingProfile) {
+async function updateStockProfile(symbol, existingProfile = null, options = {}) {
   const timer = createProfileTimer(symbol, 'incremental');
   try {
+    const staleAfterDays = options.staleAfterDays ?? 14;
+    const profileToUpdate = existingProfile || await getStockProfile(symbol);
+
+    if (!profileToUpdate) {
+      timer.step('load-missing-profile');
+      console.log(`  🆕 No existing profile available for ${symbol}; falling back to full build...`);
+      return await buildStockProfile(symbol, { staleAfterDays });
+    }
+
     // Fetch latest fundamentals and news
     console.log('  📊 Fetching latest fundamentals...');
     const fundamentals = await fmp.getFundamentals(symbol);
@@ -431,12 +492,12 @@ async function updateStockProfile(symbol, existingProfile) {
     // Build incremental update prompt
     const updatePrompt = `Update the stock profile for ${symbol} with latest information.
 
-**EXISTING PROFILE (${Math.floor((Date.now() - new Date(existingProfile.last_updated).getTime()) / (1000 * 60 * 60 * 24))} days old):**
+**EXISTING PROFILE (${Math.floor((Date.now() - new Date(profileToUpdate.last_updated).getTime()) / (1000 * 60 * 60 * 24))} days old):**
 
-Business Model: ${existingProfile.business_model?.substring(0, 300)}...
-Moats: ${existingProfile.moats?.substring(0, 200)}...
-Risks: ${existingProfile.risks?.substring(0, 200)}...
-Catalysts: ${existingProfile.catalysts?.substring(0, 200)}...
+Business Model: ${profileToUpdate.business_model?.substring(0, 300)}...
+Moats: ${profileToUpdate.moats?.substring(0, 200)}...
+Risks: ${profileToUpdate.risks?.substring(0, 200)}...
+Catalysts: ${profileToUpdate.catalysts?.substring(0, 200)}...
 
 **LATEST FUNDAMENTALS:**
 ${JSON.stringify(fundamentals, null, 2)}
@@ -471,39 +532,39 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
     // Merge updates with existing profile (apply cleanText to enforce character limits)
     const updatedProfile = {
       symbol,
-      business_model: existingProfile.business_model,
-      moats: existingProfile.moats,
-      competitive_advantages: existingProfile.competitive_advantages,
-      competitive_landscape: existingProfile.competitive_landscape,
-      management_quality: existingProfile.management_quality,
-      valuation_framework: existingProfile.valuation_framework,
-      fundamentals: fundamentals || existingProfile.fundamentals,
+      business_model: profileToUpdate.business_model,
+      moats: profileToUpdate.moats,
+      competitive_advantages: profileToUpdate.competitive_advantages,
+      competitive_landscape: profileToUpdate.competitive_landscape,
+      management_quality: profileToUpdate.management_quality,
+      valuation_framework: profileToUpdate.valuation_framework,
+      fundamentals: fundamentals || profileToUpdate.fundamentals,
       risks: updateText.includes('RISKS_UPDATE') ?
-        cleanText(updateText.match(/RISKS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.risks, 2000) :
-        existingProfile.risks,
+        cleanText(updateText.match(/RISKS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || profileToUpdate.risks, 2000) :
+        profileToUpdate.risks,
       catalysts: updateText.includes('CATALYSTS_UPDATE') ?
-        cleanText(updateText.match(/CATALYSTS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || existingProfile.catalysts, 2000) :
-        existingProfile.catalysts,
-      industry_sector: existingProfile.industry_sector,
-      market_cap_category: existingProfile.market_cap_category,
-      growth_stage: existingProfile.growth_stage,
-      insider_ownership_pct: existingProfile.insider_ownership_pct,
-      institutional_ownership_pct: existingProfile.institutional_ownership_pct,
-      last_earnings_date: existingProfile.last_earnings_date,
-      next_earnings_date: existingProfile.next_earnings_date,
-      key_metrics_to_watch: existingProfile.key_metrics_to_watch,
-      profile_status: existingProfile.profile_status || 'active',
+        cleanText(updateText.match(/CATALYSTS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || profileToUpdate.catalysts, 2000) :
+        profileToUpdate.catalysts,
+      industry_sector: profileToUpdate.industry_sector,
+      market_cap_category: profileToUpdate.market_cap_category,
+      growth_stage: profileToUpdate.growth_stage,
+      insider_ownership_pct: profileToUpdate.insider_ownership_pct,
+      institutional_ownership_pct: profileToUpdate.institutional_ownership_pct,
+      last_earnings_date: profileToUpdate.last_earnings_date,
+      next_earnings_date: profileToUpdate.next_earnings_date,
+      key_metrics_to_watch: profileToUpdate.key_metrics_to_watch,
+      profile_status: profileToUpdate.profile_status || 'active',
       refresh_tier: 'incremental',
-      last_full_refresh_at: existingProfile.last_full_refresh_at || existingProfile.last_updated || new Date(),
+      last_full_refresh_at: profileToUpdate.last_full_refresh_at || profileToUpdate.last_updated || new Date(),
       last_incremental_refresh_at: new Date(),
-      next_refresh_due: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-      refresh_priority: existingProfile.refresh_priority ?? 50,
-      coverage_score: existingProfile.coverage_score ?? 80,
-      research_quality: existingProfile.research_quality || 'standard',
+      next_refresh_due: new Date(Date.now() + staleAfterDays * 24 * 60 * 60 * 1000),
+      refresh_priority: profileToUpdate.refresh_priority ?? 50,
+      coverage_score: profileToUpdate.coverage_score ?? 80,
+      research_quality: profileToUpdate.research_quality || 'standard',
       facts_last_verified_at: new Date(),
       last_catalyst_refresh_at: new Date(),
       last_news_refresh_at: new Date(),
-      profile_version: (existingProfile.profile_version || 1) + 1
+      profile_version: (profileToUpdate.profile_version || 1) + 1
     };
 
     // Save updated profile
@@ -899,7 +960,9 @@ export default {
   getStockProfile,
   getStockProfiles,
   getStaleProfiles,
+  getProfileFreshness,
   buildStockProfile,
+  ensureFreshStockProfile,
   updateStockProfile,
   runBiweeklyDeepResearch,
   buildProfileBatch

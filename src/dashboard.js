@@ -2,6 +2,7 @@ import express from 'express';
 import * as db from './db.js';
 import { stripThinkingBlocks } from './utils.js';
 import earningsReminders from './earnings-reminders.js';
+import analysisEngine from './analysis.js';
 
 const router = express.Router();
 
@@ -493,6 +494,19 @@ router.get('/', async (req, res) => {
       // Table doesn't exist yet
     }
 
+    let livePortfolioSummary = null;
+    try {
+      const livePortfolio = await analysisEngine.getPortfolioState();
+      livePortfolioSummary = {
+        total_value: livePortfolio.totalValue,
+        cash: livePortfolio.cash,
+        positions_value: livePortfolio.positionsValue,
+        total_gain_loss: (livePortfolio.totalValue || 0) - (parseFloat(process.env.INITIAL_CAPITAL) || 100000)
+      };
+    } catch (err) {
+      // Fall back to snapshot-only rendering
+    }
+
     let dailyState = { rows: [] };
     try {
       dailyState = await db.query(
@@ -536,7 +550,7 @@ router.get('/', async (req, res) => {
       analyses.rows,
       portfolio.rows,
       trades.rows,
-      snapshot.rows[0],
+      livePortfolioSummary || snapshot.rows[0],
       dailyState.rows,
       promotedDiscovery.rows,
       todaysApprovals.rows
@@ -2963,6 +2977,21 @@ function generateCronStatusHTML(executions, days) {
 }
 
 function generateEarningsRemindersHTML(reminders) {
+  const reminderRows = reminders.map(reminder => ({
+    symbol: reminder.symbol,
+    earningsDate: reminder.earnings_date,
+    session: formatDashboardSession(reminder.earnings_session || reminder.session_normalized || 'unknown'),
+    pathway: reminder.primary_pathway || '-',
+    secondaryPathways: ((reminder.secondary_pathways || []).join(', ')) || 'none',
+    predictorTime: formatDashboardDateTime(reminder.predictor_run_at || reminder.scheduled_send_at),
+    scheduledTime: formatDashboardDateTime(reminder.scheduled_send_at),
+    status: reminder.status || 'active',
+    direction: reminder.predicted_direction || '-',
+    confidence: reminder.predicted_confidence || '-',
+    snapshotPrice: reminder.predictor_snapshot_price ?? null,
+    grade: reminder.grade_result || '-',
+    notes: (reminder.notes || '').slice(0, 180) || '-'
+  }));
   return `
 <!DOCTYPE html>
 <html>
@@ -2972,43 +3001,53 @@ function generateEarningsRemindersHTML(reminders) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0e27; color: #e0e0e0; padding: 20px; line-height: 1.5; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: radial-gradient(circle at top, rgba(91, 81, 255, 0.14), transparent 32%), linear-gradient(180deg, #070b1b 0%, #0a0e27 55%, #060814 100%); color: #e0e0e0; padding: 20px; line-height: 1.5; min-height:100vh; }
     .container { max-width: 1180px; margin: 0 auto; }
     h1 { font-size: 2.3rem; margin-bottom: 10px; color: #fff; }
     .subtitle { color: #94a3b8; margin-bottom: 24px; }
-    .back-btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; margin-bottom: 20px; text-decoration: none; display: inline-block; }
+    .back-btn { background: linear-gradient(135deg, rgba(102,126,234,0.85) 0%, rgba(118,75,162,0.85) 100%); color: white; border: 1px solid rgba(255,255,255,0.16); padding: 12px 24px; border-radius: 999px; cursor: pointer; font-size: 1rem; font-weight: 600; margin-bottom: 20px; text-decoration: none; display: inline-block; box-shadow: 0 10px 40px rgba(76, 29, 149, 0.28); backdrop-filter: blur(18px); }
     .layout { display: grid; grid-template-columns: 420px 1fr; gap: 24px; align-items: start; }
-    .panel { background: #1a1f3a; border: 1px solid #2a2f4a; border-radius: 12px; padding: 22px; }
+    .panel { background: rgba(18, 24, 48, 0.62); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 22px; padding: 22px; backdrop-filter: blur(22px); box-shadow: 0 18px 50px rgba(8, 15, 40, 0.42); }
     .panel h2 { margin-bottom: 16px; font-size: 1.25rem; }
-    input, textarea, select { width: 100%; background: #0f1425; color: #e0e0e0; border: 1px solid #2a2f4a; border-radius: 8px; padding: 12px; font-size: 0.95rem; }
+    input, textarea, select { width: 100%; background: rgba(15, 20, 37, 0.72); color: #e0e0e0; border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 14px; padding: 12px; font-size: 0.95rem; backdrop-filter: blur(16px); }
     textarea { min-height: 140px; resize: vertical; }
     label { display: block; margin: 14px 0 8px; color: #cbd5e1; font-size: 0.92rem; }
     .helper { color: #94a3b8; font-size: 0.85rem; margin-top: 8px; }
-    .btn { margin-top: 16px; background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); color: #fff; border: none; border-radius: 8px; padding: 12px 18px; font-weight: 700; cursor: pointer; }
+    .btn { margin-top: 16px; background: linear-gradient(135deg, rgba(236,72,153,0.92) 0%, rgba(190,24,93,0.92) 100%); color: #fff; border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; padding: 12px 18px; font-weight: 700; cursor: pointer; box-shadow: 0 14px 34px rgba(190,24,93,0.25); }
     .btn:disabled { opacity: 0.6; cursor: not-allowed; }
-    .suggestions { margin-top: 10px; border: 1px solid #2a2f4a; border-radius: 10px; overflow: hidden; }
-    .suggestion { padding: 12px; background: #0f1425; border-bottom: 1px solid #1f2942; cursor: pointer; }
+    .suggestions { margin-top: 10px; border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 16px; overflow: hidden; background: rgba(8, 15, 40, 0.78); backdrop-filter: blur(18px); }
+    .suggestion { padding: 12px; background: rgba(15, 20, 37, 0.72); border-bottom: 1px solid rgba(31, 41, 66, 0.7); cursor: pointer; }
     .suggestion:last-child { border-bottom: none; }
     .suggestion:hover { background: #151c33; }
     .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
-    .detail-card { background: #0f1425; border: 1px solid #2a2f4a; border-radius: 10px; padding: 12px; }
+    .detail-card { background: rgba(8, 15, 40, 0.62); border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 16px; padding: 12px; }
     .detail-label { color: #94a3b8; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
     .detail-value { color: #fff; font-weight: 700; }
-    .summary-box, .notes-box { background: #0f1425; border: 1px solid #2a2f4a; border-radius: 10px; padding: 14px; white-space: pre-wrap; color: #dbe4f0; }
-    .markdown-box { background: #0f1425; border: 1px solid #2a2f4a; border-radius: 10px; padding: 14px; color: #dbe4f0; line-height: 1.6; }
+    .summary-box, .notes-box { background: rgba(8, 15, 40, 0.62); border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 16px; padding: 14px; white-space: pre-wrap; color: #dbe4f0; }
+    .markdown-box { background: rgba(8, 15, 40, 0.62); border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 16px; padding: 14px; color: #dbe4f0; line-height: 1.6; }
     .predictor-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:16px; }
-    .predictor-card { background:#0f1425; border:1px solid #2a2f4a; border-radius:10px; padding:14px; }
+    .predictor-card { background:rgba(8, 15, 40, 0.62); border:1px solid rgba(148, 163, 184, 0.12); border-radius:16px; padding:14px; }
     .predictor-card .value { font-size:1.35rem; font-weight:800; margin-top:6px; color:#fff; }
     .direction-up { color:#10b981 !important; }
     .direction-down { color:#ef4444 !important; }
     .direction-neutral { color:#f59e0b !important; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 12px; border-bottom: 1px solid #2a2f4a; vertical-align: top; }
-    th { color: #94a3b8; text-transform: uppercase; font-size: 0.82rem; text-align: left; }
-    .status-pill { display: inline-block; padding: 4px 10px; border-radius: 999px; background: rgba(236,72,153,0.15); color: #f9a8d4; font-size: 0.8rem; font-weight: 700; }
+    th, td { padding: 14px 12px; border-bottom: 1px solid rgba(148, 163, 184, 0.1); vertical-align: top; }
+    th { color: #94a3b8; text-transform: uppercase; font-size: 0.78rem; text-align: left; letter-spacing: 0.06em; }
+    .status-pill { display: inline-block; padding: 6px 12px; border-radius: 999px; background: rgba(236,72,153,0.15); color: #f9a8d4; font-size: 0.8rem; font-weight: 700; border: 1px solid rgba(249, 168, 212, 0.18); }
     .message { margin-top: 12px; font-size: 0.9rem; }
     .message.error { color: #fca5a5; }
     .message.success { color: #86efac; }
+    .table-toolbar { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:18px; }
+    .table-toolbar input, .table-toolbar select { max-width: 260px; }
+    .table-wrap { overflow:auto; border-radius: 18px; border:1px solid rgba(148,163,184,0.12); background: rgba(8, 15, 40, 0.45); }
+    .sortable { cursor:pointer; user-select:none; }
+    .sortable span { opacity:0.65; margin-left:6px; font-size:0.72rem; }
+    .metric-row { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:14px; margin-bottom:22px; }
+    .metric-card { padding:16px; border-radius:18px; background: rgba(18, 24, 48, 0.58); border:1px solid rgba(148,163,184,0.14); box-shadow: inset 0 1px 0 rgba(255,255,255,0.05); }
+    .metric-card .label { color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; }
+    .metric-card .value { color:#fff; font-size:1.45rem; font-weight:800; }
+    .secondary-line { color:#94a3b8; font-size:0.78rem; margin-top:6px; }
     @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -3109,36 +3148,53 @@ function generateEarningsRemindersHTML(reminders) {
     <div class="panel" style="margin-top:24px;">
       <h2>Active Predictors</h2>
       ${reminders.length === 0 ? '<div class="helper">No active earnings predictors saved yet.</div>' : `
+      <div class="metric-row">
+        <div class="metric-card"><div class="label">Tracked Symbols</div><div class="value">${reminderRows.length}</div></div>
+        <div class="metric-card"><div class="label">Predicted</div><div class="value">${reminderRows.filter(row => row.status === 'predicted').length}</div></div>
+        <div class="metric-card"><div class="label">Graded</div><div class="value">${reminderRows.filter(row => row.status === 'graded').length}</div></div>
+        <div class="metric-card"><div class="label">Upcoming Sessions</div><div class="value">${new Set(reminderRows.map(row => row.session)).size}</div></div>
+      </div>
+      <div class="table-toolbar">
+        <input id="reminderFilter" type="text" placeholder="Filter symbol, pathway, notes..." />
+        <select id="statusFilter">
+          <option value="">All statuses</option>
+          <option value="active">Active</option>
+          <option value="predicted">Predicted</option>
+          <option value="graded">Graded</option>
+          <option value="expired">Expired</option>
+        </select>
+        <select id="directionFilter">
+          <option value="">All directions</option>
+          <option value="up">Up</option>
+          <option value="down">Down</option>
+          <option value="neutral">Neutral</option>
+        </select>
+      </div>
+      <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Symbol</th>
-            <th>Earnings Date</th>
-            <th>Session</th>
-            <th>Pathway Model</th>
-            <th>Predictor Time</th>
-            <th>Status</th>
+            <th class="sortable" data-sort="symbol">Symbol <span>↕</span></th>
+            <th class="sortable" data-sort="earningsDate">Earnings Date <span>↕</span></th>
+            <th class="sortable" data-sort="session">Session <span>↕</span></th>
+            <th class="sortable" data-sort="pathway">Pathway Model <span>↕</span></th>
+            <th class="sortable" data-sort="direction">Prediction <span>↕</span></th>
+            <th class="sortable" data-sort="confidence">Confidence <span>↕</span></th>
+            <th class="sortable" data-sort="snapshotPrice">Snapshot Price <span>↕</span></th>
+            <th class="sortable" data-sort="predictorTime">Predictor Time <span>↕</span></th>
+            <th class="sortable" data-sort="status">Status <span>↕</span></th>
+            <th class="sortable" data-sort="grade">Grade <span>↕</span></th>
             <th>Notes</th>
           </tr>
         </thead>
-        <tbody>
-          ${reminders.map(reminder => `
-            <tr>
-              <td><strong>${escapeHtml(reminder.symbol)}</strong></td>
-              <td>${escapeHtml(reminder.earnings_date)}</td>
-              <td>${escapeHtml(formatDashboardSession(reminder.earnings_session || reminder.session_normalized || 'unknown'))}</td>
-              <td>${escapeHtml(reminder.primary_pathway || '-')}<br><span class="timestamp">secondary: ${escapeHtml(((reminder.secondary_pathways || []).join(', ')) || 'none')}</span></td>
-              <td>${escapeHtml(formatDashboardDateTime(reminder.scheduled_send_at))}</td>
-              <td><span class="status-pill">${escapeHtml(reminder.status)}</span></td>
-              <td>${escapeHtml((reminder.notes || '').slice(0, 140) || '-')}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>`}
+        <tbody id="remindersTableBody"></tbody>
+      </table>
+      </div>`}
     </div>
   </div>
 
   <script>
+    const reminderRows = ${JSON.stringify(reminderRows)};
     function formatDashboardSession(value) {
       const normalized = String(value || '').trim().toLowerCase();
       if (!normalized) return 'Unknown';
@@ -3158,8 +3214,13 @@ function generateEarningsRemindersHTML(reminders) {
     const saveBtn = document.getElementById('saveBtn');
     const saveMessageEl = document.getElementById('saveMessage');
     const earningsOptionsBtn = document.getElementById('earningsOptionsBtn');
+    const reminderFilterEl = document.getElementById('reminderFilter');
+    const statusFilterEl = document.getElementById('statusFilter');
+    const directionFilterEl = document.getElementById('directionFilter');
+    const remindersTableBodyEl = document.getElementById('remindersTableBody');
     let selectedSymbol = null;
     let currentDetails = null;
+    let tableSort = { key: 'earningsDate', direction: 'asc' };
 
     function escapeHtml(value) {
       return String(value ?? '')
@@ -3196,6 +3257,58 @@ function generateEarningsRemindersHTML(reminders) {
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return String(value);
       return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    }
+
+    function renderStatusPill(value) {
+      return '<span class="status-pill">' + escapeHtml(value || 'active') + '</span>';
+    }
+
+    function renderReminderTable() {
+      if (!remindersTableBodyEl) return;
+      const query = String(reminderFilterEl?.value || '').trim().toLowerCase();
+      const status = String(statusFilterEl?.value || '').trim().toLowerCase();
+      const direction = String(directionFilterEl?.value || '').trim().toLowerCase();
+
+      const filtered = reminderRows.filter(row => {
+        const haystack = [row.symbol, row.pathway, row.secondaryPathways, row.notes, row.status, row.direction, row.grade]
+          .join(' ')
+          .toLowerCase();
+        if (query && !haystack.includes(query)) return false;
+        if (status && String(row.status || '').toLowerCase() !== status) return false;
+        if (direction && String(row.direction || '').toLowerCase() !== direction) return false;
+        return true;
+      });
+
+      filtered.sort((a, b) => {
+        const left = a[tableSort.key];
+        const right = b[tableSort.key];
+
+        let result = 0;
+        if (tableSort.key === 'snapshotPrice') {
+          result = (Number(left) || 0) - (Number(right) || 0);
+        } else {
+          result = String(left || '').localeCompare(String(right || ''), undefined, { numeric: true, sensitivity: 'base' });
+        }
+        return tableSort.direction === 'asc' ? result : -result;
+      });
+
+      remindersTableBodyEl.innerHTML = filtered.map(row => {
+        const direction = String(row.direction || '-').toUpperCase();
+        const directionClass = direction === 'UP' ? 'direction-up' : direction === 'DOWN' ? 'direction-down' : 'direction-neutral';
+        return '<tr>' +
+          '<td><strong>' + escapeHtml(row.symbol) + '</strong></td>' +
+          '<td>' + escapeHtml(row.earningsDate || '-') + '</td>' +
+          '<td>' + escapeHtml(row.session || '-') + '</td>' +
+          '<td>' + escapeHtml(row.pathway || '-') + '<div class="secondary-line">secondary: ' + escapeHtml(row.secondaryPathways || 'none') + '</div></td>' +
+          '<td class="' + directionClass + '"><strong>' + escapeHtml(direction) + '</strong></td>' +
+          '<td>' + escapeHtml(String(row.confidence || '-').toUpperCase()) + '</td>' +
+          '<td>' + (row.snapshotPrice === null || row.snapshotPrice === undefined ? '-' : ('$' + Number(row.snapshotPrice).toFixed(2))) + '</td>' +
+          '<td>' + escapeHtml(row.predictorTime || row.scheduledTime || '-') + '</td>' +
+          '<td>' + renderStatusPill(row.status) + '</td>' +
+          '<td>' + escapeHtml(row.grade || '-') + '</td>' +
+          '<td>' + escapeHtml(row.notes || '-') + '</td>' +
+        '</tr>';
+      }).join('') || '<tr><td colspan="11" class="helper">No rows match the current filters.</td></tr>';
     }
 
     async function loadPreview(symbol) {
@@ -3366,6 +3479,23 @@ function generateEarningsRemindersHTML(reminders) {
       });
       window.location.href = '/options-analyzer?' + params.toString();
     });
+
+    document.querySelectorAll('[data-sort]').forEach(el => {
+      el.addEventListener('click', () => {
+        const key = el.getAttribute('data-sort');
+        if (tableSort.key === key) {
+          tableSort.direction = tableSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+          tableSort = { key, direction: 'asc' };
+        }
+        renderReminderTable();
+      });
+    });
+
+    reminderFilterEl?.addEventListener('input', renderReminderTable);
+    statusFilterEl?.addEventListener('change', renderReminderTable);
+    directionFilterEl?.addEventListener('change', renderReminderTable);
+    renderReminderTable();
   </script>
 </body>
 </html>

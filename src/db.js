@@ -2317,7 +2317,6 @@ export async function getRemindersDueForSend(now = new Date()) {
          LIMIT 1
        ) next_event ON TRUE
        WHERE er.status = 'active'
-         AND er.email_enabled = TRUE
          AND er.scheduled_send_at IS NOT NULL
          AND er.scheduled_send_at <= $1
          AND er.earnings_date = next_event.earnings_date
@@ -2362,10 +2361,21 @@ export async function getSentEarningsRemindersPendingGrade() {
     const result = await pool.query(
       `SELECT *
        FROM earnings_reminders
-       WHERE status = 'sent'
+       WHERE status = 'predicted'
          AND predicted_direction IS NOT NULL
          AND grade_result IS NULL
-       ORDER BY email_sent_at ASC NULLS LAST, symbol ASC`
+         AND (
+           (earnings_session = 'pre_market' AND NOW() >= ((earnings_date::timestamp) + INTERVAL '11 hours'))
+           OR
+           (earnings_session <> 'pre_market' AND NOW() >= (
+             CASE EXTRACT(ISODOW FROM earnings_date)
+               WHEN 5 THEN (earnings_date::timestamp + INTERVAL '3 days')
+               WHEN 6 THEN (earnings_date::timestamp + INTERVAL '2 days')
+               ELSE (earnings_date::timestamp + INTERVAL '1 day')
+             END
+           ) + INTERVAL '11 hours')
+         )
+       ORDER BY predictor_run_at ASC NULLS LAST, symbol ASC`
     );
     return result.rows;
   } catch (error) {
@@ -2516,12 +2526,12 @@ export async function enrichEarningTiming(symbol, earningsDate, timing = {}) {
   }
 }
 
-export async function markEarningsReminderSent(id, sentAt, predictionData = {}) {
+export async function markEarningsReminderPredicted(id, predictedAt, predictionData = {}) {
   try {
     const result = await pool.query(
       `UPDATE earnings_reminders
-       SET status = 'sent',
-           email_sent_at = $2,
+       SET status = 'predicted',
+           email_sent_at = NULL,
            predictor_run_at = $3,
            predictor_snapshot_price = $4,
            predicted_direction = $5,
@@ -2534,8 +2544,8 @@ export async function markEarningsReminderSent(id, sentAt, predictionData = {}) 
        RETURNING *`,
       [
         id,
-        sentAt,
-        predictionData.predictorRunAt || sentAt,
+        predictedAt,
+        predictionData.predictorRunAt || predictedAt,
         predictionData.snapshotPrice ?? null,
         predictionData.direction || null,
         predictionData.confidence || null,
@@ -2546,7 +2556,7 @@ export async function markEarningsReminderSent(id, sentAt, predictionData = {}) 
     );
     return result.rows[0] || null;
   } catch (error) {
-    console.error(`Error marking earnings reminder ${id} as sent:`, error);
+    console.error(`Error marking earnings reminder ${id} as predicted:`, error);
     throw error;
   }
 }
@@ -2555,7 +2565,8 @@ export async function saveEarningsReminderGrade(id, gradePayload = {}) {
   try {
     const result = await pool.query(
       `UPDATE earnings_reminders
-       SET actual_reaction_direction = $2,
+       SET status = 'graded',
+           actual_reaction_direction = $2,
            actual_reaction_pct = $3,
            grade_result = $4,
            graded_at = $5,
