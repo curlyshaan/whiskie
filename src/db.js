@@ -2594,7 +2594,7 @@ export async function markEarningsReminderPredicted(id, predictedAt, predictionD
     const result = await pool.query(
       `UPDATE earnings_reminders
        SET status = 'predicted',
-           email_sent_at = NULL,
+           email_sent_at = NULL::timestamp,
            predictor_run_at = $3,
            predictor_snapshot_price = $4,
            predicted_direction = $5,

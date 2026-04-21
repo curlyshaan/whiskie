@@ -13,8 +13,12 @@ async function refreshEarningsCalendar() {
   try {
     // Get all symbols from our universe
     const universeResult = await db.query(
-      'SELECT symbol FROM stock_universe WHERE status = $1 AND COALESCE(earnings_tracking_eligible, TRUE) = TRUE',
-      ['active']
+      `SELECT symbol
+       FROM stock_universe
+       WHERE status = $1
+         AND COALESCE(earnings_tracking_eligible, TRUE) = TRUE
+         AND COALESCE(market_cap, 0) >= $2`,
+      ['active', 7000000000]
     );
 
     const eligibleSymbols = new Set(universeResult.rows.map(row => row.symbol));

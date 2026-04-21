@@ -2980,7 +2980,7 @@ function generateEarningsRemindersHTML(reminders) {
   const reminderRows = reminders.map(reminder => ({
     symbol: reminder.symbol,
     companyName: reminder.company_name || '',
-    earningsDate: reminder.earnings_date,
+    earningsDate: formatIsoDate(reminder.earnings_date),
     session: formatDashboardSession(reminder.earnings_session || reminder.session_normalized || reminder.earnings_time || 'unknown'),
     pathway: reminder.primary_pathway || '-',
     secondaryPathways: ((reminder.secondary_pathways || []).join(', ')) || 'none',
@@ -3381,7 +3381,7 @@ function generateEarningsRemindersHTML(reminders) {
       searchInput.value = symbol;
 
       document.getElementById('detailSymbol').textContent = payload.symbol;
-      document.getElementById('detailDate').textContent = payload.timing.earningsDate || payload.nextEarning.earnings_date;
+      document.getElementById('detailDate').textContent = formatIsoDate(payload.timing.earningsDate || payload.nextEarning.earnings_date);
       document.getElementById('detailSession').textContent = formatDashboardSession(payload.timing.earningsSession || payload.nextEarning.session_normalized || 'unknown');
       const scheduled = payload.scheduledSendAt ? new Date(payload.scheduledSendAt) : null;
       document.getElementById('detailSendAt').textContent = scheduled && !Number.isNaN(scheduled.getTime())

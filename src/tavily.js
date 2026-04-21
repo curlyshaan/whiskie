@@ -66,7 +66,7 @@ class TavilyAPI {
     }
 
     try {
-      const response = await axios.post(`${this.baseURL}/search`, {
+      const payload = {
         api_key: TAVILY_API_KEY,
         query: normalizedQuery,
         search_depth: options.depth || 'basic',
@@ -77,7 +77,9 @@ class TavilyAPI {
         end_date: options.endDate || undefined,
         include_domains: options.includeDomains || [],
         exclude_domains: options.excludeDomains || []
-      });
+      };
+
+      const response = await axios.post(`${this.baseURL}/search`, payload);
 
       const results = response.data.results || [];
       if (useCache && cacheTtlMs > 0) {
@@ -86,9 +88,45 @@ class TavilyAPI {
 
       return results;
     } catch (error) {
-      console.error('Tavily search error:', error.message);
+      console.error('Tavily search error:', error.message, {
+        query: normalizedQuery,
+        options: {
+          depth: options.depth || 'basic',
+          topic: options.topic || 'general',
+          maxResults: options.maxResults || 5,
+          timeRange: options.timeRange || undefined,
+          includeDomains: options.includeDomains || [],
+          excludeDomains: options.excludeDomains || []
+        },
+        responseStatus: error?.response?.status,
+        responseBody: error?.response?.data || null
+      });
       throw error;
     }
+  }
+
+  async searchWithFallbacks(queryBuilders = [], baseOptions = {}) {
+    let lastError = null;
+
+    for (const builder of queryBuilders) {
+      if (!builder) continue;
+      const built = typeof builder === 'function' ? builder() : builder;
+      const nextQuery = String(built?.query || '').trim();
+      if (!nextQuery) continue;
+      const nextOptions = { ...baseOptions, ...(built?.options || {}) };
+
+      try {
+        return await this.search(nextQuery, nextOptions);
+      } catch (error) {
+        lastError = error;
+        if (error?.response?.status !== 400) {
+          throw error;
+        }
+      }
+    }
+
+    if (lastError) throw lastError;
+    return [];
   }
 
   /**
@@ -142,7 +180,16 @@ class TavilyAPI {
       `${identity} litigation OR investigation OR recall OR management change`
     ].join(' OR ');
 
-    return await this.search(query, {
+    return await this.searchWithFallbacks([
+      { query, options: { includeDomains: options.includeDomains || [] } },
+      { query: [
+        `${symbol} earnings guidance`,
+        `${symbol} analyst downgrade OR analyst upgrade OR price target`,
+        `${symbol} product launch OR customer announcement OR partnership`,
+        `${symbol} investigation OR recall`
+      ].join(' OR ') },
+      { query: `${symbol} latest stock news earnings guidance analyst` }
+    ], {
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
       timeRange: options.timeRange || 'month',
@@ -181,7 +228,22 @@ class TavilyAPI {
       `${identity} revenue outlook OR EPS outlook`
     ].join(' OR ');
 
-    return await this.search(query, {
+    return await this.searchWithFallbacks([
+      { query, options: { includeDomains: options.includeDomains || [
+        'reuters.com',
+        'cnbc.com',
+        'marketwatch.com',
+        'investing.com',
+        'finance.yahoo.com',
+        'barrons.com',
+        'thestreet.com',
+        'benzinga.com',
+        'fool.com',
+        'seekingalpha.com'
+      ] } },
+      { query: `${symbol} earnings preview guidance outlook consensus estimates`, options: { includeDomains: [] } },
+      { query: `${symbol} earnings preview`, options: { includeDomains: [] } }
+    ], {
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
       timeRange: options.timeRange || 'week',
