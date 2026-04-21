@@ -5,6 +5,7 @@ import fmp from './fmp.js';
 import tradier from './tradier.js';
 import tavily from './tavily.js';
 import { researchCatalysts } from './catalyst-research.js';
+import stockProfiles from './stock-profiles.js';
 
 const router = express.Router();
 
@@ -257,6 +258,16 @@ router.get('/', async (req, res) => {
     .back-link:hover {
       text-decoration: underline;
     }
+    .action-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    .secondary-button {
+      background: #0f1425;
+      border: 1px solid #2a2f4a;
+    }
   </style>
 </head>
 <body>
@@ -316,6 +327,8 @@ router.get('/', async (req, res) => {
   </div>
 
   <script>
+    let lastAnalysisRequest = null;
+
     document.getElementById('analyzerForm').addEventListener('submit', async (e) => {
       e.preventDefault();
 
@@ -324,7 +337,12 @@ router.get('/', async (req, res) => {
       const costBasis = document.getElementById('costBasis').value;
       const stopLoss = document.getElementById('stopLoss').value;
       const takeProfit = document.getElementById('takeProfit').value;
+      lastAnalysisRequest = { ticker, intent, costBasis, stopLoss, takeProfit };
 
+      await runAnalysis(lastAnalysisRequest);
+    });
+
+    async function runAnalysis(payload) {
       // Show loading
       document.getElementById('loading').classList.add('active');
       document.getElementById('results').classList.remove('active');
@@ -333,7 +351,7 @@ router.get('/', async (req, res) => {
         const response = await fetch('/adhoc-analyzer/analyze', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ticker, intent, costBasis, stopLoss, takeProfit })
+          body: JSON.stringify(payload)
         });
 
         const data = await response.json();
@@ -349,7 +367,39 @@ router.get('/', async (req, res) => {
       } finally {
         document.getElementById('loading').classList.remove('active');
       }
-    });
+    }
+
+    async function buildProfile(symbol) {
+      const normalized = String(symbol || '').toUpperCase().trim();
+      if (!normalized) return;
+
+      document.getElementById('loading').classList.add('active');
+      document.getElementById('results').classList.remove('active');
+
+      try {
+        const response = await fetch('/adhoc-analyzer/build-profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticker: normalized })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'Profile build failed');
+        }
+
+        if (lastAnalysisRequest && lastAnalysisRequest.ticker === normalized) {
+          await runAnalysis(lastAnalysisRequest);
+          return;
+        }
+
+        alert('Profile built successfully for ' + normalized + '. You can now rerun analysis.');
+      } catch (error) {
+        alert('Profile build failed: ' + error.message);
+      } finally {
+        document.getElementById('loading').classList.remove('active');
+      }
+    }
 
     function displayResults(data) {
       const resultsDiv = document.getElementById('results');
@@ -383,7 +433,12 @@ router.get('/', async (req, res) => {
       // Stock profile check
       html += '<div class="check-item">';
       html += \`<div class="check-icon \${data.checks.hasProfile ? 'yes' : 'no'}">\${data.checks.hasProfile ? '✓' : '✗'}</div>\`;
-      html += \`<div>Has Stock Profile: \${data.checks.hasProfile ? 'Yes' : 'No'}</div>\`;
+      html += '<div>';
+      html += \`Has Stock Profile: \${data.checks.hasProfile ? 'Yes' : 'No'}\`;
+      if (!data.checks.hasProfile) {
+        html += \`<div class="action-row"><button type="button" class="secondary-button" onclick="buildProfile('\${data.symbol}')">Build Profile for \${data.symbol}</button></div>\`;
+      }
+      html += '</div>';
       html += '</div>';
 
       html += '</div>';
@@ -654,6 +709,7 @@ router.post('/analyze', async (req, res) => {
 
     // Return results
     res.json({
+      symbol,
       checks: {
         inUniverse,
         inWatchlist,
@@ -678,6 +734,22 @@ router.post('/analyze', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error in adhoc analysis:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/build-profile', async (req, res) => {
+  try {
+    const symbol = String(req.body?.ticker || '').trim().toUpperCase();
+    if (!symbol) {
+      return res.status(400).json({ error: 'Ticker is required' });
+    }
+
+    console.log(`\n🔬 Manual stock profile build requested: ${symbol}`);
+    const profile = await stockProfiles.buildStockProfile(symbol);
+    res.json({ success: true, symbol, profile });
+  } catch (error) {
+    console.error('❌ Error building adhoc stock profile:', error);
     res.status(500).json({ error: error.message });
   }
 });

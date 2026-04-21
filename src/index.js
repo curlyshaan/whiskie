@@ -2595,6 +2595,8 @@ This is NOT about "safe diversification" - it's about beating the benchmark thro
 
 **FINAL EXECUTION COMMANDS:**
 
+You must produce exactly one EXECUTE command block for every symbol listed under LONG POSITIONS and SHORT POSITIONS above. The symbol counts must match 1:1 with no omissions, duplicates, or extra commands.
+
 EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 [one EXECUTE_BUY line per long position]
@@ -2619,7 +2621,8 @@ EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET | PATHWAY | INTENT
 
 DO NOT use "LONG" or "SHORT" - you MUST use "EXECUTE_BUY:" or "EXECUTE_SHORT:" as the prefix.
 DO NOT add dollar signs, "shares", or any other text in the pipe-separated values.
-Each EXECUTE command must be on its own line with the prefix on the SAME line as the data.`;
+Each EXECUTE command must be on its own line with the prefix on the SAME line as the data.
+Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count and your SHORT POSITIONS count equals your EXECUTE_SHORT count.`;
 
       const phase4Start = Date.now();
       const analysis = await claude.deepAnalysis(
@@ -2748,7 +2751,10 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
 
       // Parse recommendations and execute trades automatically
       console.log('🔍 Parsing trade recommendations...');
-      const recommendations = await this.parseRecommendations(analysis.analysis);
+      const recommendations = await this.parseRecommendations(
+        analysis.analysis,
+        canonicalPathwayContextBySymbol
+      );
 
       if (recommendations.length > 0) {
         console.log(`✅ Found ${recommendations.length} trade recommendations`);
@@ -3455,7 +3461,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
    * Required format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY_PRICE | STOP_LOSS | TAKE_PROFIT
    * Example: EXECUTE_BUY: MSFT | 100 | 400.50 | 360.00 | 450.00
    */
-  async parseRecommendations(analysisText) {
+  async parseRecommendations(analysisText, canonicalPathwayContextBySymbol = {}) {
     const recommendations = [];
 
     try {
