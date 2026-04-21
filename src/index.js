@@ -863,7 +863,7 @@ class WhiskieBot {
         console.log('📡 Manual pre-market scan triggered via API');
         (async () => {
           try {
-            await this.runPreMarketScan();
+            this.latestGapReport = await runPreMarketScan();
           } catch (error) {
             console.error('❌ Error in manual pre-market scan:', error);
           }
