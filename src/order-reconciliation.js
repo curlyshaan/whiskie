@@ -6,6 +6,7 @@
 import tradier from './tradier.js';
 import * as db from './db.js';
 import email from './email.js';
+import analysisEngine from './analysis.js';
 
 class OrderReconciliation {
   /**
@@ -69,6 +70,70 @@ class OrderReconciliation {
     } catch (error) {
       console.error('Error reconciling positions:', error);
       return { discrepancies: [], error: error.message };
+    }
+  }
+
+  async syncPositionsFromBroker() {
+    try {
+      console.log('\n📦 Syncing positions from Tradier into local portfolio state...');
+
+      const portfolio = await analysisEngine.getPortfolioState();
+      const dbPositions = await db.getPositions();
+      const tradierSymbols = new Set((portfolio.positions || []).map(p => p.symbol));
+      const dbSymbols = new Set(dbPositions.map(p => p.symbol));
+
+      const removed = [];
+      const updated = [];
+      const added = [];
+
+      for (const dbPos of dbPositions) {
+        if (!tradierSymbols.has(dbPos.symbol)) {
+          await db.query('DELETE FROM positions WHERE symbol = $1', [dbPos.symbol]);
+          await db.query('DELETE FROM position_lots WHERE symbol = $1', [dbPos.symbol]);
+          removed.push(dbPos.symbol);
+        }
+      }
+
+      for (const pos of portfolio.positions || []) {
+        await db.upsertPosition({
+          symbol: pos.symbol,
+          quantity: pos.quantity,
+          cost_basis: pos.cost_basis,
+          current_price: pos.currentPrice,
+          sector: pos.sector,
+          stock_type: pos.stock_type
+        });
+
+        await db.query(
+          `UPDATE position_lots SET current_price = $1 WHERE symbol = $2`,
+          [pos.currentPrice, pos.symbol]
+        );
+
+        if (dbSymbols.has(pos.symbol)) {
+          updated.push(pos.symbol);
+        } else {
+          added.push(pos.symbol);
+        }
+      }
+
+      console.log(`✅ Portfolio sync complete (${added.length} added, ${updated.length} updated, ${removed.length} removed)`);
+
+      return {
+        success: true,
+        added,
+        updated,
+        removed,
+        totalBrokerPositions: (portfolio.positions || []).length
+      };
+    } catch (error) {
+      console.error('Error syncing positions from broker:', error);
+      return {
+        success: false,
+        error: error.message,
+        added: [],
+        updated: [],
+        removed: []
+      };
     }
   }
 

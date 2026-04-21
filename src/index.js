@@ -993,6 +993,29 @@ class WhiskieBot {
       }
     });
 
+    app.post('/api/trigger-portfolio-sync', async (req, res) => {
+      try {
+        console.log('📡 Manual portfolio sync triggered via API');
+        const result = await orderReconciliation.syncPositionsFromBroker();
+
+        if (!result.success) {
+          return res.status(500).json(result);
+        }
+
+        res.json({
+          success: true,
+          message: `Portfolio sync completed. Added ${result.added.length}, updated ${result.updated.length}, removed ${result.removed.length}.`,
+          ...result
+        });
+      } catch (error) {
+        console.error('❌ Error in manual portfolio sync:', error);
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
     // Chat endpoint with Tavily integration
     app.post('/chat', async (req, res) => {
       try {
