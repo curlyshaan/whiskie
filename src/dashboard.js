@@ -672,7 +672,7 @@ router.get('/logs', async (req, res) => {
 
 router.get('/earnings-reminders', async (req, res) => {
   try {
-    const reminders = await db.getAllActiveEarningsReminders();
+    const reminders = await db.getUpcomingEarningsDashboardRows(1);
     res.send(generateEarningsRemindersHTML(reminders));
   } catch (error) {
     console.error('Earnings reminders page error:', error);
@@ -2979,18 +2979,22 @@ function generateCronStatusHTML(executions, days) {
 function generateEarningsRemindersHTML(reminders) {
   const reminderRows = reminders.map(reminder => ({
     symbol: reminder.symbol,
+    companyName: reminder.company_name || '',
     earningsDate: reminder.earnings_date,
-    session: formatDashboardSession(reminder.earnings_session || reminder.session_normalized || 'unknown'),
+    session: formatDashboardSession(reminder.earnings_session || reminder.session_normalized || reminder.earnings_time || 'unknown'),
     pathway: reminder.primary_pathway || '-',
     secondaryPathways: ((reminder.secondary_pathways || []).join(', ')) || 'none',
     predictorTime: formatDashboardDateTime(reminder.predictor_run_at || reminder.scheduled_send_at),
     scheduledTime: formatDashboardDateTime(reminder.scheduled_send_at),
-    status: reminder.status || 'active',
+    status: reminder.status || 'upcoming',
     direction: reminder.predicted_direction || '-',
     confidence: reminder.predicted_confidence || '-',
     snapshotPrice: reminder.predictor_snapshot_price ?? null,
     grade: reminder.grade_result || '-',
-    notes: (reminder.notes || '').slice(0, 180) || '-'
+    notes: (reminder.notes || '').slice(0, 180) || '-',
+    reasoning: reminder.prediction_reasoning || '',
+    keyRisk: reminder.prediction_key_risk || '',
+    actualReactionPct: reminder.actual_reaction_pct ?? null
   }));
   return `
 <!DOCTYPE html>
@@ -3146,13 +3150,13 @@ function generateEarningsRemindersHTML(reminders) {
     </div>
 
     <div class="panel" style="margin-top:24px;">
-      <h2>Active Predictors</h2>
-      ${reminders.length === 0 ? '<div class="helper">No active earnings predictors saved yet.</div>' : `
+      <h2>Upcoming Earnings Grid</h2>
+      ${reminders.length === 0 ? '<div class="helper">No upcoming earnings found for today/tomorrow.</div>' : `
       <div class="metric-row">
         <div class="metric-card"><div class="label">Tracked Symbols</div><div class="value">${reminderRows.length}</div></div>
         <div class="metric-card"><div class="label">Predicted</div><div class="value">${reminderRows.filter(row => row.status === 'predicted').length}</div></div>
         <div class="metric-card"><div class="label">Graded</div><div class="value">${reminderRows.filter(row => row.status === 'graded').length}</div></div>
-        <div class="metric-card"><div class="label">Upcoming Sessions</div><div class="value">${new Set(reminderRows.map(row => row.session)).size}</div></div>
+        <div class="metric-card"><div class="label">Today + Tomorrow</div><div class="value">${new Set(reminderRows.map(row => row.earningsDate)).size}</div></div>
       </div>
       <div class="table-toolbar">
         <input id="reminderFilter" type="text" placeholder="Filter symbol, pathway, notes..." />
@@ -3170,26 +3174,7 @@ function generateEarningsRemindersHTML(reminders) {
           <option value="neutral">Neutral</option>
         </select>
       </div>
-      <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th class="sortable" data-sort="symbol">Symbol <span>↕</span></th>
-            <th class="sortable" data-sort="earningsDate">Earnings Date <span>↕</span></th>
-            <th class="sortable" data-sort="session">Session <span>↕</span></th>
-            <th class="sortable" data-sort="pathway">Pathway Model <span>↕</span></th>
-            <th class="sortable" data-sort="direction">Prediction <span>↕</span></th>
-            <th class="sortable" data-sort="confidence">Confidence <span>↕</span></th>
-            <th class="sortable" data-sort="snapshotPrice">Snapshot Price <span>↕</span></th>
-            <th class="sortable" data-sort="predictorTime">Predictor Time <span>↕</span></th>
-            <th class="sortable" data-sort="status">Status <span>↕</span></th>
-            <th class="sortable" data-sort="grade">Grade <span>↕</span></th>
-            <th>Notes</th>
-          </tr>
-        </thead>
-        <tbody id="remindersTableBody"></tbody>
-      </table>
-      </div>`}
+      <div id="remindersAccordion"></div>`}
     </div>
   </div>
 
@@ -3217,7 +3202,7 @@ function generateEarningsRemindersHTML(reminders) {
     const reminderFilterEl = document.getElementById('reminderFilter');
     const statusFilterEl = document.getElementById('statusFilter');
     const directionFilterEl = document.getElementById('directionFilter');
-    const remindersTableBodyEl = document.getElementById('remindersTableBody');
+    const remindersAccordionEl = document.getElementById('remindersAccordion');
     let selectedSymbol = null;
     let currentDetails = null;
     let tableSort = { key: 'earningsDate', direction: 'asc' };
@@ -3264,7 +3249,7 @@ function generateEarningsRemindersHTML(reminders) {
     }
 
     function renderReminderTable() {
-      if (!remindersTableBodyEl) return;
+      if (!remindersAccordionEl) return;
       const query = String(reminderFilterEl?.value || '').trim().toLowerCase();
       const status = String(statusFilterEl?.value || '').trim().toLowerCase();
       const direction = String(directionFilterEl?.value || '').trim().toLowerCase();
@@ -3292,23 +3277,30 @@ function generateEarningsRemindersHTML(reminders) {
         return tableSort.direction === 'asc' ? result : -result;
       });
 
-      remindersTableBodyEl.innerHTML = filtered.map(row => {
+      remindersAccordionEl.innerHTML = filtered.map((row, index) => {
         const direction = String(row.direction || '-').toUpperCase();
         const directionClass = direction === 'UP' ? 'direction-up' : direction === 'DOWN' ? 'direction-down' : 'direction-neutral';
-        return '<tr>' +
-          '<td><strong>' + escapeHtml(row.symbol) + '</strong></td>' +
-          '<td>' + escapeHtml(row.earningsDate || '-') + '</td>' +
-          '<td>' + escapeHtml(row.session || '-') + '</td>' +
-          '<td>' + escapeHtml(row.pathway || '-') + '<div class="secondary-line">secondary: ' + escapeHtml(row.secondaryPathways || 'none') + '</div></td>' +
-          '<td class="' + directionClass + '"><strong>' + escapeHtml(direction) + '</strong></td>' +
-          '<td>' + escapeHtml(String(row.confidence || '-').toUpperCase()) + '</td>' +
-          '<td>' + (row.snapshotPrice === null || row.snapshotPrice === undefined ? '-' : ('$' + Number(row.snapshotPrice).toFixed(2))) + '</td>' +
-          '<td>' + escapeHtml(row.predictorTime || row.scheduledTime || '-') + '</td>' +
-          '<td>' + renderStatusPill(row.status) + '</td>' +
-          '<td>' + escapeHtml(row.grade || '-') + '</td>' +
-          '<td>' + escapeHtml(row.notes || '-') + '</td>' +
-        '</tr>';
-      }).join('') || '<tr><td colspan="11" class="helper">No rows match the current filters.</td></tr>';
+        return '<details style="margin-bottom:14px; border:1px solid rgba(148,163,184,0.12); border-radius:18px; background: rgba(8, 15, 40, 0.45); overflow:hidden;">' +
+          '<summary style="list-style:none; cursor:pointer; padding:18px 20px; display:grid; grid-template-columns: 1.1fr 0.9fr 0.8fr 0.9fr 0.9fr 0.9fr; gap:12px; align-items:center;">' +
+            '<div><strong>' + escapeHtml(row.symbol) + '</strong><div class="secondary-line">' + escapeHtml(row.companyName || row.pathway || '-') + '</div></div>' +
+            '<div>' + escapeHtml(row.earningsDate || '-') + '<div class="secondary-line">' + escapeHtml(row.session || '-') + '</div></div>' +
+            '<div class="' + directionClass + '"><strong>' + escapeHtml(direction) + '</strong><div class="secondary-line">' + escapeHtml(String(row.confidence || '-').toUpperCase()) + '</div></div>' +
+            '<div>' + (row.snapshotPrice === null || row.snapshotPrice === undefined ? '-' : ('$' + Number(row.snapshotPrice).toFixed(2))) + '<div class="secondary-line">' + escapeHtml(row.status || 'upcoming') + '</div></div>' +
+            '<div>' + escapeHtml(row.predictorTime || row.scheduledTime || '-') + '<div class="secondary-line">grade: ' + escapeHtml(row.grade || '-') + '</div></div>' +
+            '<div>' + escapeHtml(row.notes || '-') + '</div>' +
+          '</summary>' +
+          '<div style="padding:0 20px 18px 20px; border-top:1px solid rgba(148,163,184,0.1);">' +
+            '<div class="detail-grid" style="margin-top:16px;">' +
+              '<div class="detail-card"><div class="detail-label">Pathway</div><div class="detail-value">' + escapeHtml(row.pathway || '-') + '</div><div class="secondary-line">secondary: ' + escapeHtml(row.secondaryPathways || 'none') + '</div></div>' +
+              '<div class="detail-card"><div class="detail-label">Official Prediction</div><div class="detail-value ' + directionClass + '">' + escapeHtml(direction) + '</div><div class="secondary-line">confidence: ' + escapeHtml(String(row.confidence || '-').toUpperCase()) + '</div></div>' +
+              '<div class="detail-card"><div class="detail-label">Actual Reaction</div><div class="detail-value">' + (row.actualReactionPct === null || row.actualReactionPct === undefined ? '-' : (Number(row.actualReactionPct).toFixed(2) + '%')) + '</div><div class="secondary-line">grade: ' + escapeHtml(row.grade || '-') + '</div></div>' +
+              '<div class="detail-card"><div class="detail-label">Notes</div><div class="detail-value">' + escapeHtml(row.notes || '-') + '</div></div>' +
+            '</div>' +
+            '<h3 style="margin:16px 0 8px;">Reasoning</h3><div class="markdown-box">' + renderReasoningList(row.reasoning || '') + '</div>' +
+            '<h3 style="margin:16px 0 8px;">Key Risk</h3><div class="summary-box">' + escapeHtml(row.keyRisk || 'No saved key risk.') + '</div>' +
+          '</div>' +
+        '</details>';
+      }).join('') || '<div class="helper">No rows match the current filters.</div>';
     }
 
     async function loadPreview(symbol) {

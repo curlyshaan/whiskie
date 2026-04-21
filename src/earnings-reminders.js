@@ -152,8 +152,11 @@ function normalizeSession(rawText = '') {
   if (text.includes('before market open') || text.includes('before open') || text.includes('bmo')) {
     return 'pre_market';
   }
-  if (text.includes('after market close') || text.includes('after close') || text.includes('amc')) {
+  if (text.includes('after market close') || text.includes('after close') || text.includes('amc') || text.includes('post_mark')) {
     return 'post_market';
+  }
+  if (text.includes('pre_mark')) {
+    return 'pre_market';
   }
 
   const clockMatch = text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
@@ -299,6 +302,19 @@ function summarizeCatalystResults(symbol, results = []) {
   }).join('\n');
 }
 
+function filterResultsForSymbolIdentity(symbol, companyName, results = []) {
+  const symbolToken = String(symbol || '').trim().toUpperCase();
+  const company = String(companyName || '').trim().toLowerCase();
+  const companyWords = company.split(/\s+/).filter(word => word.length >= 4).slice(0, 3);
+
+  return results.filter(result => {
+    const haystack = `${result?.title || ''} ${result?.content || ''}`.toLowerCase();
+    if (!haystack) return false;
+    if (new RegExp(`\\b${symbolToken.toLowerCase()}\\b`, 'i').test(haystack)) return true;
+    return companyWords.some(word => haystack.includes(word));
+  });
+}
+
 export async function buildEarningsCatalystBrief(symbol, existingSummary = null) {
   const rawSummary = existingSummary || await buildEarningsCatalystSummary(symbol);
   const prompt = `You are preparing a concise earnings-preview catalyst brief for ${symbol}.
@@ -438,13 +454,15 @@ export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
   return fallback;
 }
 
-export async function buildEarningsCatalystSummary(symbol) {
+export async function buildEarningsCatalystSummary(symbol, options = {}) {
+  const companyName = options.companyName || '';
   const [earningsContext, stockContext] = await Promise.all([
-    tavily.searchStructuredEarningsContext(symbol, { maxResults: 4 }).catch(() => []),
-    tavily.searchStructuredStockContext(symbol, { maxResults: 3 }).catch(() => [])
+    tavily.searchStructuredEarningsContext(symbol, { maxResults: 4, companyName }).catch(() => []),
+    tavily.searchStructuredStockContext(symbol, { maxResults: 3, companyName, timeRange: 'week' }).catch(() => [])
   ]);
 
-  return summarizeCatalystResults(symbol, [...earningsContext, ...stockContext]);
+  const filtered = filterResultsForSymbolIdentity(symbol, companyName, [...earningsContext, ...stockContext]);
+  return summarizeCatalystResults(symbol, filtered);
 }
 
 export async function getEarningsReminderDetails(symbol) {
@@ -457,6 +475,7 @@ export async function getEarningsReminderDetails(symbol) {
   if (!upcoming) {
     return null;
   }
+  const stockInfo = await db.getStockInfo(normalizedSymbol);
 
   const existingReminder = await db.getActiveEarningsReminder(normalizedSymbol);
   const fallbackSession = upcoming.session_normalized && upcoming.session_normalized !== 'unknown'
@@ -493,7 +512,9 @@ export async function getEarningsReminderDetails(symbol) {
 
   timing = normalizeTimingPayload(timing, upcoming.earnings_date);
 
-  const catalystSummary = existingReminder?.catalyst_summary || await buildEarningsCatalystSummary(normalizedSymbol);
+  const catalystSummary = existingReminder?.catalyst_summary || await buildEarningsCatalystSummary(normalizedSymbol, {
+    companyName: stockInfo?.company_name
+  });
   const effectiveEarningsDate = timing.earningsDate || upcoming.earnings_date;
   const scheduledSendAt = isValidDate(effectiveEarningsDate)
     ? calculateScheduledSendAt(effectiveEarningsDate, timing.earningsSession || 'unknown')
@@ -502,6 +523,7 @@ export async function getEarningsReminderDetails(symbol) {
   return {
     symbol: normalizedSymbol,
     nextEarning: upcoming,
+    stockInfo,
     timing,
     catalystSummary,
     reminder: existingReminder,
@@ -612,24 +634,46 @@ function parsePredictorResponse(text) {
 
 export async function runOfficialReminderPrediction(reminder) {
   const symbol = reminder.symbol;
-  await ensureFreshStockProfile(symbol, { staleAfterDays: 14 });
+  const ensured = await ensureFreshStockProfile(symbol, { staleAfterDays: 14 });
+  const profile = ensured?.profile || null;
+  const stockInfo = await db.getStockInfo(symbol);
   const marketOpen = false;
-  const [quote, rawCatalystSummary] = await Promise.all([
+  const [quote, rawCatalystSummary, latestNews] = await Promise.all([
     fmp.getQuote(symbol).catch(() => null),
-    Promise.resolve(reminder.catalyst_summary || '').then(async existing => existing || buildEarningsCatalystSummary(symbol))
+    Promise.resolve(reminder.catalyst_summary || '').then(async existing => existing || buildEarningsCatalystSummary(symbol, {
+      companyName: stockInfo?.company_name
+    })),
+    tavily.searchStructuredStockContext(symbol, {
+      maxResults: 4,
+      companyName: stockInfo?.company_name,
+      timeRange: 'week'
+    }).catch(() => [])
   ]);
+  const filteredNews = filterResultsForSymbolIdentity(symbol, stockInfo?.company_name, latestNews).slice(0, 4);
   const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: null });
   const catalystBrief = await buildEarningsCatalystBrief(symbol, rawCatalystSummary)
     .catch(() => rawCatalystSummary);
+  const latestNewsText = filteredNews.length
+    ? filteredNews.map((item, index) => `${index + 1}. ${item.title}: ${item.content || 'No summary available.'}`).join('\n')
+    : 'No high-confidence latest news matches found.';
+  const profileContext = profile ? `Profile business model: ${profile.business_model || 'N/A'}
+Profile catalysts: ${profile.catalysts || 'N/A'}
+Profile risks: ${profile.risks || 'N/A'}
+Profile moats: ${profile.moats || 'N/A'}` : 'No stock profile context available.';
 
   const prompt = `You are Whiskie. Predict the likely stock reaction immediately after earnings for ${symbol}.
 
 Context:
+- Company: ${stockInfo?.company_name || 'Unknown'}
 - Earnings date: ${reminder.earnings_date}
 - Earnings session: ${reminder.earnings_session}
 - Current price: ${currentPrice ?? 'unknown'}
+- Stock profile context:
+${profileContext}
 - Fresh catalysts:
 ${catalystBrief}
+- Fresh latest news:
+${latestNewsText}
 
 Focus on stock reaction, not raw beat/miss odds. Weigh expectations, valuation, setup, guidance risk, positioning, and current catalysts.
 
@@ -681,6 +725,7 @@ export async function buildLiveReminderPreview(symbol) {
     symbol,
     currentPrice,
     catalystBrief,
+    stockInfo: details.stockInfo || null,
     preview
   };
 }

@@ -18,9 +18,17 @@ Use this file as a quick-start memory reset for future sessions.
 - daily analysis core universe is active `saturday_watchlist` names, with discovery/momentum additions during market hours
 - missing profile does not always block analysis/review flows
 - adhoc analysis auto-builds a missing stock profile before continuing
+- adhoc analysis also refreshes stale profiles before continuing
+- adhoc analyzer blocks duplicate build/analyze clicks while a request is in flight
 - daily analysis now runs at 10:00 AM, 12:00 PM, and 2:00 PM ET
+- earnings profile prep now runs Sunday-Thursday at 7:00 PM ET using `earnings_calendar` for next-trading-day symbols
+- official earnings predictions save into `earnings_reminders` without sending email
+- earnings grading now runs at 11:00 AM ET
+- grading rule: pre-market earnings grade same day 11:00 AM ET; post-market earnings grade next trading day 11:00 AM ET
+- dashboard cash/invested display now prefers live Tradier-backed portfolio state when available
 - Phase 1 ranking is a hard prior; Phase 4 must justify overrides and emit 1:1 execution lines
 - there is no active daily trade-count cap in execution; weekly loss guard remains in the circuit breaker
+- Railway paper trading should use `TRADING_MODE=paper` even if `NODE_ENV=production`
 
 ## Current provider docs
 

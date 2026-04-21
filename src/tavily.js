@@ -133,11 +133,13 @@ class TavilyAPI {
 
   async searchStructuredStockContext(symbol, options = {}) {
     const maxResults = options.maxResults || 5;
+    const companyName = String(options.companyName || '').trim();
+    const identity = companyName ? `"${companyName}" OR ${symbol}` : symbol;
     const query = [
-      `${symbol} earnings guidance`,
-      `${symbol} analyst downgrade OR analyst upgrade`,
-      `${symbol} product launch OR customer announcement OR regulation`,
-      `${symbol} litigation OR investigation OR recall`
+      `${identity} earnings guidance`,
+      `${identity} analyst downgrade OR analyst upgrade OR price target`,
+      `${identity} product launch OR customer announcement OR partnership OR deal`,
+      `${identity} litigation OR investigation OR recall OR management change`
     ].join(' OR ');
 
     return await this.search(query, {
@@ -169,20 +171,33 @@ class TavilyAPI {
 
   async searchStructuredEarningsContext(symbol, options = {}) {
     const maxResults = options.maxResults || 5;
+    const companyName = String(options.companyName || '').trim();
+    const identity = companyName ? `"${companyName}" OR ${symbol}` : symbol;
     const query = [
-      `${symbol} earnings preview`,
-      `${symbol} guidance`,
-      `${symbol} consensus estimates`,
-      `${symbol} margin outlook`,
-      `${symbol} revenue outlook`
+      `${identity} earnings preview`,
+      `${identity} guidance OR outlook`,
+      `${identity} consensus estimates OR analyst expectations`,
+      `${identity} margin outlook OR subscription growth OR pipeline`,
+      `${identity} revenue outlook OR EPS outlook`
     ].join(' OR ');
 
     return await this.search(query, {
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
-      timeRange: options.timeRange || 'month',
+      timeRange: options.timeRange || 'week',
       maxResults,
-      includeDomains: options.includeDomains || []
+      includeDomains: options.includeDomains || [
+        'reuters.com',
+        'cnbc.com',
+        'marketwatch.com',
+        'investing.com',
+        'finance.yahoo.com',
+        'barrons.com',
+        'thestreet.com',
+        'benzinga.com',
+        'fool.com',
+        'seekingalpha.com'
+      ]
     });
   }
 

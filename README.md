@@ -24,6 +24,8 @@ Whiskie currently does the following:
 - queues trades into `trade_approvals` for manual approval
 - executes approved trades and monitors exits during market hours
 - auto-builds missing stock profiles inside the Adhoc Analyzer before running analysis
+- refreshes stale adhoc profiles before analysis
+- runs a persisted earnings prediction and grading workflow backed by `earnings_calendar` + `earnings_reminders`
 
 ## Current operating workflow
 
@@ -34,6 +36,7 @@ Whiskie currently does the following:
 - **Saturday 3:00 PM ET** — run full weekly screener, writing `pending` candidates to `saturday_watchlist`
 - **Sunday 1:00 PM ET** — weekly portfolio review
 - **Sunday 3:00 PM ET** — build/refresh stock profiles
+- **Sunday-Thursday 7:00 PM ET** — prepare fresh profiles for next-trading-day earnings names from `earnings_calendar`
 - **Sunday 9:00 PM ET** — weekly Opus review promotes top `7` per pathway to `active`
 
 ### Weekday flow
@@ -45,7 +48,7 @@ Whiskie currently does the following:
 - **12:00 PM ET** — daily 4-phase analysis midday refresh
 - **2:00 PM ET** — daily 4-phase analysis
 - **3:00 PM ET** — earnings reminder processing
-- **4:15 PM ET** — earnings reminder grading
+- **11:00 AM ET** — earnings reminder grading for eligible rows
 - **4:30 PM ET** — structured exit review
 - **Every 30 minutes during market hours** — approved trade processing + pathway exit monitoring
 - **Hourly during market hours** — order reconciliation
@@ -65,10 +68,12 @@ Stock profiles are operationally important and currently work like this:
 - step-level timings are logged for each symbol
 - profiles overwrite the current row in `stock_profiles` using a canonical current-record model
 - incremental refresh updates the existing row rather than appending a second current row
+- adhoc flows now block on stale-profile refresh instead of analyzing against stale profile data
 
 ## Current analysis universe rules
 
 - Sunday profile build covers `saturday_watchlist` names
+- next-day earnings profile prep uses `earnings_calendar` as the source of truth
 - manual profile trigger currently rebuilds `pending` names in `saturday_watchlist`
 - Adhoc Analyzer can also build or refresh an individual profile on demand
 - daily analysis core universe is `active` watchlist names
@@ -135,6 +140,15 @@ npm run start:paper
 npm run start:live
 ```
 
+For Railway paper trading, keep app runtime in production but explicitly force sandbox brokerage mode:
+
+```bash
+TRADING_MODE=paper
+NODE_ENV=production
+```
+
+`TRADING_MODE` is the source-of-truth override for Tradier sandbox selection.
+
 ### Database and maintenance
 
 ```bash
@@ -187,6 +201,7 @@ Current important routes include:
 - `GET /adhoc-analyzer`
 - `POST /adhoc-analyzer/analyze`
 - `POST /adhoc-analyzer/build-profile`
+- `GET /adhoc-analyzer/debug-build-profile`
 - `POST /chat`
 
 ## Environment setup
@@ -196,6 +211,7 @@ Use `.env.example` as the reference layout. Keep `.env` grouped, clean, and limi
 
 Current important variables:
 
+- `TRADING_MODE`
 - `QUATARLY_API_KEY`
 - `QUATARLY_BASE_URL`
 - `FMP_API_KEY_1`
@@ -210,6 +226,56 @@ Current important variables:
 - `ALERT_EMAIL`
 - `NODE_ENV`
 - portfolio/risk limit variables
+
+Paper/sandbox deployments should always set:
+
+- `TRADING_MODE=paper`
+- `TRADIER_SANDBOX_URL`
+- `TRADIER_SANDBOX_API_KEY`
+- `TRADIER_SANDBOX_ACCOUNT_ID`
+
+Current Adhoc Analyzer behavior:
+
+- missing stock profiles auto-build before analysis continues
+- stale stock profiles auto-refresh before analysis continues
+- duplicate `Analyze` / `Build Profile` clicks are blocked while a request is in flight
+- `/adhoc-analyzer/debug-build-profile` exists for profile-build diagnostics
+
+## Earnings prediction workflow
+
+Whiskie now uses `earnings_calendar` as the source of truth for upcoming earnings and persists official predictions in `earnings_reminders`.
+
+### Schedule
+
+- **Sunday-Thursday 7:00 PM ET** — prepare fresh profiles for symbols with earnings on the next trading day
+- **Sunday-Thursday 3:00 PM ET** — sync and process due earnings reminders, then save official predictions
+- **Weekdays 11:00 AM ET** — grade eligible saved predictions
+
+### Current lifecycle
+
+- `active` — waiting for official prediction
+- `predicted` — prediction saved
+- `graded` — post-earnings reaction evaluated
+- `expired` — no longer valid
+
+### Grading timing
+
+- pre-market earnings on date `D` → grade at **11:00 AM ET on `D`**
+- post-market earnings on date `D` → grade at **11:00 AM ET on the next trading day**
+- unknown session follows the post-market/next-trading-day rule
+
+### Operator UI
+
+`/earnings-reminders` now acts as an operating console:
+
+- searchable symbol setup
+- saved official prediction details
+- sortable/filterable table
+- dark glassmorphism dashboard styling
+
+## Dashboard behavior
+
+The main dashboard now prefers live portfolio totals from the Tradier-backed analysis engine when available, so cash/invested values reflect the actual synced account state instead of only the most recent saved snapshot row.
 
 Note: `MAX_DAILY_TRADES` is no longer part of the active configuration model.
 

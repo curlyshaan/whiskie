@@ -2303,6 +2303,69 @@ export async function getAllActiveEarningsReminders() {
   }
 }
 
+export async function getUpcomingEarningsDashboardRows(days = 1) {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT ON (ec.symbol)
+        ec.symbol,
+        ec.earnings_date,
+        ec.earnings_time,
+        ec.session_normalized,
+        ec.timing_raw,
+        ec.source,
+        ec.timing_source,
+        ec.last_updated,
+        ec.last_verified_at,
+        su.company_name,
+        su.market_cap,
+        er.id AS reminder_id,
+        er.status,
+        er.notes,
+        er.scheduled_send_at,
+        er.predictor_run_at,
+        er.predictor_snapshot_price,
+        er.predicted_direction,
+        er.predicted_confidence,
+        er.prediction_reasoning,
+        er.prediction_key_risk,
+        er.grade_result,
+        er.actual_reaction_pct,
+        sw.primary_pathway,
+        sw.secondary_pathways
+       FROM earnings_calendar ec
+       LEFT JOIN stock_universe su ON su.symbol = ec.symbol
+       LEFT JOIN LATERAL (
+         SELECT *
+         FROM earnings_reminders er
+         WHERE er.symbol = ec.symbol
+           AND er.earnings_date = ec.earnings_date
+         ORDER BY er.updated_at DESC
+         LIMIT 1
+       ) er ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT primary_pathway, secondary_pathways
+         FROM saturday_watchlist
+         WHERE symbol = ec.symbol
+         ORDER BY CASE WHEN status = 'active' THEN 0 WHEN status = 'pending' THEN 1 ELSE 2 END,
+                  COALESCE(opus_conviction, score, 0) DESC,
+                  added_date DESC
+         LIMIT 1
+       ) sw ON TRUE
+       WHERE ec.earnings_date >= CURRENT_DATE
+         AND ec.earnings_date <= CURRENT_DATE + ($1::text || ' days')::interval
+       ORDER BY ec.symbol,
+                ec.earnings_date ASC,
+                ec.source_priority DESC,
+                ec.last_verified_at DESC`,
+      [days]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching earnings dashboard rows:', error);
+    throw error;
+  }
+}
+
 export async function getRemindersDueForSend(now = new Date()) {
   try {
     const result = await pool.query(
@@ -3057,7 +3120,7 @@ export async function getRecentOptionsAnalysisRuns(limit = 20) {
 export async function getStockInfo(symbol) {
   try {
     const result = await pool.query(
-      'SELECT sector, industry FROM stock_universe WHERE symbol = $1',
+      'SELECT company_name, sector, industry, market_cap FROM stock_universe WHERE symbol = $1',
       [symbol]
     );
     return result.rows[0] || null;

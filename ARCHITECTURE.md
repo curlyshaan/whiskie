@@ -86,7 +86,10 @@ Profiles live in `stock_profiles` and are treated as a canonical current snapsho
 `src/adhoc-analyzer.js` now has two supported paths:
 
 - manual `POST /adhoc-analyzer/build-profile` for explicit one-off profile builds
-- `POST /adhoc-analyzer/analyze` auto-checks `stock_profiles` and builds the profile first when it is missing, then continues into the full adhoc analysis
+- `POST /adhoc-analyzer/analyze` auto-checks `stock_profiles` and ensures the profile is fresh before continuing:
+  - missing profile → build first
+  - stale profile → incremental refresh first
+  - fresh profile → reuse current row
 
 The UI surfaces this as a loading-state message so the operator can see when profile construction is happening before analysis.
 
@@ -122,11 +125,19 @@ Each symbol also logs step-level timing:
 ### Refresh model
 
 - fresh profiles are not rebuilt immediately
-- stale profiles are refreshed
+- stale profiles are incrementally refreshed before dependent workflows continue
 - incremental refresh overwrites the current symbol row instead of appending another current row
 - `profile_version` increments
 
 This is the correct operational model for live reads. If history is needed, use a separate history table instead of multiple current rows in `stock_profiles`.
+
+### Earnings-driven profile prep
+
+There is now a dedicated scheduled prep path for earnings-driven profile freshness:
+
+- **Sunday-Thursday 7:00 PM ET** — query `earnings_calendar` for symbols reporting on the next trading day and ensure each has a fresh profile before the later earnings prediction workflow runs
+
+This uses `earnings_calendar` as the source of truth for next-day earnings preparation.
 
 ## Weekly profile build behavior
 
@@ -204,6 +215,40 @@ Operational routes in `src/index.js`:
 - `POST /api/trigger-earnings-reminders`
 - `POST /api/trigger-trade-executor`
 
+## Earnings predictor lifecycle
+
+`earnings_reminders` is now a persisted prediction/grade table rather than an email-delivery queue.
+
+### Current states
+
+- `active` — reminder exists and is waiting for official prediction
+- `predicted` — official earnings prediction has been generated and stored
+- `graded` — prediction has been compared against post-earnings price action
+- `expired` — stale/invalid reminder
+
+### Scheduled behavior
+
+- **Sunday-Thursday 3:00 PM ET** — sync upcoming reminders and save official predictions for due rows
+- **Weekdays 11:00 AM ET** — grade only rows eligible based on earnings session timing
+
+### Grading rules
+
+- `pre_market` earnings on date `D` become grade-eligible at **11:00 AM ET on `D`**
+- `post_market` or `unknown` earnings on date `D` become grade-eligible at **11:00 AM ET on the next trading day**
+
+### UI behavior
+
+`/earnings-reminders` is now a dashboard-style operating page with:
+
+- persisted saved predictions
+- sortable/filterable results table
+- prediction direction/confidence/snapshot/grade columns
+- dark glassmorphism styling
+
+### Live portfolio display
+
+The main dashboard now prefers live portfolio totals from `analysisEngine.getPortfolioState()` when available, so displayed cash/invested values stay aligned with actual Tradier state instead of relying only on the last saved snapshot row.
+
 ## Validation reality
 
 There is no meaningful `npm test` script today. Use direct node-based checks from `test/` and targeted `node --check` syntax validation when iterating.
@@ -226,10 +271,12 @@ Expected env names currently include:
 
 - AI: `QUATARLY_API_KEY`, `QUATARLY_BASE_URL`, `TAVILY_API_KEY`
 - market data: `FMP_API_KEY_1`, `FRED_API_KEY`
-- brokerage: `TRADIER_API_KEY`, `TRADIER_BASE_URL`, `TRADIER_SANDBOX_API_KEY`, `TRADIER_SANDBOX_URL`, `TRADIER_ACCOUNT_ID`, `TRADIER_SANDBOX_ACCOUNT_ID`
+- brokerage: `TRADING_MODE`, `TRADIER_API_KEY`, `TRADIER_BASE_URL`, `TRADIER_SANDBOX_API_KEY`, `TRADIER_SANDBOX_URL`, `TRADIER_ACCOUNT_ID`, `TRADIER_SANDBOX_ACCOUNT_ID`
 - database: `DATABASE_URL`
 - email: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `ALERT_EMAIL`
 - runtime/risk: `NODE_ENV`, `INITIAL_CAPITAL`, `MAX_POSITION_SIZE`, `MAX_PORTFOLIO_DRAWDOWN`, `MIN_CASH_RESERVE`, `CASH_WARNING_THRESHOLD`, `MAX_SECTOR_ALLOCATION`, `MAX_TOTAL_SHORT_EXPOSURE`
+
+For Railway paper deployments, `TRADING_MODE=paper` should be used even when `NODE_ENV=production`.
 
 ### Known operational references
 
