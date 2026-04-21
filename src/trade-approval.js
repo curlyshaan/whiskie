@@ -144,7 +144,11 @@ class TradeApprovalManager {
       fundamentalStopConditions,
       overridePhase2Decision,
       overrideSymbol,
-      overrideReason
+      overrideReason,
+      decisionRunId,
+      sourcePhase,
+      rawModelQuantity,
+      quantityAdjustmentNote
     } = trade;
 
     // Calculate expiration (24 hours from now)
@@ -161,8 +165,9 @@ class TradeApprovalManager {
         risk_factors, holding_period, confidence, growth_potential, news_links,
         stop_type, stop_reason, has_fixed_target, target_type, trailing_stop_pct,
         rebalance_threshold_pct, max_holding_days, fundamental_stop_conditions,
-        override_phase2_decision, override_symbol, override_reason, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
+        override_phase2_decision, override_symbol, override_reason,
+        decision_run_id, source_phase, raw_model_quantity, quantity_adjustment_note, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, $40)
        RETURNING id`,
       [symbol, action, quantity, entryPrice, stopLoss, takeProfit,
        orderType, pathway, intent, reasoning, investmentThesis || null, strategyType || null,
@@ -181,6 +186,10 @@ class TradeApprovalManager {
        overridePhase2Decision || null,
        overrideSymbol || null,
        overrideReason || null,
+       decisionRunId || null,
+       sourcePhase || 'phase4',
+       rawModelQuantity ?? quantity,
+       quantityAdjustmentNote || null,
        expiresAt]
     );
 

@@ -353,6 +353,93 @@ function renderPhase4Analysis(text) {
   return sections.length ? sections.join('') : `<pre style="white-space: pre-wrap; color: #d0d0d0;">${escaped}</pre>`;
 }
 
+function buildTradeBlockLookup(text) {
+  const cleaned = stripThinkingBlocks(text || '');
+  const lookup = new Map();
+  const blockPattern = /(EXECUTE_(?:BUY|SHORT):[^\n]+)([\s\S]*?)(?=EXECUTE_(?:BUY|SHORT):|$)/g;
+  let match;
+  while ((match = blockPattern.exec(cleaned)) !== null) {
+    const command = match[1].trim();
+    const body = match[2].trim();
+    const symbolMatch = command.match(/EXECUTE_(?:BUY|SHORT):\s*([A-Z]{1,5})\b/i);
+    if (!symbolMatch) continue;
+    const symbol = symbolMatch[1].toUpperCase();
+    if (!lookup.has(symbol)) {
+      lookup.set(symbol, { command, body });
+    }
+  }
+  return lookup;
+}
+
+function renderExecutableTradesFromApprovals(approvals, analysisText) {
+  if (!approvals?.length) return '';
+
+  const blockLookup = buildTradeBlockLookup(analysisText);
+  const tradeCards = approvals.map(trade => {
+    const block = blockLookup.get(String(trade.symbol || '').toUpperCase())?.body || '';
+    const extract = (label) => {
+      const fieldMatch = block.match(new RegExp(`${label}:\\s*(.+)`, 'i'));
+      return fieldMatch ? fieldMatch[1].trim() : '';
+    };
+    const overrideDecision = extract('OVERRIDE_PHASE2_DECISION') || trade.override_phase2_decision || '';
+    const overrideSymbol = extract('OVERRIDE_SYMBOL') || trade.override_symbol || '';
+    const overrideReason = extract('OVERRIDE_REASON') || trade.override_reason || '';
+
+    return `
+      <div class="compact-trade-card ${trade.action === 'sell_short' ? 'short' : 'buy'}">
+        <div class="compact-trade-header">
+          <div class="compact-trade-title">${trade.action === 'sell_short' ? 'Short' : 'Buy'} ${escapeHtml(trade.symbol)}</div>
+          <div class="compact-trade-badge">${trade.pathway ? escapeHtml(trade.pathway) : 'unclassified'}</div>
+        </div>
+        ${overrideDecision && String(overrideDecision).toUpperCase() === 'YES' ? `
+          <div class="override-banner">
+            <div class="override-label">Phase 4 Override</div>
+            ${renderMetricGrid([
+              { label: 'Override Decision', value: overrideDecision },
+              { label: 'Replaced Symbol', value: overrideSymbol && String(overrideSymbol).toUpperCase() !== 'NONE' ? overrideSymbol : 'None' }
+            ])}
+            ${overrideReason && String(overrideReason).toUpperCase() !== 'NONE' ? `<div class="detail-section-body">${formatStructuredText(overrideReason)}</div>` : ''}
+          </div>
+        ` : ''}
+        <div class="compact-trade-metrics">
+          <div>
+            <div class="compact-trade-metric-label">Quantity</div>
+            <div class="compact-trade-metric-value">${escapeHtml(trade.quantity)}</div>
+          </div>
+          <div>
+            <div class="compact-trade-metric-label">Entry</div>
+            <div class="compact-trade-metric-value">$${escapeHtml(trade.entry_price)}</div>
+          </div>
+          <div>
+            <div class="compact-trade-metric-label">Stop</div>
+            <div class="compact-trade-metric-value">$${escapeHtml(trade.stop_loss)}</div>
+          </div>
+          <div>
+            <div class="compact-trade-metric-label">Target</div>
+            <div class="compact-trade-metric-value">$${escapeHtml(trade.take_profit)}</div>
+          </div>
+          <div>
+            <div class="compact-trade-metric-label">Intent</div>
+            <div class="compact-trade-metric-value">${escapeHtml(trade.intent || 'n/a')}</div>
+          </div>
+        </div>
+        ${trade.quantity_adjustment_note ? `
+          <div class="detail-section-body" style="margin-top: 12px;">
+            ${escapeHtml(trade.quantity_adjustment_note)}
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="phase4-section">
+      <div class="phase4-section-title">Final Executable Trades</div>
+      ${tradeCards}
+    </div>
+  `;
+}
+
 /**
  * Dashboard UI - View all analyses and recommendations
  */
@@ -432,13 +519,27 @@ router.get('/', async (req, res) => {
       // Table doesn't exist yet
     }
 
+    let todaysApprovals = { rows: [] };
+    try {
+      todaysApprovals = await db.query(
+        `SELECT *
+         FROM trade_approvals
+         WHERE DATE(created_at) = $1
+         ORDER BY created_at DESC`,
+        [today]
+      );
+    } catch (err) {
+      // Table doesn't exist yet
+    }
+
     const html = generateDashboardHTML(
       analyses.rows,
       portfolio.rows,
       trades.rows,
       snapshot.rows[0],
       dailyState.rows,
-      promotedDiscovery.rows
+      promotedDiscovery.rows,
+      todaysApprovals.rows
     );
     res.send(html);
   } catch (error) {
@@ -630,7 +731,7 @@ router.post('/api/earnings-reminders/save', async (req, res) => {
   }
 });
 
-function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState = [], promotedDiscovery = []) {
+function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState = [], promotedDiscovery = [], todaysApprovals = []) {
   const totalValue = snapshot?.total_value || 100000;
   const cash = snapshot?.cash || snapshot?.cash_balance || 100000;
   const invested = totalValue - cash;
@@ -1203,9 +1304,14 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
           }
 
           const cleanedRecommendation = stripThinkingBlocks(a.recommendation || 'No recommendation');
-          const htmlContent = a.decision_type === 'deep-analysis'
-            ? renderPhase4Analysis(cleanedRecommendation)
-            : markdownToHtml(cleanedRecommendation);
+          let htmlContent;
+          if (a.decision_type === 'deep-analysis') {
+            const relatedApprovals = todaysApprovals.filter(row => row.decision_run_id && row.decision_run_id === a.run_id);
+            const executableTradesHtml = renderExecutableTradesFromApprovals(relatedApprovals, cleanedRecommendation);
+            htmlContent = `${executableTradesHtml}${renderPhase4Analysis(cleanedRecommendation)}`;
+          } else {
+            htmlContent = markdownToHtml(cleanedRecommendation);
+          }
           return `
             <details>
               <summary>

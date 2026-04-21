@@ -2876,7 +2876,13 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
               fundamentalStopConditions: rec.fundamentalStopConditions || null,
               overridePhase2Decision: rec.overridePhase2Decision || null,
               overrideSymbol: rec.overrideSymbol || null,
-              overrideReason: rec.overrideReason || null
+              overrideReason: rec.overrideReason || null,
+              decisionRunId: `daily-${new Date().toISOString().split('T')[0]}-${runProfile.runTime}`,
+              sourcePhase: 'phase4',
+              rawModelQuantity: rec.originalQuantity || rec.quantity,
+              quantityAdjustmentNote: rec.vixAdjusted && rec.originalQuantity && rec.originalQuantity !== rec.quantity
+                ? `VIX ${regime.name} sizing adjusted from ${rec.originalQuantity} to ${rec.quantity}`
+                : null
             }, true);  // skipEmail = true for batch
 
             submittedTrades.push({
