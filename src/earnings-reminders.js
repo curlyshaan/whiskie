@@ -159,6 +159,26 @@ function normalizeSession(rawText = '') {
   return 'unknown';
 }
 
+function isSessionKnown(value) {
+  return value === 'pre_market' || value === 'post_market';
+}
+
+function choosePreferredSession(...candidates) {
+  for (const candidate of candidates) {
+    if (isSessionKnown(candidate)) return candidate;
+  }
+  return 'unknown';
+}
+
+function deriveSessionFromYahooRow(row = {}) {
+  return choosePreferredSession(
+    normalizeSession(row.startdatetimetype),
+    normalizeSession(row.time),
+    normalizeSession(row.timeType),
+    normalizeSession(row.epsestimate)
+  );
+}
+
 function formatEasternCallTime(rawSeconds) {
   if (!Number.isFinite(rawSeconds)) return null;
   const date = new Date(rawSeconds * 1000);
@@ -224,7 +244,12 @@ function normalizeTimingPayload(rawTiming, fallbackDate) {
   const rawTimeInput = String(rawTiming?.earningsTimeRaw || '').trim();
   const normalizedShortTime = summarizeTimingValue(rawTimeInput, TIMING_RAW_LIMIT);
   const source = summarizeTimingValue(String(rawTiming?.source || 'unknown').trim().toLowerCase(), SESSION_SOURCE_LIMIT) || 'unknown';
-  const mappedSession = rawTiming?.earningsSession || mapLegacyEarningsTime(rawTimeInput) || normalizeSession(rawTimeInput) || 'unknown';
+  const explicitSession = String(rawTiming?.earningsSession || '').trim().toLowerCase().replace(/\s+/g, '_');
+  const mappedSession = choosePreferredSession(
+    explicitSession,
+    mapLegacyEarningsTime(rawTimeInput),
+    normalizeSession(rawTimeInput)
+  );
   const earningsSession = summarizeTimingValue(
     String(mappedSession).trim().toLowerCase().replace(/\s+/g, '_'),
     SESSION_SOURCE_LIMIT
@@ -346,12 +371,12 @@ export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
       if (!row) continue;
 
       const isoDate = toIsoDate(row.startdatetime || row.startDate || row.earningsDate) || expectedDate;
-      const rawText = row.startdatetimetype || row.time || row.epsestimate || null;
+      const rawText = row.startdatetimetype || row.time || row.timeType || null;
       return {
         symbol: normalizedSymbol,
         earningsDate: isoDate,
         earningsTimeRaw: rawText,
-        earningsSession: normalizeSession(rawText),
+        earningsSession: deriveSessionFromYahooRow(row),
         source: 'yahoo'
       };
     } catch {}
@@ -371,11 +396,12 @@ export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
   if (earningsCallDate?.raw || earningsDate?.raw) {
     const callDateIso = toIsoDate((earningsCallDate?.raw || earningsDate?.raw) * 1000) || expectedDate;
     const rawTimeText = formatEasternCallTime(earningsCallDate?.raw);
+    const sessionFromCallTime = normalizeSession(rawTimeText);
     return {
       symbol: normalizedSymbol,
       earningsDate: callDateIso,
       earningsTimeRaw: rawTimeText,
-      earningsSession: normalizeSession(rawTimeText),
+      earningsSession: isSessionKnown(sessionFromCallTime) ? sessionFromCallTime : 'unknown',
       source: 'yahoo'
     };
   }
@@ -404,19 +430,33 @@ export async function getEarningsReminderDetails(symbol) {
   }
 
   const existingReminder = await db.getActiveEarningsReminder(normalizedSymbol);
+  const fallbackSession = upcoming.session_normalized && upcoming.session_normalized !== 'unknown'
+    ? upcoming.session_normalized
+    : mapLegacyEarningsTime(upcoming.earnings_time);
+
   let timing = {
     symbol: normalizedSymbol,
     earningsDate: upcoming.earnings_date,
     earningsTimeRaw: upcoming.timing_raw || upcoming.earnings_time || null,
-    earningsSession: upcoming.session_normalized || mapLegacyEarningsTime(upcoming.earnings_time),
+    earningsSession: fallbackSession || 'unknown',
     source: upcoming.timing_source || upcoming.source || 'unknown'
   };
 
   try {
     const yahooTiming = await enrichYahooEarningsTiming(normalizedSymbol, upcoming.earnings_date);
-    if (yahooTiming?.earningsTimeRaw || yahooTiming?.earningsSession !== 'unknown') {
-      timing = normalizeTimingPayload(yahooTiming, upcoming.earnings_date);
-      await db.enrichEarningTiming(normalizedSymbol, upcoming.earnings_date, yahooTiming).catch(() => null);
+    const normalizedYahooTiming = normalizeTimingPayload(yahooTiming, upcoming.earnings_date);
+    if (normalizedYahooTiming?.earningsTimeRaw || isSessionKnown(normalizedYahooTiming?.earningsSession)) {
+      timing = {
+        ...timing,
+        ...normalizedYahooTiming,
+        earningsSession: choosePreferredSession(
+          normalizedYahooTiming.earningsSession,
+          timing.earningsSession
+        ),
+        earningsTimeRaw: normalizedYahooTiming.earningsTimeRaw || timing.earningsTimeRaw || null,
+        source: normalizedYahooTiming.source || timing.source || 'unknown'
+      };
+      await db.enrichEarningTiming(normalizedSymbol, upcoming.earnings_date, normalizedYahooTiming).catch(() => null);
     }
   } catch (error) {
     console.warn(`⚠️ Yahoo timing enrichment failed for ${normalizedSymbol}: ${error.message}`);

@@ -2297,18 +2297,53 @@ export async function getAllActiveEarningsReminders() {
 export async function getRemindersDueForSend(now = new Date()) {
   try {
     const result = await pool.query(
-      `SELECT *
-       FROM earnings_reminders
-       WHERE status = 'active'
-         AND email_enabled = TRUE
-         AND scheduled_send_at IS NOT NULL
-         AND scheduled_send_at <= $1
-       ORDER BY scheduled_send_at ASC, symbol ASC`,
+      `SELECT er.*
+       FROM earnings_reminders er
+       JOIN LATERAL (
+         SELECT ec.earnings_date
+         FROM earnings_calendar ec
+         WHERE ec.symbol = er.symbol
+           AND ec.earnings_date >= CURRENT_DATE
+         ORDER BY ec.earnings_date ASC, ec.source_priority DESC, ec.last_verified_at DESC
+         LIMIT 1
+       ) next_event ON TRUE
+       WHERE er.status = 'active'
+         AND er.email_enabled = TRUE
+         AND er.scheduled_send_at IS NOT NULL
+         AND er.scheduled_send_at <= $1
+         AND er.earnings_date = next_event.earnings_date
+         AND er.earnings_date >= CURRENT_DATE
+       ORDER BY er.scheduled_send_at ASC, er.symbol ASC`,
       [now]
     );
     return result.rows;
   } catch (error) {
     console.error('Error fetching due earnings reminders:', error);
+    throw error;
+  }
+}
+
+export async function expireStaleEarningsReminders() {
+  try {
+    const result = await pool.query(
+      `UPDATE earnings_reminders er
+       SET status = 'expired',
+           updated_at = CURRENT_TIMESTAMP
+       WHERE er.status = 'active'
+         AND (
+           er.earnings_date < CURRENT_DATE
+           OR NOT EXISTS (
+             SELECT 1
+             FROM earnings_calendar ec
+             WHERE ec.symbol = er.symbol
+               AND ec.earnings_date = er.earnings_date
+               AND ec.earnings_date >= CURRENT_DATE
+           )
+         )`
+    );
+    return result.rowCount;
+  } catch (error) {
+    console.error('Error expiring stale earnings reminders:', error);
     throw error;
   }
 }
