@@ -48,6 +48,18 @@ class TradierAPI {
       timeout: 30000 // 30 second timeout
     });
 
+    this.client.interceptors.response.use(
+      response => response,
+      error => {
+        const status = error.response?.status;
+        const method = (error.config?.method || 'get').toUpperCase();
+        const path = error.request?.path || error.config?.url || 'unknown';
+        const body = JSON.stringify(error.response?.data || {}).slice(0, 500);
+        console.error(`[TradierError] status=${status || 'unknown'} method=${method} path=${path} body=${body}`);
+        return Promise.reject(error);
+      }
+    );
+
     this.MAX_RETRIES = 3;
     this.BACKOFF_MS = [2000, 5000, 15000]; // Exponential backoff
   }
