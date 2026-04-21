@@ -117,7 +117,7 @@ class WhiskieBot {
 
       // Disable auto-start on deployment - only run on schedule or manual trigger
       console.log('⏰ Auto-start disabled. Bot will wait for scheduled cron jobs or manual trigger.');
-      console.log('📅 Scheduled runs: 9:00 AM (pre-market), 10:00 AM, 2:00 PM ET (Mon-Fri)');
+      console.log('📅 Scheduled runs: 9:00 AM (pre-market), 10:00 AM, 12:00 PM, 2:00 PM ET (Mon-Fri)');
       console.log('📡 Manual trigger: POST /analyze\n');
 
       if (!CRON_JOBS_ENABLED) {
@@ -140,7 +140,7 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule daily analysis at 10:00 AM and 2:00 PM ET
+      // Schedule daily analysis at 10:00 AM, 12:00 PM, and 2:00 PM ET
       cron.schedule('0 10 * * 1-5', async () => {
         const scheduledTime = new Date();
         const jobId = await db.logCronJobStart('Morning Analysis', 'daily', scheduledTime);
@@ -151,6 +151,22 @@ class WhiskieBot {
           await db.logCronJobComplete(jobId, true);
         } catch (error) {
           console.error('❌ Morning analysis failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      cron.schedule('0 12 * * 1-5', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Midday Analysis', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ 12:00 PM Analysis - Midday refresh');
+          await this.runDailyAnalysis();
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Midday analysis failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
         }
       }, {
@@ -524,6 +540,7 @@ class WhiskieBot {
       console.log('   • 8:00 AM ET - Macro regime detection');
       console.log('   • 9:00 AM ET - Pre-market gap scan');
       console.log('   • 10:00 AM ET - Morning analysis + trim/tax/trailing checks');
+      console.log('   • 12:00 PM ET - Midday analysis + refresh checks');
       console.log('   • 2:00 PM ET - Afternoon analysis + trim/tax/trailing checks');
       console.log('   • 6:00 PM ET - Daily summary + portfolio risk metrics');
       console.log('   • Every 5 min (9am-4pm) - Process approved trades');
@@ -2924,21 +2941,36 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
     const etFormatter = new Intl.DateTimeFormat('en-US', {
       timeZone: 'America/New_York',
       hour: 'numeric',
+      minute: 'numeric',
       hour12: false
     });
-    const hour = parseInt(etFormatter.format(now), 10);
+    const [hourText, minuteText = '0'] = etFormatter.format(now).split(':');
+    const hour = parseInt(hourText, 10);
+    const minute = parseInt(minuteText, 10);
+    const totalMinutes = (hour * 60) + minute;
 
-    if (hour >= 13) {
+    if (totalMinutes >= (13 * 60)) {
       return {
         runType: 'incremental',
-        runTime: 'afternoon',
+        runTime: '14:00:00',
+        runSlot: 'afternoon',
         label: 'Afternoon incremental refresh'
+      };
+    }
+
+    if (totalMinutes >= (11 * 60)) {
+      return {
+        runType: 'incremental',
+        runTime: '12:00:00',
+        runSlot: 'midday',
+        label: 'Midday incremental refresh'
       };
     }
 
     return {
       runType: 'strategic',
-      runTime: 'morning',
+      runTime: '10:00:00',
+      runSlot: 'morning',
       label: 'Morning strategic refresh'
     };
   }
@@ -3032,7 +3064,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
       reviewReasonCode: !previous ? 'initial_coverage' : earningsProximityTrigger ? 'earnings_proximity' : hasChanged ? 'market_delta' : 'scheduled_monitor',
       materialChangeDetected: !previous || hasChanged || earningsProximityTrigger,
       candidateBucketAtRun: candidate.source || 'watchlist',
-      decisionRunId: `${runProfile.runType}-${runProfile.runTime}-${new Date().toISOString().split('T')[0]}`,
+      decisionRunId: `${runProfile.runType}-${runProfile.runSlot || runProfile.runTime}-${new Date().toISOString().split('T')[0]}`,
       stateVersion: 1
     };
   }
@@ -3079,7 +3111,7 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
         pathway: candidate.pathway || 'discovery',
         score: candidate.score,
         reasons: `${candidate.sourceReasons || 'Discovery trigger'} | Insider: ${insiderSummary.summary}`,
-        promotionReason: `discovery_${runProfile.runTime}`,
+        promotionReason: `discovery_${runProfile.runSlot || runProfile.runTime}`,
         source: 'discovery'
       });
     }
