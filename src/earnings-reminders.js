@@ -7,6 +7,8 @@ import claude, { MODELS } from './claude.js';
 import { resolveMarketPrice } from './utils.js';
 
 const EASTERN_TIMEZONE = 'America/New_York';
+const TIMING_RAW_LIMIT = 10;
+const SESSION_SOURCE_LIMIT = 20;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -193,19 +195,40 @@ function mapLegacyEarningsTime(value) {
   return 'unknown';
 }
 
+function summarizeTimingValue(value, maxLength) {
+  const normalized = String(value || '')
+    .replace(/\bbefore market open\b/gi, 'bmo')
+    .replace(/\bbefore open\b/gi, 'bmo')
+    .replace(/\bafter market close\b/gi, 'amc')
+    .replace(/\bafter close\b/gi, 'amc')
+    .replace(/\s*(EDT|EST|ET|UTC|GMT)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) return null;
+  if (normalized.length <= maxLength) return normalized;
+
+  const timeMatch = normalized.match(/\b\d{1,2}:\d{2}\s?(AM|PM)\b/i);
+  if (timeMatch && timeMatch[0].length <= maxLength) {
+    return timeMatch[0].toUpperCase();
+  }
+
+  if (normalized.toLowerCase().includes('bmo')) return 'bmo';
+  if (normalized.toLowerCase().includes('amc')) return 'amc';
+
+  return normalized.slice(0, maxLength).trim();
+}
+
 function normalizeTimingPayload(rawTiming, fallbackDate) {
   const earningsDate = toIsoDate(rawTiming?.earningsDate) || toIsoDate(fallbackDate) || fallbackDate || null;
   const rawTimeInput = String(rawTiming?.earningsTimeRaw || '').trim();
-  const normalizedShortTime = rawTimeInput
-    ? rawTimeInput
-        .replace(/\s*(EDT|EST|ET|UTC|GMT)\b/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 10)
-    : null;
-  const source = String(rawTiming?.source || 'unknown').trim().toLowerCase().slice(0, 20) || 'unknown';
+  const normalizedShortTime = summarizeTimingValue(rawTimeInput, TIMING_RAW_LIMIT);
+  const source = summarizeTimingValue(String(rawTiming?.source || 'unknown').trim().toLowerCase(), SESSION_SOURCE_LIMIT) || 'unknown';
   const mappedSession = rawTiming?.earningsSession || mapLegacyEarningsTime(rawTimeInput) || normalizeSession(rawTimeInput) || 'unknown';
-  const earningsSession = String(mappedSession).trim().toLowerCase().replace(/\s+/g, '_').slice(0, 20) || 'unknown';
+  const earningsSession = summarizeTimingValue(
+    String(mappedSession).trim().toLowerCase().replace(/\s+/g, '_'),
+    SESSION_SOURCE_LIMIT
+  ) || 'unknown';
   return {
     symbol: rawTiming?.symbol || null,
     earningsDate,

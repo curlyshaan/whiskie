@@ -930,16 +930,16 @@ class WhiskieBot {
 
     app.post('/api/trigger-earnings-reminders', async (req, res) => {
       try {
-        console.log('📡 Manual earnings reminder processing triggered via API');
+        console.log('📡 Manual earnings predictor processing triggered via API');
         (async () => {
           try {
             await earningsReminders.syncAutoEarningsReminders();
             await this.processEarningsReminders();
           } catch (error) {
-            console.error('❌ Error in manual earnings reminder processing:', error);
+            console.error('❌ Error in manual earnings predictor processing:', error);
           }
         })();
-        res.json({ success: true, message: 'Earnings reminder processing started. Check logs for progress.' });
+        res.json({ success: true, message: 'Earnings predictor processing started. Check logs for progress.' });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
