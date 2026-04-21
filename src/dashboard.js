@@ -211,9 +211,20 @@ function formatDashboardSession(value) {
   if (!normalized) return 'Unknown';
   if (normalized === 'bmo') return 'Pre-market';
   if (normalized === 'amc') return 'Post-market';
+  if (normalized === 'pre_mark') return 'Pre-market';
+  if (normalized === 'post_mark') return 'Post-market';
+  if (normalized === 'pre_market') return 'Pre-market';
+  if (normalized === 'post_market') return 'Post-market';
   return normalized
     .replace(/_/g, ' ')
     .replace(/\b\w/g, char => char.toUpperCase());
+}
+
+function formatDashboardDateOnly(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 function formatCurrency(value) {
@@ -2980,7 +2991,7 @@ function generateEarningsRemindersHTML(reminders) {
   const reminderRows = reminders.map(reminder => ({
     symbol: reminder.symbol,
     companyName: reminder.company_name || '',
-    earningsDate: formatIsoDate(reminder.earnings_date),
+    earningsDate: formatDashboardDateOnly(reminder.earnings_date),
     session: formatDashboardSession(reminder.earnings_session || reminder.session_normalized || reminder.earnings_time || 'unknown'),
     pathway: reminder.primary_pathway || '-',
     secondaryPathways: ((reminder.secondary_pathways || []).join(', ')) || 'none',
