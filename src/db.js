@@ -2595,19 +2595,18 @@ export async function markEarningsReminderPredicted(id, predictedAt, predictionD
       `UPDATE earnings_reminders
        SET status = 'predicted',
            email_sent_at = NULL::timestamp,
-           predictor_run_at = $3,
-           predictor_snapshot_price = $4,
-           predicted_direction = $5,
-           predicted_confidence = $6,
-           prediction_reasoning = $7,
-           prediction_catalyst_summary = $8,
-           prediction_key_risk = $9,
+           predictor_run_at = $2,
+           predictor_snapshot_price = $3,
+           predicted_direction = $4,
+           predicted_confidence = $5,
+           prediction_reasoning = $6,
+           prediction_catalyst_summary = $7,
+           prediction_key_risk = $8,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
        RETURNING *`,
       [
         id,
-        predictedAt,
         predictionData.predictorRunAt || predictedAt,
         predictionData.snapshotPrice ?? null,
         predictionData.direction || null,

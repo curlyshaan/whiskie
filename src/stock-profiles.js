@@ -4,6 +4,45 @@ import fmp from './fmp.js';
 import tradier from './tradier.js';
 import tavily from './tavily.js';
 
+const profileBuildControllers = new Map();
+
+class ProfileBuildCancelledError extends Error {
+  constructor(symbol) {
+    super(`Profile build cancelled for ${symbol}`);
+    this.name = 'ProfileBuildCancelledError';
+    this.symbol = symbol;
+  }
+}
+
+function getProfileBuildController(symbol) {
+  const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+  if (!profileBuildControllers.has(normalizedSymbol)) {
+    profileBuildControllers.set(normalizedSymbol, { cancelled: false });
+  }
+  return profileBuildControllers.get(normalizedSymbol);
+}
+
+function clearProfileBuildController(symbol) {
+  profileBuildControllers.delete(String(symbol || '').trim().toUpperCase());
+}
+
+export function cancelProfileBuild(symbol) {
+  const controller = profileBuildControllers.get(String(symbol || '').trim().toUpperCase());
+  if (!controller) return false;
+  controller.cancelled = true;
+  return true;
+}
+
+export function isProfileBuildCancelled(symbol) {
+  return Boolean(profileBuildControllers.get(String(symbol || '').trim().toUpperCase())?.cancelled);
+}
+
+function throwIfProfileBuildCancelled(symbol) {
+  if (isProfileBuildCancelled(symbol)) {
+    throw new ProfileBuildCancelledError(symbol);
+  }
+}
+
 function createProfileTimer(symbol, phase = 'full') {
   const startedAt = Date.now();
   let lastStepAt = startedAt;
@@ -102,6 +141,7 @@ Key metrics: {"primary": ["revenue_growth", "operating_margin"], "thresholds": {
   const sectionOutputs = [];
 
   for (const sectionCall of sectionCalls) {
+    throwIfProfileBuildCancelled(symbol);
     console.log(`  🤔 Running Gemini 3.1 Pro profile section: ${sectionCall.name}...`);
     const startedAt = Date.now();
     const response = await claude.sendMessage(
@@ -357,11 +397,14 @@ export async function buildStockProfile(symbol, options = {}) {
   console.log(`\n🔬 Building profile for ${symbol}...`);
   const timer = createProfileTimer(symbol, 'full');
   const staleAfterDays = options.staleAfterDays ?? 14;
+  getProfileBuildController(symbol);
 
   try {
+    throwIfProfileBuildCancelled(symbol);
     // Check if profile already exists
     const existingProfile = await getStockProfile(symbol);
     timer.step('load-existing-profile');
+    throwIfProfileBuildCancelled(symbol);
 
     // Check if stock should be skipped
     if (existingProfile && existingProfile.quality_flag !== 'active') {
@@ -392,6 +435,7 @@ export async function buildStockProfile(symbol, options = {}) {
     console.log('  📊 Fetching fundamentals from FMP...');
     const fundamentals = await fmp.getFundamentals(symbol);
     timer.step('fetch-fundamentals');
+    throwIfProfileBuildCancelled(symbol);
 
     // Quality check: filter out low-quality stocks
     const qualityCheck = checkStockQuality(symbol, fundamentals);
@@ -421,6 +465,7 @@ export async function buildStockProfile(symbol, options = {}) {
       formatDate(new Date())
     );
     timer.step('fetch-historical-data');
+    throwIfProfileBuildCancelled(symbol);
 
     console.log('  📰 Fetching recent news...');
     const news = await tavily.searchStructuredStockContext(symbol, {
@@ -430,6 +475,7 @@ export async function buildStockProfile(symbol, options = {}) {
       timeRange: 'month'
     });
     timer.step('fetch-news');
+    throwIfProfileBuildCancelled(symbol);
 
     const profileContext = buildProfileContext(symbol, fundamentals, historicalData, news);
     const researchText = await generateProfileSections(symbol, profileContext, timer);
@@ -462,6 +508,8 @@ export async function buildStockProfile(symbol, options = {}) {
     timer.finish('failed');
     console.error(`❌ Error building profile for ${symbol}:`, error.message);
     throw error;
+  } finally {
+    clearProfileBuildController(symbol);
   }
 }
 
@@ -471,6 +519,8 @@ export async function buildStockProfile(symbol, options = {}) {
 async function updateStockProfile(symbol, existingProfile = null, options = {}) {
   const timer = createProfileTimer(symbol, 'incremental');
   try {
+    getProfileBuildController(symbol);
+    throwIfProfileBuildCancelled(symbol);
     const staleAfterDays = options.staleAfterDays ?? 14;
     const profileToUpdate = existingProfile || await getStockProfile(symbol);
 
@@ -484,10 +534,12 @@ async function updateStockProfile(symbol, existingProfile = null, options = {}) 
     console.log('  📊 Fetching latest fundamentals...');
     const fundamentals = await fmp.getFundamentals(symbol);
     timer.step('fetch-fundamentals');
+    throwIfProfileBuildCancelled(symbol);
 
     console.log('  📰 Fetching recent news...');
     const news = await tavily.searchStructuredStockContext(symbol, { maxResults: 3 });
     timer.step('fetch-news');
+    throwIfProfileBuildCancelled(symbol);
 
     // Build incremental update prompt
     const updatePrompt = `Update the stock profile for ${symbol} with latest information.
@@ -527,6 +579,7 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
     const updateDuration = ((Date.now() - updateStart) / 1000).toFixed(1);
     console.log(`  ✅ Update complete (${updateDuration}s)`);
     timer.step('llm-update');
+    throwIfProfileBuildCancelled(symbol);
     const updateText = update?.content?.map(block => block?.text || '').join('\n').trim() || '';
 
     // Merge updates with existing profile (apply cleanText to enforce character limits)
@@ -580,6 +633,8 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
     timer.finish('failed');
     console.error(`❌ Error updating profile for ${symbol}:`, error.message);
     throw error;
+  } finally {
+    clearProfileBuildController(symbol);
   }
 }
 
@@ -956,6 +1011,8 @@ export async function buildProfileBatch(batchNumber, batchSize = 50) {
 }
 
 export default {
+  cancelProfileBuild,
+  isProfileBuildCancelled,
   saveStockProfile,
   getStockProfile,
   getStockProfiles,

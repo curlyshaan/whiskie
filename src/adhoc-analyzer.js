@@ -5,7 +5,7 @@ import fmp from './fmp.js';
 import tradier from './tradier.js';
 import tavily from './tavily.js';
 import { researchCatalysts } from './catalyst-research.js';
-import stockProfiles, { getProfileFreshness } from './stock-profiles.js';
+import stockProfiles, { cancelProfileBuild, getProfileFreshness, isProfileBuildCancelled } from './stock-profiles.js';
 
 const router = express.Router();
 const activeProfileBuilds = new Map();
@@ -863,6 +863,35 @@ router.post('/build-profile', async (req, res) => {
     console.error('❌ Error building adhoc stock profile:', error);
     res.status(500).json({ error: error.message });
   }
+});
+
+router.post('/cancel-profile-build', async (req, res) => {
+  try {
+    const symbol = String(req.body?.ticker || req.body?.symbol || '').trim().toUpperCase();
+    if (!symbol) {
+      return res.status(400).json({ error: 'Ticker is required' });
+    }
+
+    const cancelled = cancelProfileBuild(symbol);
+    res.json({
+      success: cancelled,
+      symbol,
+      message: cancelled ? `Cancellation requested for ${symbol}` : `No active profile build found for ${symbol}`
+    });
+  } catch (error) {
+    console.error('❌ Error cancelling profile build:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/profile-build-status/:symbol', async (req, res) => {
+  const symbol = String(req.params?.symbol || '').trim().toUpperCase();
+  const active = activeProfileBuilds.has(symbol);
+  res.json({
+    symbol,
+    active,
+    cancelled: isProfileBuildCancelled(symbol)
+  });
 });
 
 router.get('/debug-build-profile', async (req, res) => {

@@ -129,6 +129,61 @@ class TavilyAPI {
     return [];
   }
 
+  mergeSearchResults(resultsList = [], maxResults = 5) {
+    const merged = [];
+    const seen = new Set();
+
+    for (const results of resultsList) {
+      for (const result of results || []) {
+        if (!result) continue;
+        const key = `${result.url || ''}::${result.title || ''}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(result);
+        if (merged.length >= maxResults) {
+          return merged;
+        }
+      }
+    }
+
+    return merged;
+  }
+
+  async searchMany(queries = [], baseOptions = {}) {
+    const normalizedQueries = queries
+      .map(entry => {
+        const built = typeof entry === 'function' ? entry() : entry;
+        const query = String(built?.query || '').trim();
+        if (!query) return null;
+        return {
+          query,
+          options: { ...baseOptions, ...(built?.options || {}) }
+        };
+      })
+      .filter(Boolean);
+
+    if (!normalizedQueries.length) return [];
+
+    const settled = await Promise.allSettled(
+      normalizedQueries.map(item => this.searchWithFallbacks([{ query: item.query, options: item.options }], item.options))
+    );
+
+    const fulfilled = settled
+      .filter(item => item.status === 'fulfilled')
+      .map(item => item.value);
+
+    if (fulfilled.length) {
+      return this.mergeSearchResults(fulfilled, baseOptions.maxResults || 5);
+    }
+
+    const firstRejected = settled.find(item => item.status === 'rejected');
+    if (firstRejected) {
+      throw firstRejected.reason;
+    }
+
+    return [];
+  }
+
   /**
    * Search for stock-specific news
    */
@@ -172,23 +227,14 @@ class TavilyAPI {
   async searchStructuredStockContext(symbol, options = {}) {
     const maxResults = options.maxResults || 5;
     const companyName = String(options.companyName || '').trim();
-    const identity = companyName ? `"${companyName}" OR ${symbol}` : symbol;
-    const query = [
-      `${identity} earnings guidance`,
-      `${identity} analyst downgrade OR analyst upgrade OR price target`,
-      `${identity} product launch OR customer announcement OR partnership OR deal`,
-      `${identity} litigation OR investigation OR recall OR management change`
-    ].join(' OR ');
+    const identity = companyName ? `"${companyName}" ${symbol}` : symbol;
 
-    return await this.searchWithFallbacks([
-      { query, options: { includeDomains: options.includeDomains || [] } },
-      { query: [
-        `${symbol} earnings guidance`,
-        `${symbol} analyst downgrade OR analyst upgrade OR price target`,
-        `${symbol} product launch OR customer announcement OR partnership`,
-        `${symbol} investigation OR recall`
-      ].join(' OR ') },
-      { query: `${symbol} latest stock news earnings guidance analyst` }
+    return await this.searchMany([
+      { query: `${identity} earnings guidance outlook`, options: { maxResults: 2 } },
+      { query: `${identity} analyst upgrade downgrade price target`, options: { maxResults: 2, includeDomains: [] } },
+      { query: `${identity} partnership deal product launch customer announcement`, options: { maxResults: 2, includeDomains: [] } },
+      { query: `${identity} litigation investigation recall management change`, options: { maxResults: 2, includeDomains: [] } },
+      { query: `${symbol} latest stock news earnings guidance analyst`, options: { maxResults: 2, includeDomains: [] } }
     ], {
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
@@ -219,47 +265,32 @@ class TavilyAPI {
   async searchStructuredEarningsContext(symbol, options = {}) {
     const maxResults = options.maxResults || 5;
     const companyName = String(options.companyName || '').trim();
-    const identity = companyName ? `"${companyName}" OR ${symbol}` : symbol;
-    const query = [
-      `${identity} earnings preview`,
-      `${identity} guidance OR outlook`,
-      `${identity} consensus estimates OR analyst expectations`,
-      `${identity} margin outlook OR subscription growth OR pipeline`,
-      `${identity} revenue outlook OR EPS outlook`
-    ].join(' OR ');
+    const includeDomains = options.includeDomains || [
+      'reuters.com',
+      'cnbc.com',
+      'marketwatch.com',
+      'investing.com',
+      'finance.yahoo.com',
+      'barrons.com',
+      'thestreet.com',
+      'benzinga.com',
+      'fool.com',
+      'seekingalpha.com'
+    ];
+    const identity = companyName ? `"${companyName}" ${symbol}` : symbol;
 
-    return await this.searchWithFallbacks([
-      { query, options: { includeDomains: options.includeDomains || [
-        'reuters.com',
-        'cnbc.com',
-        'marketwatch.com',
-        'investing.com',
-        'finance.yahoo.com',
-        'barrons.com',
-        'thestreet.com',
-        'benzinga.com',
-        'fool.com',
-        'seekingalpha.com'
-      ] } },
-      { query: `${symbol} earnings preview guidance outlook consensus estimates`, options: { includeDomains: [] } },
-      { query: `${symbol} earnings preview`, options: { includeDomains: [] } }
+    return await this.searchMany([
+      { query: `${identity} earnings preview`, options: { maxResults: 2, includeDomains } },
+      { query: `${identity} guidance outlook`, options: { maxResults: 2, includeDomains } },
+      { query: `${identity} consensus estimates analyst expectations`, options: { maxResults: 2, includeDomains } },
+      { query: `${identity} margin outlook revenue outlook EPS outlook pipeline`, options: { maxResults: 2, includeDomains } },
+      { query: `${symbol} earnings preview`, options: { maxResults: 2, includeDomains: [] } }
     ], {
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
       timeRange: options.timeRange || 'week',
       maxResults,
-      includeDomains: options.includeDomains || [
-        'reuters.com',
-        'cnbc.com',
-        'marketwatch.com',
-        'investing.com',
-        'finance.yahoo.com',
-        'barrons.com',
-        'thestreet.com',
-        'benzinga.com',
-        'fool.com',
-        'seekingalpha.com'
-      ]
+      includeDomains
     });
   }
 
