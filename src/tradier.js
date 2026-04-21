@@ -190,24 +190,44 @@ class TradierAPI {
    * - sell_to_open: open short position (short selling)
    * - buy_to_close: close short position (cover)
    */
-  async placeOrder(symbol, side, quantity, orderType = 'market', accountId = TRADIER_ACCOUNT_ID) {
+  async placeOrder(symbol, side, quantity, orderType = 'market', maybePriceOrAccountId = null, maybeAccountId = TRADIER_ACCOUNT_ID) {
     try {
-      const response = await this.client.post(`/accounts/${accountId}/orders`, null, {
-        params: {
-          class: 'equity',
-          symbol,
-          side, // 'buy', 'sell', 'buy_to_open', 'sell_to_close', 'sell_to_open', 'buy_to_close'
-          quantity,
-          type: orderType,
-          duration: 'gtc', // Good-til-canceled for extended hours support
-          extended_hours: true // Enable pre-market (4am-9:30am) and after-hours (4pm-8pm ET)
-        }
+      const isOrderConfigObject = orderType && typeof orderType === 'object';
+      const resolvedAccountId = isOrderConfigObject
+        ? (maybePriceOrAccountId || TRADIER_ACCOUNT_ID)
+        : ((maybeAccountId && String(maybeAccountId).trim()) || TRADIER_ACCOUNT_ID);
+      const params = isOrderConfigObject
+        ? {
+            class: 'equity',
+            symbol,
+            side,
+            quantity,
+            duration: 'gtc',
+            extended_hours: true,
+            ...orderType
+          }
+        : {
+            class: 'equity',
+            symbol,
+            side,
+            quantity,
+            type: orderType,
+            duration: 'gtc',
+            extended_hours: true
+          };
+
+      if (!isOrderConfigObject && maybePriceOrAccountId !== null && maybePriceOrAccountId !== undefined && maybePriceOrAccountId !== '') {
+        params.price = maybePriceOrAccountId;
+      }
+
+      const response = await this.client.post(`/accounts/${resolvedAccountId}/orders`, null, {
+        params
       });
       return response.data.order;
     } catch (error) {
       const status = error.response?.status;
       const method = (error.config?.method || 'post').toUpperCase();
-      const path = error.request?.path || error.config?.url || `/accounts/${accountId}/orders`;
+      const path = error.request?.path || error.config?.url || `/accounts/${maybeAccountId || TRADIER_ACCOUNT_ID}/orders`;
       const body = JSON.stringify(error.response?.data || {}).slice(0, 500);
       console.error(`[TradierOrderError] status=${status || 'unknown'} method=${method} path=${path} body=${body}`);
       console.error(`Error placing ${side} order for ${symbol}:`, error.message);
