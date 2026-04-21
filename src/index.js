@@ -1685,6 +1685,11 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         intentMap[candidate.symbol] = pathway ? PATHWAY_TO_INTENT[pathway] || 'momentum_short' : 'momentum_short';
       });
 
+      const activeWatchlistRows = await db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true });
+      const watchlistMetadataBySymbol = Object.fromEntries(
+        activeWatchlistRows.map(row => [row.symbol, row])
+      );
+
       const canonicalPathwayContextBySymbol = Object.fromEntries(
         Object.entries(watchlistMetadataBySymbol).map(([symbol, row]) => [symbol, {
           primary: row.primary_pathway || row.pathway || null,
@@ -1944,10 +1949,6 @@ ${trendContext}`;
       });
       const dailyStateSummary = await this.syncDailySymbolState(stateSnapshot);
       const selectedStateSummary = this.buildSelectedStateSummary(candidates, stateSnapshot.symbolStates);
-      const activeWatchlistRows = await db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true });
-      const watchlistMetadataBySymbol = Object.fromEntries(
-        activeWatchlistRows.map(row => [row.symbol, row])
-      );
 
       // Get market regime for allocation guidance
       console.log('📈 Detecting market regime...');
