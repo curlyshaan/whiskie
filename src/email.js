@@ -15,6 +15,14 @@ class EmailAlerts {
     console.log('📧 Email configured with Resend');
   }
 
+  formatCurrency(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      return 'N/A';
+    }
+    return numeric.toLocaleString();
+  }
+
   /**
    * Send email with retry logic
    */
@@ -55,7 +63,7 @@ class EmailAlerts {
       <p><strong>Symbol:</strong> ${trade.symbol}</p>
       <p><strong>Quantity:</strong> ${trade.quantity}</p>
       <p><strong>Price:</strong> $${trade.price}</p>
-      <p><strong>Total Value:</strong> $${trade.totalValue.toLocaleString()}</p>
+      <p><strong>Total Value:</strong> $${this.formatCurrency(trade.totalValue)}</p>
       <hr>
       <h3>Reasoning</h3>
       <p>${trade.reasoning}</p>
@@ -87,7 +95,7 @@ class EmailAlerts {
       <p><strong>Symbol:</strong> ${trade.symbol}</p>
       <p><strong>Quantity:</strong> ${trade.quantity}</p>
       <p><strong>Price:</strong> $${trade.price}</p>
-      <p><strong>Total Value:</strong> $${trade.totalValue.toLocaleString()}</p>
+      <p><strong>Total Value:</strong> $${this.formatCurrency(trade.totalValue)}</p>
       <p><strong>Order ID:</strong> ${trade.orderId}</p>
       <p><strong>Status:</strong> ${trade.status}</p>
       <hr>
@@ -109,8 +117,8 @@ class EmailAlerts {
     const subject = `📊 Daily Summary - ${new Date().toLocaleDateString()}`;
     const html = `
       <h2>Daily Portfolio Summary</h2>
-      <p><strong>Total Value:</strong> $${summary.totalValue.toLocaleString()}</p>
-      <p><strong>Cash:</strong> $${summary.cash.toLocaleString()}</p>
+      <p><strong>Total Value:</strong> $${this.formatCurrency(summary.totalValue)}</p>
+      <p><strong>Cash:</strong> $${this.formatCurrency(summary.cash)}</p>
       <p><strong>Daily Change:</strong> ${summary.dailyChange >= 0 ? '+' : ''}${(summary.dailyChange * 100).toFixed(2)}%</p>
       <p><strong>Total Return:</strong> ${summary.totalReturn >= 0 ? '+' : ''}${(summary.totalReturn * 100).toFixed(2)}%</p>
       <hr>
@@ -169,7 +177,7 @@ class EmailAlerts {
     const subject = `📈 Weekly Review - ${new Date().toLocaleDateString()}`;
     const html = `
       <h2>Weekly Portfolio Review</h2>
-      <p><strong>Total Value:</strong> $${review.totalValue.toLocaleString()}</p>
+      <p><strong>Total Value:</strong> $${this.formatCurrency(review.totalValue)}</p>
       <p><strong>Weekly Change:</strong> ${review.weeklyChange >= 0 ? '+' : ''}${(review.weeklyChange * 100).toFixed(2)}%</p>
       <p><strong>Total Return:</strong> ${review.totalReturn >= 0 ? '+' : ''}${(review.totalReturn * 100).toFixed(2)}%</p>
       <hr>
