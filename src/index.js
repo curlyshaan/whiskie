@@ -2998,27 +2998,32 @@ Each EXECUTE command must be on its own line with the prefix on the SAME line as
   }
 
   buildSymbolStateCandidate({ candidate, previous, positionSymbols, runProfile, marketData, technicalData }) {
+    const fingerprint = (...parts) => parts
+      .map(part => String(part ?? 'na').trim())
+      .join('|')
+      .slice(0, 64);
+
     const market = marketData[candidate.symbol] || {};
     const technicals = technicalData[candidate.symbol] || {};
-    const currentFingerprint = [
+    const currentFingerprint = fingerprint(
       candidate.source,
       runProfile.runType,
       candidate.pathway || 'none',
       positionSymbols.has(candidate.symbol) ? 'held' : 'candidate',
       market.change_percentage ?? 'na',
       technicals.rsi ?? 'na'
-    ].join('|');
+    );
     const previousFingerprint = previous
-      ? [previous.source, previous.review_depth, previous.primary_pathway, previous.last_action, previous.technical_fingerprint].filter(Boolean).join('|')
+      ? fingerprint(previous.source, previous.review_depth, previous.primary_pathway, previous.last_action, previous.technical_fingerprint)
       : null;
     const hasChanged = previousFingerprint !== currentFingerprint;
-    const newsFingerprint = `${candidate.source}|${candidate.sourceReasons || 'none'}`;
-    const technicalFingerprint = [
+    const newsFingerprint = fingerprint(candidate.source, candidate.sourceReasons || 'none');
+    const technicalFingerprint = fingerprint(
       candidate.score,
       market.change_percentage ?? 'na',
       technicals.rsi ?? 'na',
       technicals.aboveEma200 ?? 'na'
-    ].join('|');
+    );
     const earningsDate = candidate.earningsDate ? new Date(candidate.earningsDate) : null;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
