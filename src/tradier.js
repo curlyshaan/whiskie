@@ -30,6 +30,15 @@ const TRADIER_ACCOUNT_ID = isPaperTrading
  */
 class TradierAPI {
   constructor() {
+    const maskedAccountId = TRADIER_ACCOUNT_ID
+      ? `${TRADIER_ACCOUNT_ID.slice(0, 2)}***${TRADIER_ACCOUNT_ID.slice(-2)}`
+      : 'missing';
+    const maskedApiKey = TRADIER_API_KEY
+      ? `${TRADIER_API_KEY.slice(0, 4)}***${TRADIER_API_KEY.slice(-4)}`
+      : 'missing';
+
+    console.log(`[Tradier] mode=${runtimeMode || 'unset'} paper=${isPaperTrading} baseURL=${BASE_URL} account=${maskedAccountId} key=${maskedApiKey}`);
+
     this.client = axios.create({
       baseURL: BASE_URL,
       headers: {
