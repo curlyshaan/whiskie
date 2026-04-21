@@ -2875,6 +2875,13 @@ function generateEarningsRemindersHTML(reminders) {
     .detail-label { color: #94a3b8; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
     .detail-value { color: #fff; font-weight: 700; }
     .summary-box, .notes-box { background: #0f1425; border: 1px solid #2a2f4a; border-radius: 10px; padding: 14px; white-space: pre-wrap; color: #dbe4f0; }
+    .markdown-box { background: #0f1425; border: 1px solid #2a2f4a; border-radius: 10px; padding: 14px; color: #dbe4f0; line-height: 1.6; }
+    .predictor-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:16px; }
+    .predictor-card { background:#0f1425; border:1px solid #2a2f4a; border-radius:10px; padding:14px; }
+    .predictor-card .value { font-size:1.35rem; font-weight:800; margin-top:6px; color:#fff; }
+    .direction-up { color:#10b981 !important; }
+    .direction-down { color:#ef4444 !important; }
+    .direction-neutral { color:#f59e0b !important; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 12px; border-bottom: 1px solid #2a2f4a; vertical-align: top; }
     th { color: #94a3b8; text-transform: uppercase; font-size: 0.82rem; text-align: left; }
@@ -2928,7 +2935,29 @@ function generateEarningsRemindersHTML(reminders) {
           <h3 style="margin-bottom:10px;">Timing Detail</h3>
           <div id="timingRaw" class="summary-box" style="margin-bottom:16px;">-</div>
           <h3 style="margin-bottom:10px;">Catalyst Summary</h3>
-          <div id="catalystSummary" class="summary-box" style="margin-bottom:16px;">-</div>
+          <div id="catalystSummary" class="markdown-box" style="margin-bottom:16px;">-</div>
+          <h3 style="margin-bottom:10px;">Latest Prediction</h3>
+          <div id="predictionState" class="helper" style="margin-bottom:16px;">No prediction has been generated yet. It will appear after the scheduled email run.</div>
+          <div id="predictionPanel" style="display:none;">
+            <div class="predictor-grid">
+              <div class="predictor-card">
+                <div class="detail-label">Direction</div>
+                <div id="predictedDirection" class="value">-</div>
+              </div>
+              <div class="predictor-card">
+                <div class="detail-label">Confidence</div>
+                <div id="predictedConfidence" class="value">-</div>
+              </div>
+              <div class="predictor-card">
+                <div class="detail-label">Snapshot Price</div>
+                <div id="predictorSnapshotPrice" class="value">-</div>
+              </div>
+            </div>
+            <h3 style="margin-bottom:10px;">Prediction Reasoning</h3>
+            <div id="predictionReasoning" class="markdown-box" style="margin-bottom:16px;">-</div>
+            <h3 style="margin-bottom:10px;">Key Risk</h3>
+            <div id="predictionKeyRisk" class="summary-box" style="margin-bottom:16px;">-</div>
+          </div>
           <h3 style="margin-bottom:10px;">Existing Predictor Notes</h3>
           <div id="existingNotes" class="notes-box">None saved yet.</div>
         </div>
@@ -2990,6 +3019,36 @@ function generateEarningsRemindersHTML(reminders) {
     let selectedSymbol = null;
     let currentDetails = null;
 
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function renderMarkdownLike(text) {
+      const normalized = String(text || '').trim();
+      if (!normalized) return 'No content available.';
+      return normalized
+        .split('\\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => '<div style=\"margin-bottom:8px;\">' + escapeHtml(line) + '</div>')
+        .join('');
+    }
+
+    function renderReasoningList(text) {
+      const items = String(text || '')
+        .split('\\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => line.replace(/^[-•]\\s*/, ''));
+      if (!items.length) return 'No prediction reasoning available.';
+      return '<ul style=\"margin:0; padding-left:18px;\">' + items.map(item => '<li style=\"margin-bottom:6px;\">' + escapeHtml(item) + '</li>').join('') + '</ul>';
+    }
+
     function setMessage(text, type = '') {
       saveMessageEl.textContent = text || '';
       saveMessageEl.className = 'message' + (type ? ' ' + type : '');
@@ -3046,10 +3105,25 @@ function generateEarningsRemindersHTML(reminders) {
         ? scheduled.toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET'
         : '-';
       document.getElementById('timingRaw').textContent = payload.timing.earningsTimeRaw || 'No Yahoo timing detail found.';
-      document.getElementById('catalystSummary').textContent = payload.catalystSummary || 'No catalyst summary available.';
+      document.getElementById('catalystSummary').innerHTML = renderMarkdownLike(payload.catalystSummary || 'No catalyst summary available.');
       document.getElementById('existingNotes').textContent = payload.reminder?.notes || 'None saved yet.';
       notesEl.value = payload.reminder?.notes || '';
       sessionOverrideEl.value = '';
+
+      const hasPrediction = payload.reminder?.predicted_direction || payload.reminder?.prediction_reasoning;
+      document.getElementById('predictionState').style.display = hasPrediction ? 'none' : 'block';
+      document.getElementById('predictionPanel').style.display = hasPrediction ? 'block' : 'none';
+
+      if (hasPrediction) {
+        const directionEl = document.getElementById('predictedDirection');
+        const direction = String(payload.reminder?.predicted_direction || 'unknown').toUpperCase();
+        directionEl.textContent = direction;
+        directionEl.className = 'value ' + (direction === 'UP' ? 'direction-up' : direction === 'DOWN' ? 'direction-down' : 'direction-neutral');
+        document.getElementById('predictedConfidence').textContent = String(payload.reminder?.predicted_confidence || 'unknown').toUpperCase();
+        document.getElementById('predictorSnapshotPrice').textContent = payload.reminder?.predictor_snapshot_price ? '$' + Number(payload.reminder.predictor_snapshot_price).toFixed(2) : '-';
+        document.getElementById('predictionReasoning').innerHTML = renderReasoningList(payload.reminder?.prediction_reasoning || '');
+        document.getElementById('predictionKeyRisk').textContent = payload.reminder?.prediction_key_risk || 'No key risk recorded.';
+      }
     }
 
     searchInput.addEventListener('input', async (event) => {

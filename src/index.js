@@ -55,7 +55,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
-const CRON_JOBS_ENABLED = process.env.ENABLE_SCHEDULED_JOBS === 'true';
+const CRON_JOBS_ENABLED = process.env.ENABLE_SCHEDULED_JOBS !== 'false';
 let profileBuildRun = null;
 
 app.use(express.json());
@@ -191,20 +191,20 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule earnings reminder processor at 3:00 PM ET Sunday-Thursday
+      // Schedule earnings predictor processor at 3:00 PM ET Sunday-Thursday
       cron.schedule('0 15 * * 0-4', async () => {
         const scheduledTime = new Date();
-        const jobId = await db.logCronJobStart('Earnings Reminder Processor', 'daily', scheduledTime);
+        const jobId = await db.logCronJobStart('Earnings Predictor Processor', 'daily', scheduledTime);
 
         try {
-          console.log('\n⏰ 3:00 PM ET - Processing due earnings reminders');
+          console.log('\n⏰ 3:00 PM ET - Processing due earnings predictors');
           await earningsReminders.syncAutoEarningsReminders();
           await this.processEarningsReminders();
           await db.logCronJobComplete(jobId, true);
         } catch (error) {
-          console.error('❌ Earnings reminder processing failed:', error);
+          console.error('❌ Earnings predictor processing failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
-          await email.sendErrorAlert(error, 'Earnings reminder processing failed');
+          await email.sendErrorAlert(error, 'Earnings predictor processing failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -212,16 +212,16 @@ class WhiskieBot {
 
       cron.schedule('15 16 * * 1-5', async () => {
         const scheduledTime = new Date();
-        const jobId = await db.logCronJobStart('Earnings Reminder Grader', 'daily', scheduledTime);
+        const jobId = await db.logCronJobStart('Earnings Predictor Grader', 'daily', scheduledTime);
 
         try {
-          console.log('\n⏰ 4:15 PM ET - Grading sent earnings reminders');
+          console.log('\n⏰ 4:15 PM ET - Grading sent earnings predictors');
           await this.gradeEarningsReminders();
           await db.logCronJobComplete(jobId, true);
         } catch (error) {
-          console.error('❌ Earnings reminder grading failed:', error);
+          console.error('❌ Earnings predictor grading failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
-          await email.sendErrorAlert(error, 'Earnings reminder grading failed');
+          await email.sendErrorAlert(error, 'Earnings predictor grading failed');
         }
       }, {
         timezone: 'America/New_York'

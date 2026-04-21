@@ -214,6 +214,25 @@ function summarizeCatalystResults(symbol, results = []) {
   }).join('\n');
 }
 
+function formatPredictorReasoningHtml(text) {
+  const normalized = String(text || '').trim();
+  if (!normalized) {
+    return '<div>No prediction reasoning available.</div>';
+  }
+
+  const lines = normalized
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => line.replace(/^[-•]\s*/, ''));
+
+  if (!lines.length) {
+    return '<div>No prediction reasoning available.</div>';
+  }
+
+  return `<ul style="margin:0; padding-left:18px;">${lines.map(line => `<li style="margin-bottom:6px;">${escapeHtml(line)}</li>`).join('')}</ul>`;
+}
+
 function classifyReaction(movePct, threshold = 1) {
   if (!Number.isFinite(movePct)) return 'unclear';
   if (Math.abs(movePct) < threshold) return 'flat';
@@ -431,10 +450,12 @@ function parsePredictorResponse(text) {
   const prediction = text.match(/PREDICTION:\s*(UP|DOWN|NEUTRAL)/i)?.[1]?.toLowerCase() || 'neutral';
   const confidence = text.match(/CONFIDENCE:\s*(HIGH|MEDIUM|LOW)/i)?.[1]?.toLowerCase() || 'medium';
   const why = text.match(/WHY:\s*([\s\S]*?)(?:KEY_RISK:|$)/i)?.[1]?.trim() || text.trim();
+  const keyRisk = text.match(/KEY_RISK:\s*([\s\S]*?)$/i)?.[1]?.trim() || '';
   return {
     direction: prediction,
     confidence,
-    reasoning: why
+    reasoning: why,
+    keyRisk
   };
 }
 
@@ -537,9 +558,18 @@ export function formatEarningsReminderEmail(reminder) {
     ${reminder.notes ? `<h3>Notes</h3><p>${escapeHtml(reminder.notes)}</p>` : ''}
     <hr>
     <h3>Reaction Predictor</h3>
-    <p><strong>Direction:</strong> ${escapeHtml((reminder.predicted_direction || 'unknown').toUpperCase())}</p>
-    <p><strong>Confidence:</strong> ${escapeHtml((reminder.predicted_confidence || 'unknown').toUpperCase())}</p>
-    <pre>${escapeHtml(reminder.prediction_reasoning || 'No prediction reasoning available.')}</pre>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+      <div style="padding:10px 14px; border-radius:10px; background:#0f172a; border:1px solid #1e293b;">
+        <div style="font-size:12px; color:#94a3b8; text-transform:uppercase;">Direction</div>
+        <div style="font-size:20px; font-weight:700;">${escapeHtml((reminder.predicted_direction || 'unknown').toUpperCase())}</div>
+      </div>
+      <div style="padding:10px 14px; border-radius:10px; background:#0f172a; border:1px solid #1e293b;">
+        <div style="font-size:12px; color:#94a3b8; text-transform:uppercase;">Confidence</div>
+        <div style="font-size:20px; font-weight:700;">${escapeHtml((reminder.predicted_confidence || 'unknown').toUpperCase())}</div>
+      </div>
+    </div>
+    ${formatPredictorReasoningHtml(reminder.prediction_reasoning)}
+    ${reminder.prediction_key_risk ? `<p style="margin-top:14px;"><strong>Key Risk:</strong> ${escapeHtml(reminder.prediction_key_risk)}</p>` : ''}
   `;
 }
 

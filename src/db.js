@@ -300,6 +300,7 @@ export async function initDatabase() {
         predicted_direction VARCHAR(10),
         predicted_confidence VARCHAR(20),
         prediction_reasoning TEXT,
+        prediction_key_risk TEXT,
         prediction_catalyst_summary TEXT,
         actual_reaction_direction VARCHAR(10),
         actual_reaction_pct DECIMAL(8, 4),
@@ -308,6 +309,11 @@ export async function initDatabase() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    await client.query(`
+      ALTER TABLE earnings_reminders
+      ADD COLUMN IF NOT EXISTS prediction_key_risk TEXT;
     `);
 
     await client.query(`
@@ -2476,6 +2482,7 @@ export async function markEarningsReminderSent(id, sentAt, predictionData = {}) 
            predicted_confidence = $6,
            prediction_reasoning = $7,
            prediction_catalyst_summary = $8,
+           prediction_key_risk = $9,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
        RETURNING *`,
@@ -2487,7 +2494,8 @@ export async function markEarningsReminderSent(id, sentAt, predictionData = {}) 
         predictionData.direction || null,
         predictionData.confidence || null,
         predictionData.reasoning || null,
-        predictionData.catalystSummary || null
+        predictionData.catalystSummary || null,
+        predictionData.keyRisk || null
       ]
     );
     return result.rows[0] || null;

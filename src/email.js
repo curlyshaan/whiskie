@@ -190,24 +190,50 @@ class EmailAlerts {
 
   async sendEarningsReminderEmail(reminder) {
     const subject = `⏰ Earnings Predictor: ${reminder.symbol} (${reminder.earnings_date})`;
+    const direction = (reminder.predicted_direction || 'unknown').toUpperCase();
+    const confidence = (reminder.predicted_confidence || 'unknown').toUpperCase();
+    const directionColor = direction === 'UP' ? '#10b981' : direction === 'DOWN' ? '#ef4444' : '#f59e0b';
+    const reasoningItems = String(reminder.prediction_reasoning || '')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => line.replace(/^[-•]\s*/, ''));
     const html = `
-      <h2>Earnings Predictor</h2>
-      <p><strong>Symbol:</strong> ${reminder.symbol}</p>
-      <p><strong>Earnings Date:</strong> ${reminder.earnings_date}</p>
-      <p><strong>Session:</strong> ${((reminder.earnings_session || reminder.session_normalized || 'unknown')).replace(/_/g, ' ')}</p>
-      ${reminder.earnings_time_raw ? `<p><strong>Timing Detail:</strong> ${reminder.earnings_time_raw}</p>` : ''}
-      ${reminder.primary_pathway ? `<p><strong>Primary Pathway:</strong> ${reminder.primary_pathway}</p>` : ''}
-      ${(reminder.secondary_pathways && reminder.secondary_pathways.length) ? `<p><strong>Secondary Pathways:</strong> ${reminder.secondary_pathways.join(', ')}</p>` : ''}
-      ${reminder.analysis_ready !== undefined && reminder.analysis_ready !== null ? `<p><strong>Analysis Ready:</strong> ${reminder.analysis_ready ? 'Yes' : 'No'}</p>` : ''}
-      <hr>
-      <h3>Latest Catalysts</h3>
-      <pre>${reminder.prediction_catalyst_summary || reminder.catalyst_summary || 'No catalyst summary available.'}</pre>
-      ${reminder.notes ? `<h3>Notes</h3><p>${reminder.notes}</p>` : ''}
-      <hr>
-      <h3>Reaction Predictor</h3>
-      <p><strong>Direction:</strong> ${(reminder.predicted_direction || 'unknown').toUpperCase()}</p>
-      <p><strong>Confidence:</strong> ${(reminder.predicted_confidence || 'unknown').toUpperCase()}</p>
-      <pre>${reminder.prediction_reasoning || 'No prediction reasoning available.'}</pre>
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; color:#e2e8f0; background:#0f172a; padding:24px;">
+        <div style="max-width:760px; margin:0 auto; background:#111827; border:1px solid #1f2937; border-radius:16px; overflow:hidden;">
+          <div style="padding:24px; background:linear-gradient(135deg, #ec4899 0%, #7c3aed 100%); color:white;">
+            <h2 style="margin:0 0 8px; font-size:28px;">Earnings Predictor</h2>
+            <div style="font-size:16px; opacity:0.95;">${reminder.symbol} • ${reminder.earnings_date}</div>
+          </div>
+          <div style="padding:24px;">
+            <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:18px;">
+              <div style="flex:1; min-width:180px; padding:14px; border-radius:12px; background:#0b1220; border:1px solid #1f2937;">
+                <div style="font-size:12px; color:#94a3b8; text-transform:uppercase;">Direction</div>
+                <div style="font-size:28px; font-weight:800; color:${directionColor};">${direction}</div>
+              </div>
+              <div style="flex:1; min-width:180px; padding:14px; border-radius:12px; background:#0b1220; border:1px solid #1f2937;">
+                <div style="font-size:12px; color:#94a3b8; text-transform:uppercase;">Confidence</div>
+                <div style="font-size:28px; font-weight:800; color:white;">${confidence}</div>
+              </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:18px;">
+              <div style="padding:14px; border-radius:12px; background:#0b1220; border:1px solid #1f2937;"><div style="font-size:12px; color:#94a3b8; text-transform:uppercase;">Session</div><div style="font-weight:700; margin-top:6px;">${((reminder.earnings_session || reminder.session_normalized || 'unknown')).replace(/_/g, ' ')}</div></div>
+              ${reminder.earnings_time_raw ? `<div style="padding:14px; border-radius:12px; background:#0b1220; border:1px solid #1f2937;"><div style="font-size:12px; color:#94a3b8; text-transform:uppercase;">Timing Detail</div><div style="font-weight:700; margin-top:6px;">${reminder.earnings_time_raw}</div></div>` : ''}
+              ${reminder.primary_pathway ? `<div style="padding:14px; border-radius:12px; background:#0b1220; border:1px solid #1f2937;"><div style="font-size:12px; color:#94a3b8; text-transform:uppercase;">Primary Pathway</div><div style="font-weight:700; margin-top:6px;">${reminder.primary_pathway}</div></div>` : ''}
+            </div>
+
+            <h3 style="margin:0 0 10px; color:white;">Why</h3>
+            ${reasoningItems.length ? `<ul style="margin:0 0 18px; padding-left:20px; color:#dbe4f0;">${reasoningItems.map(item => `<li style=\"margin-bottom:8px;\">${item}</li>`).join('')}</ul>` : '<div style="margin-bottom:18px; color:#dbe4f0;">No prediction reasoning available.</div>'}
+
+            ${reminder.prediction_key_risk ? `<div style="margin-bottom:18px; padding:14px; border-radius:12px; background:rgba(245, 158, 11, 0.14); border:1px solid rgba(245, 158, 11, 0.35);"><div style="font-size:12px; color:#fbbf24; text-transform:uppercase; margin-bottom:6px;">Key Risk</div><div>${reminder.prediction_key_risk}</div></div>` : ''}
+
+            <h3 style="margin:0 0 10px; color:white;">Latest Catalysts</h3>
+            <div style="white-space:pre-wrap; background:#0b1220; border:1px solid #1f2937; border-radius:12px; padding:14px; color:#dbe4f0;">${reminder.prediction_catalyst_summary || reminder.catalyst_summary || 'No catalyst summary available.'}</div>
+            ${reminder.notes ? `<h3 style="margin:18px 0 10px; color:white;">Notes</h3><div style="white-space:pre-wrap; background:#0b1220; border:1px solid #1f2937; border-radius:12px; padding:14px; color:#dbe4f0;">${reminder.notes}</div>` : ''}
+          </div>
+        </div>
+      </div>
     `;
 
     try {
