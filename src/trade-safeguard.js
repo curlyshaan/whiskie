@@ -8,7 +8,7 @@ import * as db from './db.js';
 class TradeSafeguard {
   constructor() {
     this.MAX_TRADES_PER_DAY = 5;              // Up from 3 during build-out phase
-    this.MAX_SINGLE_TRADE_VALUE = 15000;      // $15k per trade (15% of $100k)
+    this.MAX_SINGLE_TRADE_VALUE = parseFloat(process.env.INITIAL_CAPITAL || 100000) * (parseFloat(process.env.MAX_POSITION_SIZE) || 0.15);
     this.MAX_DAILY_EXPOSURE_CHANGE = 50000;   // Up from 30k — allows 3-4 positions/day
   }
 

@@ -2525,13 +2525,14 @@ ${candidates.shorts.map(c => {
 ${marketRegimeContext}
 ${assetClassContext}
 
-**Target allocation guidelines (flexible):**
-- Fundamental holds (deepValue, cashMachine, qarp, qualityCompounder): 50-70%
-- Growth/momentum (highGrowth, inflection, turnaround): 20-40%
-- Shorts (overvalued, deteriorating, overextended): 0-20%
+**Target allocation guidelines (flexible, not quotas):**
+- Fundamental holds (deepValue, cashMachine, qarp, qualityCompounder): often 50-70% when enough genuine opportunities exist
+- Growth/momentum (highGrowth, inflection, turnaround): often 20-40% when setups truly justify it
+- Shorts (overvalued, deteriorating, overextended): often 0-20% when clean short setups exist
+- These are ceilings/guides for strong opportunity sets, NOT sleeves that must be filled. It is fully acceptable to leave any sleeve partially used or unused.
 - You may deviate if opportunity quality or market regime strongly supports it, but explain why.
 
-**Your Task:** Construct the highest-conviction final portfolio for current conditions. Hold elevated cash when opportunity quality is thin. Do NOT add lower-conviction names just to reach a position count target.
+**Your Task:** Construct the highest-conviction final portfolio for current conditions. Hold elevated cash when opportunity quality is thin. Do NOT add lower-conviction names just to reach a position count target, a target exposure, or a neat-looking sleeve mix.
 
 **PRIMARY GOAL: BEAT S&P 500 (SPY)**
 Your portfolio must outperform SPY on a risk-adjusted basis. This means:
@@ -2550,11 +2551,21 @@ This is NOT about "safe diversification" - it's about beating the benchmark thro
 - Min position size: 5% ($5,000)
 - 0-3 stocks per sub-sector (ACROSS BOTH LONGS AND SHORTS COMBINED)
 
+**NON-NEGOTIABLE CASH-FIRST RULE:**
+- Treat total exposure as the OUTPUT of selectivity, not a target to fill.
+- If only 1-3 names are truly actionable, output only 1-3 names.
+- If no short setup is clean, short exposure can be 0%.
+- If no additional long deserves capital, leave the cash unallocated.
+- Never say or imply "we have room for more" as a reason to add a trade.
+- Never add a trade whose main justification is diversification, symmetry, or using up available allocation.
+- Every position must independently deserve capital on its own expected return, downside containment, and setup quality.
+- Cash is the correct answer whenever conviction is not high enough.
+
 **Construction Process:**
 1. Sub-Sector Limit Enforcement: Review all BUY and SHORT recommendations, count total per sub-sector (longs + shorts combined), eliminate lowest conviction if >3
-2. Market Regime Allocation: Bull (60-70% long, 30-40% short), Bear (30-40% long, 60-70% short), Neutral (50-50%)
-3. Diversification Check: Max 30% in any single sector, balance growth/value and cyclical/defensive
-4. Position Sizing: High conviction + low vol (10-12%), High conviction + high vol (8-10%), Medium conviction (6-8%), Shorts (5-10%)
+2. Market Regime Allocation: use the regime to cap aggression and inform risk posture, but do not force exposure into longs or shorts just because theoretical capacity exists
+3. Diversification Check: Max 30% in any single sector, but diversification alone is never a valid reason to include a mediocre trade
+4. Position Sizing: Size only after deciding the idea deserves inclusion. High conviction + low vol (10-12%), High conviction + high vol (8-10%), Medium conviction (6-8%), Shorts (5-10%)
 5. Final Risk Assessment: Portfolio beta, sector concentration, event risk, liquidity
 6. Hard-prior override discipline: treat deterministic Phase 1 scores/order and Phase 2/3 decisions as the default prior. Only override a higher-ranked or previously preferred symbol when there is a material reason. Every override must explicitly populate:
    - OVERRIDE_PHASE2_DECISION: YES
@@ -2566,6 +2577,7 @@ This is NOT about "safe diversification" - it's about beating the benchmark thro
    - OVERRIDE_REASON: NONE
 7. Never manufacture extra positions to satisfy a count target. If only 2-5 names clear the bar, output only those names and leave the rest in cash.
 8. Never repeat the same symbol more than once across the entire portfolio. No duplicate EXECUTE commands are allowed.
+9. Before including any trade, ask: "Would I still want this exact position if the portfolio were already fully allocated?" If the answer is no, do not include it.
 
 **Output Format:**
 
@@ -3420,6 +3432,28 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
     }
 
     const adjustedRecs = [];
+    const maxPositionPct = parseFloat(process.env.MAX_POSITION_SIZE) || 0.15;
+    const maxPositionValue = portfolio.totalValue * maxPositionPct;
+    const enforcePerTradeCap = (rec) => {
+      const tradeValue = rec.quantity * rec.entryPrice;
+      if (tradeValue <= maxPositionValue) {
+        return rec;
+      }
+
+      const cappedQuantity = Math.floor(maxPositionValue / rec.entryPrice);
+      if (cappedQuantity <= 0) {
+        console.log(`       ${rec.symbol}: SKIPPED (price $${rec.entryPrice} exceeds ${(maxPositionPct * 100).toFixed(0)}% max-position budget)`);
+        return null;
+      }
+
+      console.log(`       ${rec.symbol}: capped by max-position rule ${rec.quantity} → ${cappedQuantity} shares (${(tradeValue / portfolio.totalValue * 100).toFixed(1)}% → ${((cappedQuantity * rec.entryPrice) / portfolio.totalValue * 100).toFixed(1)}%)`);
+      return {
+        ...rec,
+        quantity: cappedQuantity,
+        originalQuantity: rec.originalQuantity ?? rec.quantity,
+        quantityAdjustmentNote: `Max position cap ${(maxPositionPct * 100).toFixed(0)}% applied`
+      };
+    };
 
     console.log('\n📊 Validating asset class allocation for all trades...');
 
@@ -3441,7 +3475,10 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
       if (totalPct <= limit * 100) {
         // All trades fit within limit
         console.log(`     ✅ All ${recs.length} trades fit within limit`);
-        adjustedRecs.push(...recs);
+        for (const rec of recs) {
+          const cappedRec = enforcePerTradeCap(rec);
+          if (cappedRec) adjustedRecs.push(cappedRec);
+        }
       } else {
         // Need to adjust - reduce quantities proportionally
         const availableRoom = (limit * portfolio.totalValue) - currentValue;
@@ -3452,12 +3489,14 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         for (const rec of recs) {
           const adjustedQuantity = Math.floor(rec.quantity * reductionFactor);
           if (adjustedQuantity > 0) {
-            adjustedRecs.push({
+            const reducedRec = {
               ...rec,
               quantity: adjustedQuantity,
               originalQuantity: rec.quantity
-            });
+            };
             console.log(`       ${rec.symbol}: ${rec.quantity} → ${adjustedQuantity} shares`);
+            const cappedRec = enforcePerTradeCap(reducedRec);
+            if (cappedRec) adjustedRecs.push(cappedRec);
           } else {
             console.log(`       ${rec.symbol}: SKIPPED (would be 0 shares after adjustment)`);
           }
