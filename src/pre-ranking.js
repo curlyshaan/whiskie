@@ -46,6 +46,25 @@ class PreRanking {
     };
   }
 
+  getAverageVolumeFromQuote(quote) {
+    const candidates = [
+      quote?.averageVolume,
+      quote?.avgVolume,
+      quote?.volumeAverage,
+      quote?.avgVolume3m,
+      quote?.avgVolume20d
+    ];
+
+    for (const candidate of candidates) {
+      const value = Number(candidate);
+      if (Number.isFinite(value) && value > 0) {
+        return Math.round(value);
+      }
+    }
+
+    return 0;
+  }
+
   /**
    * Pre-rank all stocks and return top candidates
    * Returns: { longs: [], shorts: [], filtered: [] }
@@ -123,11 +142,12 @@ class PreRanking {
 
         const price = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
         const MIN_PRICE = 5.00;
-        const avgVolume = Math.round(quote.averageVolume || 0);
+        const avgVolume = this.getAverageVolumeFromQuote(quote);
         const bid = quote.bid || 0;
         const ask = quote.ask || 0;
         const spread = (ask && bid && price) ? (ask - bid) / price : 0;
         const dollarVolume = Math.round(avgVolume * price);
+        const isWatchlistStock = stock.source === 'watchlist';
 
         // Check each filter and log failures
         let passed = true;
@@ -135,7 +155,7 @@ class PreRanking {
           const MIN_VOLUME = 50_000_000; // $50M
           const MAX_SPREAD = 0.005; // 0.5%
 
-          if (dollarVolume < MIN_VOLUME) {
+          if (!isWatchlistStock && dollarVolume < MIN_VOLUME) {
             failedStocks.volume.push(`${stock.symbol} ($${(dollarVolume/1e6).toFixed(1)}M)`);
             passed = false;
           }
@@ -156,6 +176,7 @@ class PreRanking {
             industry: stock.industry,
             price,
             avgVolume,
+            dollarVolume,
             spread,
             quote,
             pathway: stock.pathway || null,  // Preserve pathway from watchlist
@@ -359,6 +380,7 @@ class PreRanking {
     const change = quote.changePercentage || 0;
     const avgVolume = stock.avgVolume; // Already calculated in filter step
     const allowOffHoursBypass = !marketOpen && stock.source === 'watchlist';
+    const allowWatchlistVolumeFallback = marketOpen && stock.source === 'watchlist' && avgVolume <= 0;
 
     // Calculate volume surge
     const volumeSurge = avgVolume > 0 ? volume / avgVolume : 0;
@@ -392,7 +414,7 @@ class PreRanking {
       // Tavily news in daily analysis will catch "good earnings but stock down" opportunities
 
       // Check if meets sector-adjusted momentum threshold
-      const meetsThreshold = allowOffHoursBypass || bypassMomentum || (
+      const meetsThreshold = allowOffHoursBypass || allowWatchlistVolumeFallback || bypassMomentum || (
         Math.abs(change / 100) >= momentumThresholds.minMove &&
         volumeSurge >= momentumThresholds.minVolumeSurge
       );
@@ -405,6 +427,9 @@ class PreRanking {
       if (bypassMomentum) {
         score += 12;
         reasons.push(`momentum bypass for ${stock.pathway}`);
+      } else if (allowWatchlistVolumeFallback) {
+        score += 6;
+        reasons.push('watchlist volume fallback');
       } else if (allowOffHoursBypass) {
         score += 8;
         reasons.push('off-hours watchlist review');
@@ -446,6 +471,8 @@ class PreRanking {
       let meetsThreshold;
       if (allowOffHoursBypass) {
         meetsThreshold = true;
+      } else if (allowWatchlistVolumeFallback) {
+        meetsThreshold = Math.abs(change / 100) >= shortMomentumConfig.minMove;
       } else if (shortMomentumConfig.direction === 'negative') {
         meetsThreshold = (change / 100) <= -shortMomentumConfig.minMove &&
           volumeSurge >= shortMomentumConfig.minVolumeSurge;
@@ -498,6 +525,8 @@ class PreRanking {
       reasons.push(`${stock.pathway || 'short'} momentum rule: ${shortMomentumConfig.direction}`);
       if (allowOffHoursBypass) {
         reasons.push('off-hours watchlist review');
+      } else if (allowWatchlistVolumeFallback) {
+        reasons.push('watchlist volume fallback');
       }
 
       direction = 'short';
