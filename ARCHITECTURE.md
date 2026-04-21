@@ -73,11 +73,22 @@ Returned buckets:
 - `analysis` = active watchlist names
 - `discovery` = broader momentum/universe additions
 
+The downstream daily pipeline treats deterministic Phase 1 ranking/order as a hard prior. Later phases may override a higher-ranked symbol only when there is a material reason, and Phase 4 now persists explicit override metadata plus 1:1 execution lines for the final portfolio.
+
 ## Stock profile architecture
 
 Profiles live in `stock_profiles` and are treated as a canonical current snapshot per symbol.
 
 ### Build inputs
+
+### Adhoc Analyzer profile behavior
+
+`src/adhoc-analyzer.js` now has two supported paths:
+
+- manual `POST /adhoc-analyzer/build-profile` for explicit one-off profile builds
+- `POST /adhoc-analyzer/analyze` auto-checks `stock_profiles` and builds the profile first when it is missing, then continues into the full adhoc analysis
+
+The UI surfaces this as a loading-state message so the operator can see when profile construction is happening before analysis.
 
 Current full-build inputs are:
 
@@ -141,6 +152,8 @@ If a stock profile exists, it is included in prompt context. If not, the analysi
 - `expired`
 
 Approved trades are executed during market-hours monitoring.
+
+The previous daily trade-count cap has been removed from the active execution path. Current hard gating here is primarily approval state, earnings blackouts, portfolio/risk validation, and the circuit breaker weekly loss guard.
 
 ## Strategy-aware persisted management
 
@@ -216,7 +229,7 @@ Expected env names currently include:
 - brokerage: `TRADIER_API_KEY`, `TRADIER_BASE_URL`, `TRADIER_SANDBOX_API_KEY`, `TRADIER_SANDBOX_URL`, `TRADIER_ACCOUNT_ID`, `TRADIER_SANDBOX_ACCOUNT_ID`
 - database: `DATABASE_URL`
 - email: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `ALERT_EMAIL`
-- runtime/risk: `NODE_ENV`, `INITIAL_CAPITAL`, `MAX_POSITION_SIZE`, `MAX_DAILY_TRADES`, `MAX_PORTFOLIO_DRAWDOWN`, `MIN_CASH_RESERVE`, `CASH_WARNING_THRESHOLD`, `MAX_SECTOR_ALLOCATION`, `MAX_TOTAL_SHORT_EXPOSURE`
+- runtime/risk: `NODE_ENV`, `INITIAL_CAPITAL`, `MAX_POSITION_SIZE`, `MAX_PORTFOLIO_DRAWDOWN`, `MIN_CASH_RESERVE`, `CASH_WARNING_THRESHOLD`, `MAX_SECTOR_ALLOCATION`, `MAX_TOTAL_SHORT_EXPOSURE`
 
 ### Known operational references
 

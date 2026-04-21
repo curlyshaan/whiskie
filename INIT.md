@@ -17,6 +17,10 @@ Use this file as a quick-start memory reset for future sessions.
 - Sunday profile build is operationally important before Sunday 9 PM weekly Opus review
 - daily analysis core universe is active `saturday_watchlist` names, with discovery/momentum additions during market hours
 - missing profile does not always block analysis/review flows
+- adhoc analysis auto-builds a missing stock profile before continuing
+- daily analysis now runs at 10:00 AM, 12:00 PM, and 2:00 PM ET
+- Phase 1 ranking is a hard prior; Phase 4 must justify overrides and emit 1:1 execution lines
+- there is no active daily trade-count cap in execution; weekly loss guard remains in the circuit breaker
 
 ## Current provider docs
 

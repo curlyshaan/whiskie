@@ -1,4 +1,5 @@
 import tradier from './tradier.js';
+import * as db from './db.js';
 
 /**
  * Correlation Analysis
@@ -7,19 +8,45 @@ import tradier from './tradier.js';
 
 class CorrelationAnalysis {
   constructor() {
-    // Known high-correlation groups (>0.7 correlation)
-    this.correlationGroups = {
-      'mega-cap-tech': ['AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'META', 'NVDA'],
-      'semiconductors': ['NVDA', 'AMD', 'INTC', 'TSM', 'AVGO', 'QCOM', 'MU'],
-      'airlines': ['DAL', 'UAL', 'AAL', 'LUV', 'JBLU', 'ALK'],
-      'banks': ['JPM', 'BAC', 'WFC', 'C', 'GS', 'MS'],
-      'oil-gas': ['XOM', 'CVX', 'COP', 'SLB', 'EOG', 'OXY'],
-      'defense': ['LMT', 'RTX', 'BA', 'NOC', 'GD'],
-      'pharma': ['JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'BMY'],
-      'retail': ['WMT', 'TGT', 'COST', 'HD', 'LOW'],
-      'cloud-saas': ['CRM', 'NOW', 'SNOW', 'DDOG', 'NET'],
-      'cybersecurity': ['CRWD', 'PANW', 'ZS', 'FTNT', 'S']
-    };
+    this.groupCache = null;
+    this.groupCacheAt = 0;
+    this.CACHE_TTL_MS = 15 * 60 * 1000;
+  }
+
+  async getCorrelationGroups() {
+    const now = Date.now();
+    if (this.groupCache && (now - this.groupCacheAt) < this.CACHE_TTL_MS) {
+      return this.groupCache;
+    }
+
+    const result = await db.query(
+      `SELECT symbol, sector, industry
+       FROM stock_universe
+       WHERE status = 'active'`
+    );
+
+    const groups = {};
+    for (const row of result.rows) {
+      const sector = String(row.sector || '').trim();
+      const industry = String(row.industry || '').trim();
+      const symbol = row.symbol;
+
+      if (industry) {
+        const key = `industry:${industry.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(symbol);
+      }
+
+      if (sector) {
+        const key = `sector:${sector.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(symbol);
+      }
+    }
+
+    this.groupCache = groups;
+    this.groupCacheAt = now;
+    return groups;
   }
 
   /**
@@ -30,7 +57,7 @@ class CorrelationAnalysis {
     const correlatedPositions = [];
 
     // Find which group the new symbol belongs to
-    const newSymbolGroups = this.findCorrelationGroups(newSymbol);
+    const newSymbolGroups = await this.findCorrelationGroups(newSymbol);
 
     if (newSymbolGroups.length === 0) {
       // Symbol not in any known correlation group - likely safe
@@ -39,7 +66,7 @@ class CorrelationAnalysis {
 
     // Check if we already have positions in the same correlation groups
     for (const position of existingPositions) {
-      const positionGroups = this.findCorrelationGroups(position.symbol);
+      const positionGroups = await this.findCorrelationGroups(position.symbol);
 
       // Find overlapping groups
       const overlappingGroups = newSymbolGroups.filter(g => positionGroups.includes(g));
@@ -84,9 +111,10 @@ class CorrelationAnalysis {
   /**
    * Find which correlation groups a symbol belongs to
    */
-  findCorrelationGroups(symbol) {
+  async findCorrelationGroups(symbol) {
+    const correlationGroups = await this.getCorrelationGroups();
     const groups = [];
-    for (const [groupName, symbols] of Object.entries(this.correlationGroups)) {
+    for (const [groupName, symbols] of Object.entries(correlationGroups)) {
       if (symbols.includes(symbol)) {
         groups.push(groupName);
       }
@@ -97,12 +125,12 @@ class CorrelationAnalysis {
   /**
    * Get portfolio correlation summary
    */
-  getPortfolioCorrelationSummary(positions) {
+  async getPortfolioCorrelationSummary(positions) {
     const groupCounts = {};
     const groupValues = {};
 
     for (const position of positions) {
-      const groups = this.findCorrelationGroups(position.symbol);
+      const groups = await this.findCorrelationGroups(position.symbol);
       const positionValue = position.quantity * position.currentPrice;
 
       for (const group of groups) {
@@ -131,10 +159,10 @@ class CorrelationAnalysis {
    * Calculate diversification score (0-100)
    * Higher is better (more diversified)
    */
-  calculateDiversificationScore(positions) {
+  async calculateDiversificationScore(positions) {
     if (positions.length === 0) return 100;
 
-    const summary = this.getPortfolioCorrelationSummary(positions);
+    const summary = await this.getPortfolioCorrelationSummary(positions);
 
     // Penalty for concentrated groups
     let score = 100;

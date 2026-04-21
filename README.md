@@ -23,6 +23,7 @@ Whiskie currently does the following:
 - runs weekday daily analysis using a 4-phase pipeline
 - queues trades into `trade_approvals` for manual approval
 - executes approved trades and monitors exits during market hours
+- auto-builds missing stock profiles inside the Adhoc Analyzer before running analysis
 
 ## Current operating workflow
 
@@ -41,6 +42,7 @@ Whiskie currently does the following:
 - **8:00 AM ET** — macro regime detection
 - **9:00 AM ET** — pre-market scan
 - **10:00 AM ET** — daily 4-phase analysis
+- **12:00 PM ET** — daily 4-phase analysis midday refresh
 - **2:00 PM ET** — daily 4-phase analysis
 - **3:00 PM ET** — earnings reminder processing
 - **4:15 PM ET** — earnings reminder grading
@@ -68,9 +70,29 @@ Stock profiles are operationally important and currently work like this:
 
 - Sunday profile build covers `saturday_watchlist` names
 - manual profile trigger currently rebuilds `pending` names in `saturday_watchlist`
+- Adhoc Analyzer can also build or refresh an individual profile on demand
 - daily analysis core universe is `active` watchlist names
 - during market hours, daily pre-ranking can also merge in broader momentum/discovery names
 - missing profiles do **not** block analysis; some flows continue without them
+
+## Daily analysis decision model
+
+The daily analyzer uses a 4-phase pipeline with deterministic ranking as a hard prior:
+
+- Phase 1 pre-ranking scores/order are the anchor, not a loose suggestion
+- Phase 2/3 can override a higher-ranked name only for a material reason
+- Phase 4 must explicitly record override metadata when it displaces a stronger prior candidate
+- Phase 4 execution lines must match the summarized final long/short positions 1:1
+
+Daily decisions use multiple inputs together, not stock profiles alone:
+
+- Phase 1 ranking and pathway context
+- stock profile context
+- tactical daily state / what changed
+- technicals and momentum
+- catalysts and recent news
+- earnings timing / risk context
+- market regime and portfolio construction constraints
 
 ## Provider/API reference and local environment map
 
@@ -162,6 +184,9 @@ Current important routes include:
 - `POST /api/trigger-eod-summary`
 - `POST /api/trigger-earnings-reminders`
 - `POST /api/trigger-trade-executor`
+- `GET /adhoc-analyzer`
+- `POST /adhoc-analyzer/analyze`
+- `POST /adhoc-analyzer/build-profile`
 - `POST /chat`
 
 ## Environment setup
@@ -186,6 +211,8 @@ Current important variables:
 - `NODE_ENV`
 - portfolio/risk limit variables
 
+Note: `MAX_DAILY_TRADES` is no longer part of the active configuration model.
+
 ## Important current design decisions
 
 - `trade_approvals` is the live approval system
@@ -193,6 +220,7 @@ Current important variables:
 - `stock_profiles` stores one current canonical row per symbol
 - profile history, if needed later, should live in a separate history table rather than duplicate current rows
 - strategy-aware management state (`thesis_state`, `holding_posture`, `target_type`) must stay aligned across prompts, DB, monitoring, and UI
+- there is no longer a hard daily trade-count cap in the execution path; weekly loss protection remains active via the circuit breaker
 
 ## Repo cleanup note
 

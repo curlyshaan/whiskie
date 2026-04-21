@@ -1,7 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import * as db from './db.js';
-import { getAllStocks } from './sub-industry-data.js';
 
 /**
  * Yahoo Finance Earnings Scraper
@@ -94,8 +93,14 @@ function parseDateText(dateText) {
 export async function updateAllEarnings() {
   console.log('📅 Starting earnings update for all stocks...');
 
-  const allStocks = getAllStocks();
-  console.log(`Total stocks to update: ${allStocks.length}`);
+  const universeRows = await db.query(
+    `SELECT symbol
+     FROM stock_universe
+     WHERE status = 'active'
+     ORDER BY market_cap DESC NULLS LAST, symbol ASC`
+  );
+  const allStocks = universeRows.rows.map(row => row.symbol);
+  console.log(`Total stocks to update from stock_universe: ${allStocks.length}`);
 
   let successCount = 0;
   let failCount = 0;

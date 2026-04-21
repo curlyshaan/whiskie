@@ -796,16 +796,17 @@ class AnalysisEngine {
   findRebalancingOpportunities(portfolio) {
     const opportunities = [];
     const sectorAllocation = this.getSectorAllocation(portfolio);
+    const maxSectorAllocationPct = (parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.30) * 100;
 
     // Check for overweight sectors
     for (const [sector, data] of Object.entries(sectorAllocation)) {
-      if (data.percentage > 25) {
+      if (data.percentage > maxSectorAllocationPct) {
         opportunities.push({
           type: 'trim-sector',
           sector,
           current: data.percentage,
-          target: 25,
-          message: `${sector} is ${data.percentage.toFixed(1)}% (max 25%)`
+          target: maxSectorAllocationPct,
+          message: `${sector} is ${data.percentage.toFixed(1)}% (max ${maxSectorAllocationPct.toFixed(0)}%)`
         });
       }
     }

@@ -1,110 +1,79 @@
 /**
- * Sector Constraint Validator
- * Enforces 0-3 stocks per sub-sector rule (combined longs + shorts)
+ * Industry Constraint Validator
+ * Enforces 0-3 stocks per industry rule (combined longs + shorts)
  */
+
+import * as db from './db.js';
 
 class SectorValidator {
   constructor() {
-    // Sub-sector mappings
-    this.SUB_SECTORS = {
-      // Technology
-      'Semiconductors': ['NVDA', 'AMD', 'INTC', 'TSM', 'AVGO', 'QCOM', 'TXN', 'AMAT', 'LRCX', 'KLAC', 'MU', 'NXPI'],
-      'Software': ['MSFT', 'ORCL', 'CRM', 'ADBE', 'NOW', 'INTU', 'WDAY', 'TEAM', 'SNOW', 'DDOG', 'ZS', 'CRWD', 'PANW'],
-      'Cloud': ['AMZN', 'GOOGL', 'MSFT', 'ORCL', 'IBM'],
-      'Cybersecurity': ['CRWD', 'ZS', 'PANW', 'FTNT', 'S', 'OKTA', 'NET'],
-      'E-commerce': ['AMZN', 'SHOP', 'EBAY', 'ETSY', 'W'],
-      'Media & Entertainment': ['SPOT', 'NFLX', 'DIS', 'PARA', 'WBD'],
-
-      // Healthcare
-      'Biotech': ['GILD', 'AMGN', 'REGN', 'VRTX', 'BIIB', 'MRNA', 'BNTX'],
-      'Pharma': ['JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'BMY', 'GSK'],
-      'Medical Devices': ['MDT', 'ABT', 'TMO', 'DHR', 'SYK', 'BSX', 'EW'],
-      'Healthcare Services': ['CVS', 'UNH', 'CI', 'HUM', 'ELV', 'CNC'],
-
-      // Financial Services
-      'Banks': ['JPM', 'BAC', 'WFC', 'C', 'GS', 'MS', 'USB', 'PNC', 'TFC'],
-      'Insurance': ['BRK.B', 'UNH', 'PGR', 'MET', 'AIG', 'ALL', 'TRV'],
-      'Payments': ['V', 'MA', 'PYPL', 'SQ', 'AXP'],
-      'Asset Managers': ['BLK', 'APO', 'KKR', 'BX', 'ARES', 'CG'],
-
-      // Professional Services
-      'Consulting': ['ACN', 'IBM', 'CTSH', 'LDOS'],
-      'HR & Payroll': ['ADP', 'PAYX', 'WEX'],
-
-      // Consumer
-      'Retail': ['WMT', 'TGT', 'COST', 'HD', 'LOW', 'TJX', 'ROST'],
-      'Restaurants': ['MCD', 'SBUX', 'CMG', 'YUM', 'QSR', 'DPZ'],
-      'Apparel': ['NKE', 'LULU', 'TJX', 'ROST', 'GPS', 'UAA'],
-
-      // Industrials
-      'Aerospace': ['BA', 'LMT', 'RTX', 'GD', 'NOC', 'TXT'],
-      'Transportation': ['UPS', 'FDX', 'DAL', 'UAL', 'AAL', 'LUV'],
-
-      // Energy
-      'Oil & Gas': ['XOM', 'CVX', 'COP', 'SLB', 'EOG', 'PXD', 'MPC'],
-      'Renewables': ['NEE', 'ENPH', 'SEDG', 'FSLR', 'RUN']
-    };
-
-    this.MAX_PER_SUBSECTOR = 3;
+    this.MAX_PER_INDUSTRY = 3;
+    this.industryCache = new Map();
   }
 
   /**
-   * Get sub-sector for a symbol
+   * Get industry bucket for a symbol from FMP-aligned stock_universe metadata
    */
-  getSubSector(symbol) {
-    for (const [subSector, symbols] of Object.entries(this.SUB_SECTORS)) {
-      if (symbols.includes(symbol)) {
-        return subSector;
-      }
+  async getIndustry(symbol) {
+    if (this.industryCache.has(symbol)) {
+      return this.industryCache.get(symbol);
     }
-    return 'Other';
+
+    const info = await db.getStockInfo(symbol);
+    const industry = info?.industry || info?.sector || 'Unknown';
+    this.industryCache.set(symbol, industry);
+    return industry;
   }
 
   /**
-   * Validate trade recommendations against sector constraints
+   * Validate trade recommendations against industry constraints
    * Returns: { valid: boolean, violations: [], adjustedTrades: [] }
    */
-  validateTrades(trades) {
-    const subSectorCounts = {};
+  async validateTrades(trades) {
+    const industryCounts = {};
     const violations = [];
     const validTrades = [];
+    const getPriorityScore = (trade) => {
+      const convictionScore = trade.confidence === 'High' ? 3 : trade.confidence === 'Medium' ? 2 : trade.confidence === 'Low' ? 1 : 0;
+      const overridePenalty = trade.overridePhase2Decision && String(trade.overridePhase2Decision).toUpperCase() === 'YES' ? -1000 : 0;
+      const quantityScore = Number(trade.quantity || 0) / 10000;
+      return convictionScore + quantityScore + overridePenalty;
+    };
 
-    // Count stocks per sub-sector
-    trades.forEach(trade => {
-      const subSector = this.getSubSector(trade.symbol);
+    // Count stocks per industry
+    for (const trade of trades) {
+      const industry = await this.getIndustry(trade.symbol);
+      trade.industryBucket = industry;
 
-      if (!subSectorCounts[subSector]) {
-        subSectorCounts[subSector] = [];
+      if (!industryCounts[industry]) {
+        industryCounts[industry] = [];
       }
 
-      subSectorCounts[subSector].push(trade);
-    });
+      industryCounts[industry].push(trade);
+    }
 
-    // Check for violations and keep only top 3 per sub-sector
-    for (const [subSector, subSectorTrades] of Object.entries(subSectorCounts)) {
-      if (subSectorTrades.length > this.MAX_PER_SUBSECTOR) {
-        // Sort by conviction/score (if available) or keep first 3
-        const sorted = subSectorTrades.sort((a, b) => {
-          const scoreA = a.conviction === 'High' ? 2 : a.conviction === 'Medium' ? 1 : 0;
-          const scoreB = b.conviction === 'High' ? 2 : b.conviction === 'Medium' ? 1 : 0;
-          return scoreB - scoreA;
+    // Check for violations and keep only top 3 per industry
+    for (const [industry, industryTrades] of Object.entries(industryCounts)) {
+      if (industryTrades.length > this.MAX_PER_INDUSTRY) {
+        const sorted = industryTrades.sort((a, b) => {
+          return getPriorityScore(b) - getPriorityScore(a);
         });
 
         // Keep top 3
-        validTrades.push(...sorted.slice(0, this.MAX_PER_SUBSECTOR));
+        validTrades.push(...sorted.slice(0, this.MAX_PER_INDUSTRY));
 
         // Record violations
-        const rejected = sorted.slice(this.MAX_PER_SUBSECTOR);
+        const rejected = sorted.slice(this.MAX_PER_INDUSTRY);
         rejected.forEach(trade => {
           violations.push({
             symbol: trade.symbol,
-            subSector,
-            reason: `Sub-sector ${subSector} already has ${this.MAX_PER_SUBSECTOR} positions`,
+            industry,
+            reason: `Industry ${industry} already has ${this.MAX_PER_INDUSTRY} positions`,
             rejectedTrade: trade
           });
         });
       } else {
-        validTrades.push(...subSectorTrades);
+        validTrades.push(...industryTrades);
       }
     }
 
@@ -112,35 +81,39 @@ class SectorValidator {
       valid: violations.length === 0,
       violations,
       adjustedTrades: validTrades,
-      subSectorBreakdown: Object.entries(subSectorCounts).map(([subSector, trades]) => ({
-        subSector,
-        count: Math.min(trades.length, this.MAX_PER_SUBSECTOR),
-        symbols: trades.slice(0, this.MAX_PER_SUBSECTOR).map(t => t.symbol)
+      industryBreakdown: Object.entries(industryCounts).map(([industry, trades]) => ({
+        industry,
+        count: Math.min(trades.length, this.MAX_PER_INDUSTRY),
+        symbols: trades
+          .slice()
+          .sort((a, b) => getPriorityScore(b) - getPriorityScore(a))
+          .slice(0, this.MAX_PER_INDUSTRY)
+          .map(t => t.symbol)
       }))
     };
   }
 
   /**
-   * Get current sub-sector exposure from portfolio
+   * Get current industry exposure from portfolio
    */
-  getPortfolioSubSectorExposure(positions) {
+  async getPortfolioIndustryExposure(positions) {
     const exposure = {};
 
-    positions.forEach(position => {
-      const subSector = this.getSubSector(position.symbol);
+    for (const position of positions) {
+      const industry = await this.getIndustry(position.symbol);
 
-      if (!exposure[subSector]) {
-        exposure[subSector] = {
+      if (!exposure[industry]) {
+        exposure[industry] = {
           count: 0,
           symbols: [],
           totalValue: 0
         };
       }
 
-      exposure[subSector].count++;
-      exposure[subSector].symbols.push(position.symbol);
-      exposure[subSector].totalValue += position.quantity * position.currentPrice;
-    });
+      exposure[industry].count++;
+      exposure[industry].symbols.push(position.symbol);
+      exposure[industry].totalValue += position.quantity * position.currentPrice;
+    }
 
     return exposure;
   }
@@ -148,23 +121,23 @@ class SectorValidator {
   /**
    * Check if adding a new position would violate constraints
    */
-  canAddPosition(symbol, currentPositions) {
-    const subSector = this.getSubSector(symbol);
-    const exposure = this.getPortfolioSubSectorExposure(currentPositions);
+  async canAddPosition(symbol, currentPositions) {
+    const industry = await this.getIndustry(symbol);
+    const exposure = await this.getPortfolioIndustryExposure(currentPositions);
 
-    if (exposure[subSector] && exposure[subSector].count >= this.MAX_PER_SUBSECTOR) {
+    if (exposure[industry] && exposure[industry].count >= this.MAX_PER_INDUSTRY) {
       return {
         allowed: false,
-        reason: `Sub-sector ${subSector} already has ${this.MAX_PER_SUBSECTOR} positions: ${exposure[subSector].symbols.join(', ')}`,
-        subSector,
-        currentCount: exposure[subSector].count
+        reason: `Industry ${industry} already has ${this.MAX_PER_INDUSTRY} positions: ${exposure[industry].symbols.join(', ')}`,
+        industry,
+        currentCount: exposure[industry].count
       };
     }
 
     return {
       allowed: true,
-      subSector,
-      currentCount: exposure[subSector]?.count || 0
+      industry,
+      currentCount: exposure[industry]?.count || 0
     };
   }
 }

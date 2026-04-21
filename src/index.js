@@ -1799,8 +1799,8 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
 
       // Get correlation analysis for portfolio
       console.log('🔗 Analyzing portfolio correlation...');
-      const correlationSummary = correlationAnalysis.getPortfolioCorrelationSummary(portfolio.positions);
-      const diversificationScore = correlationAnalysis.calculateDiversificationScore(portfolio.positions);
+      const correlationSummary = await correlationAnalysis.getPortfolioCorrelationSummary(portfolio.positions);
+      const diversificationScore = await correlationAnalysis.calculateDiversificationScore(portfolio.positions);
 
       let correlationContext = '\n\n**PORTFOLIO CORRELATION ANALYSIS:**\n';
       correlationContext += `- Diversification Score: ${diversificationScore}/100\n`;
@@ -2531,7 +2531,7 @@ ${assetClassContext}
 - Shorts (overvalued, deteriorating, overextended): 0-20%
 - You may deviate if opportunity quality or market regime strongly supports it, but explain why.
 
-**Your Task:** Construct final portfolio with 12-14 positions total.
+**Your Task:** Construct the highest-conviction final portfolio for current conditions. Hold elevated cash when opportunity quality is thin. Do NOT add lower-conviction names just to reach a position count target.
 
 **PRIMARY GOAL: BEAT S&P 500 (SPY)**
 Your portfolio must outperform SPY on a risk-adjusted basis. This means:
@@ -2544,7 +2544,8 @@ Your portfolio must outperform SPY on a risk-adjusted basis. This means:
 This is NOT about "safe diversification" - it's about beating the benchmark through superior stock selection and position sizing.
 
 **Portfolio Constraints:**
-- Total positions: 10-12 (combined longs + shorts)
+- Total positions: no fixed minimum; prefer fewer positions and more cash over forced ideas
+- Typical range when opportunity quality supports it: 6-12 combined longs + shorts
 - Max position size: 12% ($12,000)
 - Min position size: 5% ($5,000)
 - 0-3 stocks per sub-sector (ACROSS BOTH LONGS AND SHORTS COMBINED)
@@ -2563,6 +2564,8 @@ This is NOT about "safe diversification" - it's about beating the benchmark thro
    - OVERRIDE_PHASE2_DECISION: NO
    - OVERRIDE_SYMBOL: NONE
    - OVERRIDE_REASON: NONE
+7. Never manufacture extra positions to satisfy a count target. If only 2-5 names clear the bar, output only those names and leave the rest in cash.
+8. Never repeat the same symbol more than once across the entire portfolio. No duplicate EXECUTE commands are allowed.
 
 **Output Format:**
 
@@ -2762,7 +2765,7 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         // Validate sector constraints (0-3 per sub-sector)
         console.log('🔍 Validating sector constraints...');
         const sectorValidator = (await import('./sector-validator.js')).default;
-        const validation = sectorValidator.validateTrades(recommendations);
+        const validation = await sectorValidator.validateTrades(recommendations);
 
         if (!validation.valid) {
           console.log(`⚠️ Sector constraint violations detected:`);
@@ -2770,9 +2773,9 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
             console.log(`   - ${v.symbol} rejected: ${v.reason}`);
           });
           console.log(`✅ Adjusted to ${validation.adjustedTrades.length} trades (from ${recommendations.length})`);
-          console.log('   Sub-sector breakdown:');
-          validation.subSectorBreakdown.forEach(sb => {
-            console.log(`   - ${sb.subSector}: ${sb.count} stocks (${sb.symbols.join(', ')})`);
+          console.log('   Industry breakdown:');
+          validation.industryBreakdown.forEach(bucket => {
+            console.log(`   - ${bucket.industry}: ${bucket.count} stocks (${bucket.symbols.join(', ')})`);
           });
         } else {
           console.log(`✅ All trades pass sector constraints`);
@@ -2811,8 +2814,15 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         // Batch submit all trades for approval
         const submittedTrades = [];
         const approvalIds = [];
+        const seenApprovalSymbols = new Set();
 
         for (const rec of adjustedRecs) {
+          if (seenApprovalSymbols.has(rec.symbol)) {
+            console.warn(`   ⚠️ Skipping duplicate approval submission for ${rec.symbol}`);
+            continue;
+          }
+          seenApprovalSymbols.add(rec.symbol);
+
           const action = rec.type === 'short' ? 'SHORT' : 'BUY';
           console.log(`   💰 Preparing trade: ${action} ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
 
@@ -3549,18 +3559,32 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
       // Sort by position in text
       allTradeMatches.sort((a, b) => a.index - b.index);
 
+      const dedupedTradeMatches = [];
+      const seenSymbols = new Set();
+      for (const trade of allTradeMatches) {
+        if (seenSymbols.has(trade.symbol)) {
+          console.warn(`   ⚠️ SKIPPED duplicate Phase 4 command for ${trade.symbol}`);
+          continue;
+        }
+        seenSymbols.add(trade.symbol);
+        dedupedTradeMatches.push(trade);
+      }
+
       console.log(`\n📋 Found ${allTradeMatches.length} EXECUTE commands in Phase 4 output`);
-      if (allTradeMatches.length > 0) {
+      if (dedupedTradeMatches.length !== allTradeMatches.length) {
+        console.log(`   ⚠️ Removed ${allTradeMatches.length - dedupedTradeMatches.length} duplicate command(s) before validation`);
+      }
+      if (dedupedTradeMatches.length > 0) {
         console.log('   Parsing trades:');
-        allTradeMatches.forEach((t, i) => {
+        dedupedTradeMatches.forEach((t, i) => {
           console.log(`   ${i + 1}. ${t.type.toUpperCase()} ${t.symbol} | ${t.quantity} | $${t.entryPrice} | $${t.stopLoss} | $${t.takeProfit} | ${t.pathway || 'null'} | ${t.intent}`);
         });
       }
 
       // Extract reasoning for each trade (text between current trade and next trade)
-      for (let i = 0; i < allTradeMatches.length; i++) {
-        const trade = allTradeMatches[i];
-        const nextTrade = allTradeMatches[i + 1];
+      for (let i = 0; i < dedupedTradeMatches.length; i++) {
+        const trade = dedupedTradeMatches[i];
+        const nextTrade = dedupedTradeMatches[i + 1];
 
         // Extract text from end of current trade line to start of next trade (or end of text)
         const reasoningStart = trade.endIndex;
@@ -3668,9 +3692,9 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         console.log('   Expected format: EXECUTE_BUY: SYMBOL | QUANTITY | ENTRY | STOP | TARGET');
         console.log('   Or: EXECUTE_SHORT: SYMBOL | QUANTITY | ENTRY | STOP | TARGET');
       } else {
-        console.log(`\n✅ Successfully parsed ${recommendations.length} trades from ${allTradeMatches.length} EXECUTE commands`);
-        if (recommendations.length < allTradeMatches.length) {
-          console.log(`   ⚠️ ${allTradeMatches.length - recommendations.length} trades were skipped due to validation failures (see warnings above)`);
+        console.log(`\n✅ Successfully parsed ${recommendations.length} trades from ${dedupedTradeMatches.length} unique EXECUTE commands`);
+        if (recommendations.length < dedupedTradeMatches.length) {
+          console.log(`   ⚠️ ${dedupedTradeMatches.length - recommendations.length} trades were skipped due to validation failures (see warnings above)`);
         }
       }
 

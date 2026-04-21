@@ -109,10 +109,11 @@ class AllocationManager {
    */
   async buildAllocationContext(portfolio) {
     const regime = await vixRegime.getRegime();
+    const maxSectorAllocation = parseFloat(process.env.MAX_SECTOR_ALLOCATION) || 0.30;
 
     let context = '\n**SECTOR ALLOCATION:**\n';
     context += `VIX Regime: ${regime.name}\n\n`;
-    context += 'Note: Sector allocation is managed via 0-3 stocks per sub-sector constraint in Phase 4.\n';
+    context += `Note: Sector allocation is managed via max ${(maxSectorAllocation * 100).toFixed(0)}% per sector plus max 3 positions per industry.\n`;
 
     return context;
   }

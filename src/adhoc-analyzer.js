@@ -356,10 +356,20 @@ router.get('/', async (req, res) => {
       loadingStatus.textContent = '';
     }
 
+    function normalizeTicker(rawValue) {
+      return String(rawValue || '')
+        .trim()
+        .replace(/^\$/, '')
+        .replace(/[^A-Za-z.]/g, '')
+        .toUpperCase();
+    }
+
     document.getElementById('analyzerForm').addEventListener('submit', async (e) => {
       e.preventDefault();
 
-      const ticker = document.getElementById('ticker').value.toUpperCase();
+      const tickerInput = document.getElementById('ticker');
+      const ticker = normalizeTicker(tickerInput.value);
+      tickerInput.value = ticker;
       const intent = document.getElementById('intent').value;
       const costBasis = document.getElementById('costBasis').value;
       const stopLoss = document.getElementById('stopLoss').value;
@@ -370,7 +380,9 @@ router.get('/', async (req, res) => {
     });
 
     document.getElementById('buildProfileButton').addEventListener('click', async () => {
-      const ticker = document.getElementById('ticker').value.toUpperCase().trim();
+      const tickerInput = document.getElementById('ticker');
+      const ticker = normalizeTicker(tickerInput.value);
+      tickerInput.value = ticker;
       if (!ticker) {
         alert('Enter a ticker first.');
         return;
@@ -379,7 +391,7 @@ router.get('/', async (req, res) => {
     });
 
     async function runAnalysis(payload) {
-      setLoadingState('Checking stock profile and running adhoc analysis...', 'If no stock profile exists in the DB, Droid will build it first and then continue automatically.');
+      setLoadingState('Checking stock profile and running adhoc analysis...', 'If no stock profile exists in the DB, Whiskie will build it first and then continue automatically.');
 
       try {
         const response = await fetch('/adhoc-analyzer/analyze', {
