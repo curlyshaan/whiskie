@@ -343,14 +343,6 @@ function classifyReaction(movePct, threshold = 1) {
 export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
   const url = `https://finance.yahoo.com/calendar/earnings?symbol=${encodeURIComponent(normalizedSymbol)}`;
-  const response = await axios.get(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-    }
-  });
-
-  const $ = cheerio.load(response.data);
-  const scripts = $('script').map((_, el) => $(el).html()).get().filter(Boolean);
   const fallback = {
     symbol: normalizedSymbol,
     earningsDate: expectedDate,
@@ -358,6 +350,20 @@ export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
     earningsSession: 'unknown',
     source: 'yahoo'
   };
+
+  const response = await axios.get(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    },
+    validateStatus: status => status >= 200 && status < 500
+  });
+
+  if (response.status >= 400) {
+    return fallback;
+  }
+
+  const $ = cheerio.load(response.data);
+  const scripts = $('script').map((_, el) => $(el).html()).get().filter(Boolean);
 
   for (const script of scripts) {
     if (!script.includes(normalizedSymbol)) continue;
@@ -382,11 +388,21 @@ export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
     } catch {}
   }
 
-  const quoteResponse = await axios.get(`https://finance.yahoo.com/quote/${encodeURIComponent(normalizedSymbol)}/`, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-    }
-  });
+  let quoteResponse;
+  try {
+    quoteResponse = await axios.get(`https://finance.yahoo.com/calendar/earnings?symbol=${encodeURIComponent(normalizedSymbol)}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      },
+      validateStatus: status => status >= 200 && status < 500
+    });
+  } catch {
+    return fallback;
+  }
+
+  if (quoteResponse.status >= 400) {
+    return fallback;
+  }
 
   const quoteSummary = extractYahooQuoteSummaryPayload(quoteResponse.data);
   const earnings = quoteSummary?.calendarEvents?.earnings || null;
@@ -584,11 +600,13 @@ function parsePredictorResponse(text) {
 export async function runOfficialReminderPrediction(reminder) {
   const symbol = reminder.symbol;
   const marketOpen = false;
-  const [quote, catalystSummary] = await Promise.all([
+  const [quote, rawCatalystSummary] = await Promise.all([
     fmp.getQuote(symbol).catch(() => null),
     Promise.resolve(reminder.catalyst_summary || '').then(async existing => existing || buildEarningsCatalystSummary(symbol))
   ]);
   const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: null });
+  const catalystBrief = await buildEarningsCatalystBrief(symbol, rawCatalystSummary)
+    .catch(() => rawCatalystSummary);
 
   const prompt = `You are Whiskie. Predict the likely stock reaction immediately after earnings for ${symbol}.
 
@@ -597,7 +615,7 @@ Context:
 - Earnings session: ${reminder.earnings_session}
 - Current price: ${currentPrice ?? 'unknown'}
 - Fresh catalysts:
-${catalystSummary}
+${catalystBrief}
 
 Focus on stock reaction, not raw beat/miss odds. Weigh expectations, valuation, setup, guidance risk, positioning, and current catalysts.
 
@@ -621,7 +639,7 @@ KEY_RISK: one concise sentence`;
 
   return {
     ...parsed,
-    catalystSummary,
+    catalystSummary: catalystBrief,
     snapshotPrice: currentPrice,
     predictorRunAt: new Date(),
     rawResponse: text
