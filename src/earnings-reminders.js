@@ -261,6 +261,35 @@ function summarizeCatalystResults(symbol, results = []) {
   }).join('\n');
 }
 
+export async function buildEarningsCatalystBrief(symbol, existingSummary = null) {
+  const rawSummary = existingSummary || await buildEarningsCatalystSummary(symbol);
+  const prompt = `You are preparing a concise earnings-preview catalyst brief for ${symbol}.
+
+Summarize the raw context below into exactly 4-6 bullets focused on:
+- what matters into the print
+- expectations/setup
+- likely swing factors
+- major risk
+
+Keep it crisp, investor-readable, and specific to ${symbol}.
+Do not repeat raw article metadata, URLs, or site boilerplate.
+
+Raw context:
+${rawSummary}`;
+
+  const response = await claude.sendMessage(
+    [{ role: 'user', content: prompt }],
+    MODELS.OPUS,
+    null,
+    true,
+    8000,
+    { quiet: true, maxTokens: 1200 }
+  );
+
+  const text = response?.content?.map(block => block?.text).filter(Boolean).join('\n').trim() || rawSummary;
+  return text;
+}
+
 function formatPredictorReasoningHtml(text) {
   const normalized = String(text || '').trim();
   if (!normalized) {
@@ -432,7 +461,7 @@ export async function searchEarningsReminderSymbols(query, limit = 10) {
 
 export async function syncAutoEarningsReminders(options = {}) {
   const {
-    days = 14,
+    days = 7,
     minMarketCap = 10000000000
   } = options;
 
@@ -471,7 +500,11 @@ export async function saveEarningsReminder(payload) {
 
   const earningsDate = details.timing.earningsDate || details.nextEarning.earnings_date;
   const earningsSession = payload.earningsSession || details.timing.earningsSession || 'unknown';
-  const earningsTimeRaw = payload.earningsTimeRaw || details.timing.earningsTimeRaw || details.nextEarning.earnings_time || null;
+  const earningsTimeRaw = normalizeTimingPayload({
+    earningsTimeRaw: payload.earningsTimeRaw || details.timing.earningsTimeRaw || details.nextEarning.earnings_time || null,
+    earningsSession: payload.earningsSession || details.timing.earningsSession || details.nextEarning.session_normalized || 'unknown',
+    source: payload.earningsSessionSource || details.timing.source || 'unknown'
+  }, earningsDate).earningsTimeRaw;
   const earningsSessionSource = payload.earningsSessionSource || details.timing.source || 'unknown';
   const catalystSummary = payload.catalystSummary || details.catalystSummary || null;
   const scheduledSendAt = calculateScheduledSendAt(earningsDate, earningsSession);
@@ -555,6 +588,31 @@ KEY_RISK: one concise sentence`;
   };
 }
 
+export async function buildLiveReminderPreview(symbol) {
+  const details = await getEarningsReminderDetails(symbol);
+  if (!details) return null;
+
+  const [quote, catalystBrief] = await Promise.all([
+    fmp.getQuote(symbol).catch(() => null),
+    buildEarningsCatalystBrief(symbol, details.catalystSummary).catch(() => details.catalystSummary || 'No catalyst summary available.')
+  ]);
+
+  const currentPrice = resolveMarketPrice(quote, { marketOpen: false, fallback: null });
+  const preview = await runOfficialReminderPrediction({
+    symbol,
+    earnings_date: details.timing.earningsDate || details.nextEarning.earnings_date,
+    earnings_session: details.timing.earningsSession || details.nextEarning.session_normalized || 'unknown',
+    catalyst_summary: catalystBrief
+  });
+
+  return {
+    symbol,
+    currentPrice,
+    catalystBrief,
+    preview
+  };
+}
+
 export async function gradeEarningsReminder(reminder) {
   if (!reminder?.predictor_snapshot_price || !reminder?.earnings_date) {
     return null;
@@ -631,6 +689,8 @@ export default {
   gradeEarningsReminder,
   formatEarningsReminderEmail,
   buildEarningsCatalystSummary,
+  buildEarningsCatalystBrief,
+  buildLiveReminderPreview,
   enrichYahooEarningsTiming,
   calculateScheduledSendAt
 };

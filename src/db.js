@@ -2283,6 +2283,8 @@ export async function getAllActiveEarningsReminders() {
          LIMIT 1
        ) sw ON TRUE
        WHERE er.status = 'active'
+         AND er.earnings_date >= CURRENT_DATE
+         AND er.earnings_date <= CURRENT_DATE + INTERVAL '7 days'
        ORDER BY er.scheduled_send_at ASC NULLS LAST, er.earnings_date ASC, er.symbol ASC`
     );
     return result.rows;

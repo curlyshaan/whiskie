@@ -588,6 +588,19 @@ router.get('/api/earnings-reminders/:symbol', async (req, res) => {
   }
 });
 
+router.get('/api/earnings-reminders/:symbol/preview', async (req, res) => {
+  try {
+    const preview = await earningsReminders.buildLiveReminderPreview(req.params.symbol);
+    if (!preview) {
+      res.status(404).json({ error: 'No upcoming earnings found for symbol' });
+      return;
+    }
+    res.json(preview);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get('/options-analyzer', async (req, res) => {
   try {
     const runs = await db.getRecentOptionsAnalysisRuns(12);
@@ -2934,10 +2947,10 @@ function generateEarningsRemindersHTML(reminders) {
           </div>
           <h3 style="margin-bottom:10px;">Timing Detail</h3>
           <div id="timingRaw" class="summary-box" style="margin-bottom:16px;">-</div>
-          <h3 style="margin-bottom:10px;">Catalyst Summary</h3>
+          <h3 style="margin-bottom:10px;">Catalyst Brief</h3>
           <div id="catalystSummary" class="markdown-box" style="margin-bottom:16px;">-</div>
-          <h3 style="margin-bottom:10px;">Latest Prediction</h3>
-          <div id="predictionState" class="helper" style="margin-bottom:16px;">No prediction has been generated yet. It will appear after the scheduled email run.</div>
+          <h3 style="margin-bottom:10px;">Live Preview Prediction</h3>
+          <div id="predictionState" class="helper" style="margin-bottom:16px;">Loading live preview after symbol selection.</div>
           <div id="predictionPanel" style="display:none;">
             <div class="predictor-grid">
               <div class="predictor-card">
@@ -2957,6 +2970,28 @@ function generateEarningsRemindersHTML(reminders) {
             <div id="predictionReasoning" class="markdown-box" style="margin-bottom:16px;">-</div>
             <h3 style="margin-bottom:10px;">Key Risk</h3>
             <div id="predictionKeyRisk" class="summary-box" style="margin-bottom:16px;">-</div>
+          </div>
+          <h3 style="margin-bottom:10px;">Last Saved Official Prediction</h3>
+          <div id="savedPredictionState" class="helper" style="margin-bottom:16px;">No saved official prediction yet.</div>
+          <div id="savedPredictionPanel" style="display:none;">
+            <div class="predictor-grid">
+              <div class="predictor-card">
+                <div class="detail-label">Direction</div>
+                <div id="savedPredictedDirection" class="value">-</div>
+              </div>
+              <div class="predictor-card">
+                <div class="detail-label">Confidence</div>
+                <div id="savedPredictedConfidence" class="value">-</div>
+              </div>
+              <div class="predictor-card">
+                <div class="detail-label">Snapshot Price</div>
+                <div id="savedPredictorSnapshotPrice" class="value">-</div>
+              </div>
+            </div>
+            <h3 style="margin-bottom:10px;">Saved Reasoning</h3>
+            <div id="savedPredictionReasoning" class="markdown-box" style="margin-bottom:16px;">-</div>
+            <h3 style="margin-bottom:10px;">Saved Key Risk</h3>
+            <div id="savedPredictionKeyRisk" class="summary-box" style="margin-bottom:16px;">-</div>
           </div>
           <h3 style="margin-bottom:10px;">Existing Predictor Notes</h3>
           <div id="existingNotes" class="notes-box">None saved yet.</div>
@@ -3049,6 +3084,42 @@ function generateEarningsRemindersHTML(reminders) {
       return '<ul style=\"margin:0; padding-left:18px;\">' + items.map(item => '<li style=\"margin-bottom:6px;\">' + escapeHtml(item) + '</li>').join('') + '</ul>';
     }
 
+    function formatIsoDate(value) {
+      if (!value) return '-';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    }
+
+    async function loadPreview(symbol) {
+      document.getElementById('predictionState').style.display = 'block';
+      document.getElementById('predictionPanel').style.display = 'none';
+      document.getElementById('predictionState').textContent = 'Loading live preview...';
+
+      try {
+        const response = await fetch('/api/earnings-reminders/' + encodeURIComponent(symbol) + '/preview');
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || 'Failed to load live preview');
+        }
+
+        const preview = payload.preview || {};
+        const directionEl = document.getElementById('predictedDirection');
+        const direction = String(preview.direction || 'unknown').toUpperCase();
+        directionEl.textContent = direction;
+        directionEl.className = 'value ' + (direction === 'UP' ? 'direction-up' : direction === 'DOWN' ? 'direction-down' : 'direction-neutral');
+        document.getElementById('predictedConfidence').textContent = String(preview.confidence || 'unknown').toUpperCase();
+        document.getElementById('predictorSnapshotPrice').textContent = payload.currentPrice ? '$' + Number(payload.currentPrice).toFixed(2) : '-';
+        document.getElementById('predictionReasoning').innerHTML = renderReasoningList(preview.reasoning || '');
+        document.getElementById('predictionKeyRisk').textContent = preview.keyRisk || 'No key risk recorded.';
+        document.getElementById('catalystSummary').innerHTML = renderReasoningList(payload.catalystBrief || '');
+        document.getElementById('predictionState').style.display = 'none';
+        document.getElementById('predictionPanel').style.display = 'block';
+      } catch (error) {
+        document.getElementById('predictionState').textContent = error.message;
+      }
+    }
+
     function setMessage(text, type = '') {
       saveMessageEl.textContent = text || '';
       saveMessageEl.className = 'message' + (type ? ' ' + type : '');
@@ -3073,7 +3144,7 @@ function generateEarningsRemindersHTML(reminders) {
       suggestionsEl.innerHTML = results.map(item => {
         const session = formatDashboardSession(item.session_normalized || item.earnings_time || 'unknown');
         return '<div class="suggestion" data-symbol="' + item.symbol + '">' +
-          '<strong>' + item.symbol + '</strong> · ' + item.earnings_date + ' · ' + session +
+          '<strong>' + item.symbol + '</strong> · ' + formatIsoDate(item.earnings_date) + ' · ' + session +
           '</div>';
       }).join('');
       suggestionsEl.style.display = 'block';
@@ -3105,25 +3176,27 @@ function generateEarningsRemindersHTML(reminders) {
         ? scheduled.toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET'
         : '-';
       document.getElementById('timingRaw').textContent = payload.timing.earningsTimeRaw || 'No Yahoo timing detail found.';
-      document.getElementById('catalystSummary').innerHTML = renderMarkdownLike(payload.catalystSummary || 'No catalyst summary available.');
+      document.getElementById('catalystSummary').innerHTML = renderMarkdownLike('Loading catalyst brief...');
       document.getElementById('existingNotes').textContent = payload.reminder?.notes || 'None saved yet.';
       notesEl.value = payload.reminder?.notes || '';
       sessionOverrideEl.value = '';
 
-      const hasPrediction = payload.reminder?.predicted_direction || payload.reminder?.prediction_reasoning;
-      document.getElementById('predictionState').style.display = hasPrediction ? 'none' : 'block';
-      document.getElementById('predictionPanel').style.display = hasPrediction ? 'block' : 'none';
+      const hasSavedPrediction = payload.reminder?.predicted_direction || payload.reminder?.prediction_reasoning;
+      document.getElementById('savedPredictionState').style.display = hasSavedPrediction ? 'none' : 'block';
+      document.getElementById('savedPredictionPanel').style.display = hasSavedPrediction ? 'block' : 'none';
 
-      if (hasPrediction) {
-        const directionEl = document.getElementById('predictedDirection');
+      if (hasSavedPrediction) {
+        const directionEl = document.getElementById('savedPredictedDirection');
         const direction = String(payload.reminder?.predicted_direction || 'unknown').toUpperCase();
         directionEl.textContent = direction;
         directionEl.className = 'value ' + (direction === 'UP' ? 'direction-up' : direction === 'DOWN' ? 'direction-down' : 'direction-neutral');
-        document.getElementById('predictedConfidence').textContent = String(payload.reminder?.predicted_confidence || 'unknown').toUpperCase();
-        document.getElementById('predictorSnapshotPrice').textContent = payload.reminder?.predictor_snapshot_price ? '$' + Number(payload.reminder.predictor_snapshot_price).toFixed(2) : '-';
-        document.getElementById('predictionReasoning').innerHTML = renderReasoningList(payload.reminder?.prediction_reasoning || '');
-        document.getElementById('predictionKeyRisk').textContent = payload.reminder?.prediction_key_risk || 'No key risk recorded.';
+        document.getElementById('savedPredictedConfidence').textContent = String(payload.reminder?.predicted_confidence || 'unknown').toUpperCase();
+        document.getElementById('savedPredictorSnapshotPrice').textContent = payload.reminder?.predictor_snapshot_price ? '$' + Number(payload.reminder.predictor_snapshot_price).toFixed(2) : '-';
+        document.getElementById('savedPredictionReasoning').innerHTML = renderReasoningList(payload.reminder?.prediction_reasoning || '');
+        document.getElementById('savedPredictionKeyRisk').textContent = payload.reminder?.prediction_key_risk || 'No key risk recorded.';
       }
+
+      await loadPreview(symbol);
     }
 
     searchInput.addEventListener('input', async (event) => {
