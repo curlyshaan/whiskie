@@ -347,7 +347,14 @@ export async function getEarningsReminderDetails(symbol) {
       selectionRank: existingReminder.selection_rank_within_pathway ?? null,
       reviewPriority: existingReminder.review_priority ?? null
     } : null,
-    scheduledSendAt
+    scheduledSendAt,
+    earningsOptionsMode: {
+      symbol: normalizedSymbol,
+      intentHorizon: 'short_term',
+      eventMode: 'earnings',
+      earningsDate: effectiveEarningsDate,
+      earningsSession: timing.earningsSession || 'unknown'
+    }
   };
 }
 
@@ -519,7 +526,7 @@ export function formatEarningsReminderEmail(reminder) {
     ? new Date(reminder.scheduled_send_at).toLocaleString('en-US', { timeZone: EASTERN_TIMEZONE })
     : 'N/A';
   return `
-    <h2>Earnings Reminder: ${escapeHtml(reminder.symbol)}</h2>
+    <h2>Earnings Predictor: ${escapeHtml(reminder.symbol)}</h2>
     <p><strong>Earnings Date:</strong> ${escapeHtml(reminder.earnings_date)}</p>
     <p><strong>Session:</strong> ${escapeHtml(reminder.earnings_session || 'unknown')}</p>
     ${reminder.earnings_time_raw ? `<p><strong>Timing Detail:</strong> ${escapeHtml(reminder.earnings_time_raw)}</p>` : ''}

@@ -11,7 +11,7 @@
     "dev": "nodemon src/index.js",
     "db:init": "node src/db.js --init",
     "db:reset": "node scripts/reset-database.js",
-    "populate-stocks": "node scripts/populate-stock-universe.js",
+    "populate-stocks": "echo 'Deprecated: use node scripts/populate-universe-v2.js' && exit 1",
     "update-etb": "node scripts/update-etb-status.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

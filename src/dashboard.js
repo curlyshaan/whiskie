@@ -588,6 +588,26 @@ router.get('/api/earnings-reminders/:symbol', async (req, res) => {
   }
 });
 
+router.get('/options-analyzer', async (req, res) => {
+  try {
+    const runs = await db.getRecentOptionsAnalysisRuns(12);
+    res.send(generateOptionsAnalyzerHTML(runs, req.query || {}));
+  } catch (error) {
+    console.error('Options analyzer page error:', error);
+    res.status(500).send('Error loading options analyzer');
+  }
+});
+
+router.post('/api/options-analyzer', async (req, res) => {
+  try {
+    const optionsAnalyzer = (await import('./options-analyzer.js')).default;
+    const result = await optionsAnalyzer.analyzeSymbol(req.body || {});
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/api/earnings-reminders/save', async (req, res) => {
   try {
     const reminder = await earningsReminders.saveEarningsReminder(req.body || {});
@@ -879,6 +899,43 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       opacity: 0.5;
       cursor: not-allowed;
     }
+    .nav-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+      margin: 22px 0 28px;
+    }
+    .nav-card {
+      display: block;
+      text-decoration: none;
+      color: white;
+      padding: 16px 18px;
+      border-radius: 12px;
+      border: 1px solid #2a2f4a;
+      background: #1a1f3a;
+      transition: transform 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+    }
+    .nav-card:hover {
+      transform: translateY(-1px);
+      border-color: #46507a;
+      opacity: 0.96;
+    }
+    .nav-card-title {
+      font-weight: 700;
+      font-size: 1rem;
+      margin-bottom: 6px;
+      color: #fff;
+    }
+    .nav-card-copy {
+      color: #94a3b8;
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+    .nav-card.approvals { background: linear-gradient(135deg, rgba(245, 158, 11, 0.18) 0%, rgba(217, 119, 6, 0.14) 100%); }
+    .nav-card.adhoc { background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(5, 150, 105, 0.14) 100%); }
+    .nav-card.options { background: linear-gradient(135deg, rgba(6, 182, 212, 0.18) 0%, rgba(15, 118, 110, 0.14) 100%); }
+    .nav-card.predictor { background: linear-gradient(135deg, rgba(236, 72, 153, 0.18) 0%, rgba(190, 24, 93, 0.14) 100%); }
+    .nav-card.cron { background: linear-gradient(135deg, rgba(139, 92, 246, 0.18) 0%, rgba(109, 40, 217, 0.14) 100%); }
     .timestamp {
       color: #666;
       font-size: 0.85rem;
@@ -1054,18 +1111,29 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
 
     <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
     <button class="analyze-btn" onclick="triggerAnalysis()" id="analyzeBtn">🤖 Analyze Now</button>
-    <a href="/approvals" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;" id="approvalsBtn">
-      ⚖️ Trade Approvals
-    </a>
-    <a href="/adhoc-analyzer" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;">
-      🔍 Adhoc Analyzer
-    </a>
-    <a href="/cron-status" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;">
-      ⏰ Cron Jobs
-    </a>
-    <a href="/earnings-reminders" style="display:inline-block; padding: 10px 20px; background: linear-gradient(135deg, #ec4899 0%, #be185d 100%); color: white; text-decoration: none; border-radius: 8px; font-weight: 600; margin-left: 10px;">
-      ⏰ Earnings Reminders
-    </a>
+
+    <div class="nav-grid">
+      <a href="/approvals" class="nav-card approvals" id="approvalsBtn">
+        <div class="nav-card-title">⚖️ Trade Approvals</div>
+        <div class="nav-card-copy">Review queued trades before execution.</div>
+      </a>
+      <a href="/adhoc-analyzer" class="nav-card adhoc">
+        <div class="nav-card-title">🔍 Adhoc Analyzer</div>
+        <div class="nav-card-copy">Run one-off stock analysis outside the scheduled flow.</div>
+      </a>
+      <a href="/options-analyzer" class="nav-card options">
+        <div class="nav-card-title">🧩 Options Analyzer</div>
+        <div class="nav-card-copy">Analyze standard and earnings-mode options setups.</div>
+      </a>
+      <a href="/earnings-reminders" class="nav-card predictor">
+        <div class="nav-card-title">⏰ Earnings Predictor</div>
+        <div class="nav-card-copy">Track upcoming earnings, predictor context, and launch earnings options mode.</div>
+      </a>
+      <a href="/cron-status" class="nav-card cron">
+        <div class="nav-card-title">⏰ Cron Jobs</div>
+        <div class="nav-card-copy">Inspect schedules, run history, and manual job triggers.</div>
+      </a>
+    </div>
 
     <div class="stats">
       <div class="stat-card">
@@ -1497,6 +1565,447 @@ function generateLogsHTML(analyses, trades, alerts) {
   </script>
 </body>
 </html>
+  `;
+}
+
+function generateOptionsAnalyzerHTML(runs = [], query = {}) {
+  const safeRuns = runs.map(run => ({
+    ...run,
+    result_payload: typeof run.result_payload === 'string' ? JSON.parse(run.result_payload) : run.result_payload
+  }));
+  const prefillSymbol = escapeHtml(query.symbol || '');
+  const prefillHorizon = escapeHtml(query.intentHorizon || 'short_term');
+  const prefillEventMode = escapeHtml(query.eventMode || '');
+  const prefillEarningsDate = escapeHtml(query.earningsDate || '');
+  const prefillEarningsSession = escapeHtml(query.earningsSession || '');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Options Analyzer - Whiskie</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0e27;
+      color: #e0e0e0;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    .container { max-width: 1400px; margin: 0 auto; }
+    h1 {
+      font-size: 2.4rem;
+      margin-bottom: 10px;
+      background: linear-gradient(135deg, #22d3ee 0%, #0f766e 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle { color: #94a3b8; margin-bottom: 24px; }
+    .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+    .btn-link {
+      display: inline-block;
+      padding: 12px 20px;
+      border-radius: 8px;
+      text-decoration: none;
+      color: white;
+      font-weight: 600;
+      background: linear-gradient(135deg, #334155 0%, #1e293b 100%);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+    .panel {
+      background: #11182b;
+      border: 1px solid #22304f;
+      border-radius: 14px;
+      padding: 20px;
+    }
+    .panel h2 {
+      font-size: 1.2rem;
+      margin-bottom: 14px;
+      color: #f8fafc;
+    }
+    .form-row { margin-bottom: 16px; }
+    .form-row label {
+      display: block;
+      margin-bottom: 6px;
+      color: #cbd5e1;
+      font-weight: 600;
+    }
+    .form-row input, .form-row select {
+      width: 100%;
+      background: #0f172a;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 0.95rem;
+    }
+    .submit-btn {
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 14px 16px;
+      font-size: 1rem;
+      font-weight: 700;
+      color: white;
+      cursor: pointer;
+      background: linear-gradient(135deg, #06b6d4 0%, #0f766e 100%);
+    }
+    .submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .note, .rule-card {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 14px;
+      color: #cbd5e1;
+      margin-top: 14px;
+    }
+    .status {
+      display: none;
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+    .status.info { display: block; background: rgba(8, 145, 178, 0.18); color: #67e8f9; }
+    .status.error { display: block; background: rgba(239, 68, 68, 0.18); color: #fca5a5; }
+    .status.success { display: block; background: rgba(16, 185, 129, 0.18); color: #86efac; }
+    .results-stack { display: grid; gap: 16px; }
+    .result-card {
+      background: #11182b;
+      border: 1px solid #22304f;
+      border-radius: 14px;
+      padding: 18px;
+    }
+    .result-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .result-title { font-size: 1.2rem; font-weight: 700; color: #f8fafc; }
+    .muted { color: #94a3b8; font-size: 0.92rem; }
+    .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .pill {
+      display: inline-flex;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      font-size: 0.88rem;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin: 14px 0;
+    }
+    .metric {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .metric-label {
+      color: #94a3b8;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+    .metric-value { color: #f8fafc; font-weight: 700; }
+    .section-title {
+      color: #f8fafc;
+      font-size: 0.95rem;
+      font-weight: 700;
+      margin: 16px 0 8px;
+    }
+    ul { margin-left: 18px; color: #cbd5e1; }
+    li { margin-bottom: 6px; }
+    .strategy-card {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 12px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: 0.9rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid #22304f;
+    }
+    th { color: #94a3b8; font-size: 0.78rem; text-transform: uppercase; }
+    code {
+      background: #020617;
+      border: 1px solid #1e293b;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    @media (max-width: 980px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Options Analyzer</h1>
+    <p class="subtitle">Intent-aware options and equity recommendation engine with liquidity guardrails.</p>
+
+    <div class="actions">
+      <a class="btn-link" href="/">← Back to Dashboard</a>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <h2>Run Analysis</h2>
+        <div id="status" class="status"></div>
+        <form id="optionsAnalyzerForm">
+          <div class="form-row">
+            <label for="symbol">Symbol</label>
+            <input id="symbol" name="symbol" placeholder="AAPL" maxlength="10" value="${prefillSymbol}" required />
+          </div>
+          <div class="form-row">
+            <label for="intentHorizon">Intent horizon</label>
+            <select id="intentHorizon" name="intentHorizon" required>
+              <option value="short_term" ${prefillHorizon === 'short_term' ? 'selected' : ''}>Short term (2-6 weeks)</option>
+              <option value="medium_term" ${prefillHorizon === 'medium_term' ? 'selected' : ''}>Medium term (2-4 months)</option>
+              <option value="long_term" ${prefillHorizon === 'long_term' ? 'selected' : ''}>Long term (6-18 months)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="capital">Capital budget (optional)</label>
+            <input id="capital" name="capital" type="number" min="0" step="0.01" placeholder="2500" />
+          </div>
+          <input id="eventMode" name="eventMode" type="hidden" value="${prefillEventMode}" />
+          <button id="submitBtn" class="submit-btn" type="submit">Analyze Symbol</button>
+        </form>
+
+        <div class="rule-card">
+          <strong>Strike selection rules</strong>
+          <ul>
+            <li>Calls stay roughly within 20% below to 25% above spot.</li>
+            <li>Puts stay roughly within 25% below to 20% above spot.</li>
+            <li>Wide spreads, low OI, and low volume reject contracts before ranking.</li>
+            <li>If options are inefficient, the engine can recommend shares or no trade.</li>
+          </ul>
+        </div>
+
+        ${prefillEventMode === 'earnings' ? `
+          <div class="rule-card" style="border-color:#0ea5e9;">
+            <strong>Earnings mode</strong>
+            <ul>
+              <li>Launched from Earnings Predictor with event-driven context.</li>
+              <li>Earnings date: <code>${prefillEarningsDate || 'unknown'}</code></li>
+              <li>Earnings session: <code>${prefillEarningsSession || 'unknown'}</code></li>
+              <li>This mode is higher risk and may surface event-driven structures that standard mode blocks.</li>
+            </ul>
+          </div>
+        ` : ''}
+
+        <div class="note">
+          The analyzer uses Opus for directional thesis formation, then applies deterministic contract filtering and ranking from Tradier option chains.
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Recent Runs</h2>
+        <div id="results" class="results-stack">
+          ${safeRuns.length ? safeRuns.map(run => renderOptionsRun(run.result_payload, run.created_at)).join('') : '<div class="muted">No options analysis runs yet.</div>'}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('optionsAnalyzerForm');
+    const statusEl = document.getElementById('status');
+    const resultsEl = document.getElementById('results');
+    const submitBtn = document.getElementById('submitBtn');
+
+    function setStatus(type, message) {
+      statusEl.className = 'status ' + type;
+      statusEl.textContent = message;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function renderList(items) {
+      if (!items || !items.length) return '<div class="muted">None</div>';
+      return '<ul>' + items.map(item => '<li>' + escapeHtml(item) + '</li>').join('') + '</ul>';
+    }
+
+    function renderStrategies(strategies) {
+      if (!strategies || !strategies.length) return '<div class="muted">No option candidates passed the guardrails.</div>';
+      return strategies.map(strategy => {
+        const rows = (strategy.candidates || []).slice(0, 3).map(candidate => \`
+          <tr>
+            <td>\${escapeHtml(candidate.symbol || '-')}</td>
+            <td>\${escapeHtml(candidate.expiration || '-')}</td>
+            <td>$\${Number(candidate.strike || 0).toFixed(2)}</td>
+            <td>$\${Number(candidate.bid || 0).toFixed(2)} / $\${Number(candidate.ask || 0).toFixed(2)}</td>
+            <td>\${Number(candidate.delta || 0).toFixed(2)}</td>
+            <td>\${Number(candidate.openInterest || 0)}</td>
+            <td>\${Number(candidate.score || 0).toFixed(2)}</td>
+          </tr>
+        \`).join('');
+
+        return \`
+          <div class="strategy-card">
+            <div class="result-title">\${escapeHtml(strategy.strategyType || 'Strategy')}</div>
+            <div class="muted">\${escapeHtml(strategy.rationale || '')}</div>
+            <div class="pill-row" style="margin-top:8px;">
+              <span class="pill">Strike window: \${escapeHtml(strategy.strikeTolerance?.minStrike ?? '-')} to \${escapeHtml(strategy.strikeTolerance?.maxStrike ?? '-')}</span>
+              <span class="pill">\${escapeHtml(strategy.strikeTolerance?.toleranceLabel || '')}</span>
+            </div>
+            \${rows ? '<table><thead><tr><th>Contract</th><th>Expiry</th><th>Strike</th><th>Bid / Ask</th><th>Delta</th><th>OI</th><th>Score</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="muted" style="margin-top:10px;">No ranked candidates shown.</div>'}
+          </div>
+        \`;
+      }).join('');
+    }
+
+    function renderRun(result, createdAt) {
+      const recommendation = result?.recommendation || {};
+      const context = result?.symbolContext || {};
+      const sentiment = result?.optionsSentiment || {};
+      return \`
+        <div class="result-card">
+          <div class="result-header">
+            <div>
+              <div class="result-title">\${escapeHtml(result?.symbol || '-')} • \${escapeHtml(result?.horizonLabel || '-')}</div>
+              <div class="muted">\${escapeHtml(createdAt ? new Date(createdAt).toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET' : 'Just now')}</div>
+            </div>
+            <div class="pill-row">
+              <span class="pill">Direction: \${escapeHtml(result?.directionCall || '-')}</span>
+              <span class="pill">Conviction: \${escapeHtml(result?.conviction || '-')}</span>
+              <span class="pill">Recommendation: \${escapeHtml(recommendation.type || '-')}</span>
+            </div>
+          </div>
+          <div class="metrics">
+            <div class="metric"><div class="metric-label">Underlying Price</div><div class="metric-value">$\${Number(context.price || 0).toFixed(2)}</div></div>
+            <div class="metric"><div class="metric-label">Strategy</div><div class="metric-value">\${escapeHtml(recommendation.strategyType || 'None')}</div></div>
+            <div class="metric"><div class="metric-label">ATM IV</div><div class="metric-value">\${escapeHtml(sentiment.atmImpliedVolatility ?? '-')}%</div></div>
+            <div class="metric"><div class="metric-label">Put/Call Vol Ratio</div><div class="metric-value">\${escapeHtml(sentiment.putCallVolumeRatio ?? '-')}</div></div>
+          </div>
+          <div class="section-title">Thesis</div>
+          <div class="muted">\${escapeHtml(result?.thesisSummary || '')}</div>
+          <div class="section-title">Recommendation Reason</div>
+          <div class="muted">\${escapeHtml(recommendation.reason || '')}</div>
+          <div class="section-title">Catalysts</div>
+          <div class="pill-row">
+            \${(result?.catalysts?.nearTerm || []).map(item => '<span class="pill">' + escapeHtml(item) + '</span>').join('')}
+            \${(result?.catalysts?.midTerm || []).map(item => '<span class="pill">' + escapeHtml(item) + '</span>').join('')}
+            \${(result?.catalysts?.longTerm || []).map(item => '<span class="pill">' + escapeHtml(item) + '</span>').join('')}
+          </div>
+          <div class="section-title">Warnings</div>
+          \${renderList(result?.warnings || [])}
+          <div class="section-title">Guardrails</div>
+          \${renderList(result?.guardrails || [])}
+          <div class="section-title">Candidate Strategies</div>
+          \${renderStrategies(result?.candidateStrategies || [])}
+        </div>
+      \`;
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      submitBtn.disabled = true;
+      setStatus('info', 'Running options analysis. This may take up to a minute.');
+
+      const payload = {
+        symbol: document.getElementById('symbol').value.trim().toUpperCase(),
+        intentHorizon: document.getElementById('intentHorizon').value,
+        capital: document.getElementById('capital').value ? Number(document.getElementById('capital').value) : null,
+        eventMode: document.getElementById('eventMode').value || null
+      };
+
+      try {
+        const response = await fetch('/api/options-analyzer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'Analysis failed');
+        }
+
+        setStatus('success', 'Analysis complete.');
+        const card = renderRun(data.result, new Date().toISOString());
+        if (resultsEl.querySelector('.muted')) resultsEl.innerHTML = '';
+        resultsEl.insertAdjacentHTML('afterbegin', card);
+      } catch (error) {
+        setStatus('error', error.message);
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
+  `;
+}
+
+function renderOptionsRun(result, createdAt) {
+  const recommendation = result?.recommendation || {};
+  const sentiment = result?.optionsSentiment || {};
+  const context = result?.symbolContext || {};
+  const catalysts = [
+    ...(result?.catalysts?.nearTerm || []),
+    ...(result?.catalysts?.midTerm || []),
+    ...(result?.catalysts?.longTerm || [])
+  ];
+
+  return `
+    <div class="result-card">
+      <div class="result-header">
+        <div>
+          <div class="result-title">${escapeHtml(result?.symbol || '-')} • ${escapeHtml(result?.horizonLabel || '-')}</div>
+          <div class="muted">${escapeHtml(formatDashboardDateTime(createdAt))}</div>
+        </div>
+        <div class="pill-row">
+          <span class="pill">Direction: ${escapeHtml(result?.directionCall || '-')}</span>
+          <span class="pill">Conviction: ${escapeHtml(result?.conviction || '-')}</span>
+          <span class="pill">Recommendation: ${escapeHtml(recommendation.type || '-')}</span>
+        </div>
+      </div>
+      <div class="metrics">
+        <div class="metric"><div class="metric-label">Underlying Price</div><div class="metric-value">$${escapeHtml(Number(context.price || 0).toFixed(2))}</div></div>
+        <div class="metric"><div class="metric-label">Strategy</div><div class="metric-value">${escapeHtml(recommendation.strategyType || 'None')}</div></div>
+        <div class="metric"><div class="metric-label">ATM IV</div><div class="metric-value">${escapeHtml(sentiment.atmImpliedVolatility ?? '-')}%</div></div>
+        <div class="metric"><div class="metric-label">Put/Call OI Ratio</div><div class="metric-value">${escapeHtml(sentiment.putCallOIRatio ?? '-')}</div></div>
+      </div>
+      <div class="section-title">Thesis</div>
+      <div class="muted">${escapeHtml(result?.thesisSummary || '')}</div>
+      <div class="section-title">Recommendation Reason</div>
+      <div class="muted">${escapeHtml(recommendation.reason || '')}</div>
+      <div class="section-title">Catalysts</div>
+      ${renderList(catalysts)}
+      <div class="section-title">Warnings</div>
+      ${renderList(result?.warnings || [])}
+    </div>
   `;
 }
 
@@ -2338,7 +2847,7 @@ function generateEarningsRemindersHTML(reminders) {
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Earnings Reminders - Whiskie</title>
+  <title>Earnings Predictor - Whiskie</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
@@ -2378,13 +2887,13 @@ function generateEarningsRemindersHTML(reminders) {
 </head>
 <body>
   <div class="container">
-    <h1>⏰ Earnings Reminders</h1>
-    <p class="subtitle">Search upcoming earnings, review catalysts, and save one active reminder per symbol.</p>
+    <h1>⏰ Earnings Predictor</h1>
+    <p class="subtitle">Search upcoming earnings, review catalysts, save one active predictor per symbol, and launch earnings-mode options analysis.</p>
     <a href="/" class="back-btn">← Back to Dashboard</a>
 
     <div class="layout">
       <div class="panel">
-        <h2>Create or Update Reminder</h2>
+        <h2>Create or Update Predictor</h2>
         <label for="symbolSearch">Search symbol</label>
         <input id="symbolSearch" type="text" placeholder="Type AAPL, NFLX, APP..." autocomplete="off" />
         <div id="suggestions" class="suggestions" style="display:none;"></div>
@@ -2399,9 +2908,10 @@ function generateEarningsRemindersHTML(reminders) {
         </select>
 
         <label for="notes">Notes</label>
-        <textarea id="notes" placeholder="Personal notes for the reminder email..."></textarea>
+        <textarea id="notes" placeholder="Personal notes for the predictor email..."></textarea>
 
-        <button id="saveBtn" class="btn" disabled>Save Reminder</button>
+        <button id="saveBtn" class="btn" disabled>Save Predictor</button>
+        <button id="earningsOptionsBtn" class="btn" style="display:none; background: linear-gradient(135deg, #06b6d4 0%, #0f766e 100%); margin-left: 10px;">Analyze Earnings Options Setup</button>
         <div id="saveMessage" class="message"></div>
       </div>
 
@@ -2419,15 +2929,15 @@ function generateEarningsRemindersHTML(reminders) {
           <div id="timingRaw" class="summary-box" style="margin-bottom:16px;">-</div>
           <h3 style="margin-bottom:10px;">Catalyst Summary</h3>
           <div id="catalystSummary" class="summary-box" style="margin-bottom:16px;">-</div>
-          <h3 style="margin-bottom:10px;">Existing Reminder Notes</h3>
+          <h3 style="margin-bottom:10px;">Existing Predictor Notes</h3>
           <div id="existingNotes" class="notes-box">None saved yet.</div>
         </div>
       </div>
     </div>
 
     <div class="panel" style="margin-top:24px;">
-      <h2>Active Reminders</h2>
-      ${reminders.length === 0 ? '<div class="helper">No active earnings reminders saved yet.</div>' : `
+      <h2>Active Predictors</h2>
+      ${reminders.length === 0 ? '<div class="helper">No active earnings predictors saved yet.</div>' : `
       <table>
         <thead>
           <tr>
@@ -2435,7 +2945,7 @@ function generateEarningsRemindersHTML(reminders) {
             <th>Earnings Date</th>
             <th>Session</th>
             <th>Pathway Model</th>
-            <th>Reminder Time</th>
+            <th>Predictor Time</th>
             <th>Status</th>
             <th>Notes</th>
           </tr>
@@ -2476,6 +2986,7 @@ function generateEarningsRemindersHTML(reminders) {
     const sessionOverrideEl = document.getElementById('sessionOverride');
     const saveBtn = document.getElementById('saveBtn');
     const saveMessageEl = document.getElementById('saveMessage');
+    const earningsOptionsBtn = document.getElementById('earningsOptionsBtn');
     let selectedSymbol = null;
     let currentDetails = null;
 
@@ -2521,6 +3032,7 @@ function generateEarningsRemindersHTML(reminders) {
       selectedSymbol = symbol;
       currentDetails = payload;
       saveBtn.disabled = false;
+      earningsOptionsBtn.style.display = 'inline-block';
       detailsEl.style.display = 'block';
       emptyStateEl.style.display = 'none';
       suggestionsEl.style.display = 'none';
@@ -2562,7 +3074,7 @@ function generateEarningsRemindersHTML(reminders) {
       if (!selectedSymbol || !currentDetails) return;
 
       saveBtn.disabled = true;
-      setMessage('Saving reminder...');
+      setMessage('Saving predictor...');
 
       try {
         const response = await fetch('/api/earnings-reminders/save', {
@@ -2576,10 +3088,10 @@ function generateEarningsRemindersHTML(reminders) {
         });
         const payload = await response.json();
         if (!response.ok || !payload.success) {
-          throw new Error(payload.error || 'Failed to save reminder');
+          throw new Error(payload.error || 'Failed to save predictor');
         }
 
-        setMessage('Reminder saved successfully.', 'success');
+        setMessage('Predictor saved successfully.', 'success');
         await loadSymbol(selectedSymbol);
         setTimeout(() => location.reload(), 800);
       } catch (error) {
@@ -2587,6 +3099,18 @@ function generateEarningsRemindersHTML(reminders) {
       } finally {
         saveBtn.disabled = false;
       }
+    });
+
+    earningsOptionsBtn.addEventListener('click', () => {
+      if (!currentDetails?.earningsOptionsMode) return;
+      const params = new URLSearchParams({
+        symbol: currentDetails.earningsOptionsMode.symbol,
+        intentHorizon: currentDetails.earningsOptionsMode.intentHorizon,
+        eventMode: currentDetails.earningsOptionsMode.eventMode,
+        earningsDate: currentDetails.earningsOptionsMode.earningsDate || '',
+        earningsSession: currentDetails.earningsOptionsMode.earningsSession || ''
+      });
+      window.location.href = '/options-analyzer?' + params.toString();
     });
   </script>
 </body>

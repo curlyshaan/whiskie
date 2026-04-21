@@ -1408,6 +1408,35 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_cron_status ON cron_job_executions(status);
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS options_analysis_runs (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        intent_horizon VARCHAR(20) NOT NULL,
+        underlying_price DECIMAL(10, 2),
+        recommendation_type VARCHAR(30),
+        strategy_type VARCHAR(50),
+        direction_call VARCHAR(20),
+        conviction VARCHAR(20),
+        thesis_summary TEXT,
+        catalysts JSONB,
+        risks JSONB,
+        warnings JSONB,
+        guardrails JSONB,
+        profile_version INTEGER,
+        result_payload JSONB NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_options_analysis_runs_symbol ON options_analysis_runs(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_options_analysis_runs_created_at ON options_analysis_runs(created_at);
+    `);
+
     // Error logging table
     await client.query(`
       CREATE TABLE IF NOT EXISTS error_log (
@@ -2863,6 +2892,82 @@ export async function getCronJobExecutions(days = 7) {
  */
 export async function query(text, params) {
   return pool.query(text, params);
+}
+
+export async function getLatestStockProfile(symbol) {
+  const result = await pool.query(
+    `SELECT * FROM stock_profiles WHERE symbol = $1`,
+    [symbol]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getLatestSaturdayWatchlistEntry(symbol) {
+  const result = await pool.query(
+    `SELECT *
+     FROM saturday_watchlist
+     WHERE symbol = $1
+     ORDER BY added_date DESC NULLS LAST, created_at DESC NULLS LAST
+     LIMIT 1`,
+    [symbol]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getLatestPendingApprovalForSymbol(symbol) {
+  const result = await pool.query(
+    `SELECT *
+     FROM trade_approvals
+     WHERE symbol = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [symbol]
+  );
+  return result.rows[0] || null;
+}
+
+export async function saveOptionsAnalysisRun(run) {
+  const result = await pool.query(
+    `INSERT INTO options_analysis_runs (
+      symbol, intent_horizon, underlying_price, recommendation_type, strategy_type,
+      direction_call, conviction, thesis_summary, catalysts, risks, warnings,
+      guardrails, profile_version, result_payload
+    ) VALUES (
+      $1, $2, $3, $4, $5,
+      $6, $7, $8, $9, $10, $11,
+      $12, $13, $14
+    )
+    RETURNING *`,
+    [
+      run.symbol,
+      run.intent_horizon,
+      run.underlying_price ?? null,
+      run.recommendation_type ?? null,
+      run.strategy_type ?? null,
+      run.direction_call ?? null,
+      run.conviction ?? null,
+      run.thesis_summary ?? null,
+      JSON.stringify(run.catalysts || {}),
+      JSON.stringify(run.risks || []),
+      JSON.stringify(run.warnings || []),
+      JSON.stringify(run.guardrails || []),
+      run.profile_version ?? null,
+      JSON.stringify(run.result_payload || {})
+    ]
+  );
+
+  return result.rows[0];
+}
+
+export async function getRecentOptionsAnalysisRuns(limit = 20) {
+  const result = await pool.query(
+    `SELECT *
+     FROM options_analysis_runs
+     ORDER BY created_at DESC
+     LIMIT $1`,
+    [limit]
+  );
+  return result.rows;
 }
 
 /**

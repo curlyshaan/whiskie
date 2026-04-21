@@ -189,9 +189,9 @@ class EmailAlerts {
   }
 
   async sendEarningsReminderEmail(reminder) {
-    const subject = `⏰ Earnings Reminder: ${reminder.symbol} (${reminder.earnings_date})`;
+    const subject = `⏰ Earnings Predictor: ${reminder.symbol} (${reminder.earnings_date})`;
     const html = `
-      <h2>Earnings Reminder</h2>
+      <h2>Earnings Predictor</h2>
       <p><strong>Symbol:</strong> ${reminder.symbol}</p>
       <p><strong>Earnings Date:</strong> ${reminder.earnings_date}</p>
       <p><strong>Session:</strong> ${((reminder.earnings_session || reminder.session_normalized || 'unknown')).replace(/_/g, ' ')}</p>
@@ -212,9 +212,9 @@ class EmailAlerts {
 
     try {
       await this.sendEmail(this.alertEmail, subject, html);
-      console.log(`📧 Earnings reminder email sent for ${reminder.symbol}`);
+      console.log(`📧 Earnings predictor email sent for ${reminder.symbol}`);
     } catch (error) {
-      console.error(`Failed to send earnings reminder email for ${reminder.symbol}:`, error);
+      console.error(`Failed to send earnings predictor email for ${reminder.symbol}:`, error);
       throw error;
     }
   }
