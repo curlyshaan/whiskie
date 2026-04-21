@@ -159,6 +159,8 @@ function normalizeSession(rawText = '') {
 
 function formatEasternCallTime(rawSeconds) {
   if (!Number.isFinite(rawSeconds)) return null;
+  const date = new Date(rawSeconds * 1000);
+  if (Number.isNaN(date.getTime())) return null;
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: EASTERN_TIMEZONE,
     hour: 'numeric',
@@ -167,7 +169,7 @@ function formatEasternCallTime(rawSeconds) {
     timeZoneName: 'short'
   });
 
-  return formatter.format(new Date(rawSeconds * 1000));
+  return formatter.format(date);
 }
 
 function extractYahooQuoteSummaryPayload(html) {
@@ -189,6 +191,18 @@ function mapLegacyEarningsTime(value) {
   if (normalized === 'bmo') return 'pre_market';
   if (normalized === 'amc') return 'post_market';
   return 'unknown';
+}
+
+function normalizeTimingPayload(rawTiming, fallbackDate) {
+  const earningsDate = toIsoDate(rawTiming?.earningsDate) || toIsoDate(fallbackDate) || fallbackDate || null;
+  const earningsTimeRaw = rawTiming?.earningsTimeRaw || null;
+  return {
+    symbol: rawTiming?.symbol || null,
+    earningsDate,
+    earningsTimeRaw,
+    earningsSession: rawTiming?.earningsSession || mapLegacyEarningsTime(earningsTimeRaw) || 'unknown',
+    source: rawTiming?.source || 'unknown'
+  };
 }
 
 function summarizeCatalystResults(symbol, results = []) {
@@ -339,12 +353,14 @@ export async function getEarningsReminderDetails(symbol) {
   try {
     const yahooTiming = await enrichYahooEarningsTiming(normalizedSymbol, upcoming.earnings_date);
     if (yahooTiming?.earningsTimeRaw || yahooTiming?.earningsSession !== 'unknown') {
-      timing = yahooTiming;
+      timing = normalizeTimingPayload(yahooTiming, upcoming.earnings_date);
       await db.enrichEarningTiming(normalizedSymbol, upcoming.earnings_date, yahooTiming).catch(() => null);
     }
   } catch (error) {
     console.warn(`⚠️ Yahoo timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
   }
+
+  timing = normalizeTimingPayload(timing, upcoming.earnings_date);
 
   const catalystSummary = existingReminder?.catalyst_summary || await buildEarningsCatalystSummary(normalizedSymbol);
   const effectiveEarningsDate = timing.earningsDate || upcoming.earnings_date;
