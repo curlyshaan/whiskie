@@ -106,6 +106,13 @@ router.get('/', async (req, res) => {
       color: #667eea;
     }
     .loading.active { display: block; }
+    .loading-status {
+      margin-top: 12px;
+      color: #c7d2fe;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      white-space: pre-line;
+    }
     .spinner {
       border: 3px solid #2a2f4a;
       border-top: 3px solid #667eea;
@@ -313,13 +320,17 @@ router.get('/', async (req, res) => {
           <div></div>
         </div>
 
-        <button type="submit">Analyze Stock</button>
+        <div class="action-row">
+          <button type="submit">Analyze Stock</button>
+          <button type="button" class="secondary-button" id="buildProfileButton">Build Profile</button>
+        </div>
       </form>
     </div>
 
     <div class="loading" id="loading">
       <div class="spinner"></div>
-      <p>Analyzing with Opus extended thinking (30k tokens)...</p>
+      <p id="loadingTitle">Analyzing with Opus extended thinking (30k tokens)...</p>
+      <p class="loading-status" id="loadingStatus"></p>
       <p style="font-size: 0.9rem; color: #9ca3af; margin-top: 10px;">This may take 3-5 minutes for deep analysis</p>
     </div>
 
@@ -328,6 +339,22 @@ router.get('/', async (req, res) => {
 
   <script>
     let lastAnalysisRequest = null;
+    const loading = document.getElementById('loading');
+    const loadingTitle = document.getElementById('loadingTitle');
+    const loadingStatus = document.getElementById('loadingStatus');
+
+    function setLoadingState(title, status = '') {
+      loadingTitle.textContent = title;
+      loadingStatus.textContent = status;
+      loading.classList.add('active');
+      document.getElementById('results').classList.remove('active');
+    }
+
+    function clearLoadingState() {
+      loading.classList.remove('active');
+      loadingTitle.textContent = 'Analyzing with Opus extended thinking (30k tokens)...';
+      loadingStatus.textContent = '';
+    }
 
     document.getElementById('analyzerForm').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -342,10 +369,17 @@ router.get('/', async (req, res) => {
       await runAnalysis(lastAnalysisRequest);
     });
 
+    document.getElementById('buildProfileButton').addEventListener('click', async () => {
+      const ticker = document.getElementById('ticker').value.toUpperCase().trim();
+      if (!ticker) {
+        alert('Enter a ticker first.');
+        return;
+      }
+      await buildProfile(ticker);
+    });
+
     async function runAnalysis(payload) {
-      // Show loading
-      document.getElementById('loading').classList.add('active');
-      document.getElementById('results').classList.remove('active');
+      setLoadingState('Checking stock profile and running adhoc analysis...', 'If no stock profile exists in the DB, Droid will build it first and then continue automatically.');
 
       try {
         const response = await fetch('/adhoc-analyzer/analyze', {
@@ -365,7 +399,7 @@ router.get('/', async (req, res) => {
       } catch (error) {
         alert('Error: ' + error.message);
       } finally {
-        document.getElementById('loading').classList.remove('active');
+        clearLoadingState();
       }
     }
 
@@ -373,8 +407,10 @@ router.get('/', async (req, res) => {
       const normalized = String(symbol || '').toUpperCase().trim();
       if (!normalized) return;
 
-      document.getElementById('loading').classList.add('active');
-      document.getElementById('results').classList.remove('active');
+      setLoadingState(
+        'Building stock profile...',
+        normalized + ' is being built from scratch or refreshed from the DB before analysis.'
+      );
 
       try {
         const response = await fetch('/adhoc-analyzer/build-profile', {
@@ -397,7 +433,7 @@ router.get('/', async (req, res) => {
       } catch (error) {
         alert('Profile build failed: ' + error.message);
       } finally {
-        document.getElementById('loading').classList.remove('active');
+        clearLoadingState();
       }
     }
 
@@ -435,9 +471,6 @@ router.get('/', async (req, res) => {
       html += \`<div class="check-icon \${data.checks.hasProfile ? 'yes' : 'no'}">\${data.checks.hasProfile ? '✓' : '✗'}</div>\`;
       html += '<div>';
       html += \`Has Stock Profile: \${data.checks.hasProfile ? 'Yes' : 'No'}\`;
-      if (!data.checks.hasProfile) {
-        html += \`<div class="action-row"><button type="button" class="secondary-button" onclick="buildProfile('\${data.symbol}')">Build Profile for \${data.symbol}</button></div>\`;
-      }
       html += '</div>';
       html += '</div>';
 
@@ -598,13 +631,26 @@ router.post('/analyze', async (req, res) => {
       console.warn(`   ⚠️ Could not load position details for ${symbol}: ${error.message}`);
     }
 
-    // Step 3: Get stock profile
-    const profileCheck = await db.query(
+    // Step 3: Get stock profile, auto-building if missing
+    let profileCheck = await db.query(
       'SELECT * FROM stock_profiles WHERE symbol = $1',
       [symbol]
     );
-    const hasProfile = profileCheck.rows.length > 0;
-    const profile = hasProfile ? profileCheck.rows[0] : null;
+    let hasProfile = profileCheck.rows.length > 0;
+    let profile = hasProfile ? profileCheck.rows[0] : null;
+    let profileWasAutoBuilt = false;
+
+    if (!hasProfile) {
+      console.log(`   🔬 No stock profile found for ${symbol}; building before adhoc analysis...`);
+      await stockProfiles.buildStockProfile(symbol);
+      profileCheck = await db.query(
+        'SELECT * FROM stock_profiles WHERE symbol = $1',
+        [symbol]
+      );
+      hasProfile = profileCheck.rows.length > 0;
+      profile = hasProfile ? profileCheck.rows[0] : null;
+      profileWasAutoBuilt = hasProfile;
+    }
 
     // Step 4: Get current market data
     const [quote, ratios, keyMetrics, deepBundle] = await Promise.all([
@@ -720,7 +766,8 @@ router.post('/analyze', async (req, res) => {
         watchlistAnalysisReady,
         watchlistSelectionRank,
         watchlistReviewPriority,
-        hasProfile
+        hasProfile,
+        profileWasAutoBuilt
       },
       profile: profile ? {
         business_model: profile.business_model,

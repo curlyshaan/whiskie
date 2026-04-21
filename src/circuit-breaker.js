@@ -3,7 +3,6 @@
  * Prevents runaway trading with hard limits
  *
  * RULES:
- * - Max 5 trades per day
  * - Max 5% weekly loss
  * - Pause trading if triggered
  */
@@ -13,7 +12,6 @@ import email from './email.js';
 
 class CircuitBreaker {
   constructor() {
-    this.MAX_DAILY_TRADES = 5;
     this.MAX_WEEKLY_LOSS_PCT = 0.05;
     this.isTripped = false;
     this.tripReason = null;
@@ -23,13 +21,6 @@ class CircuitBreaker {
    * Check if circuit breaker is tripped
    */
   async checkCircuitBreaker(portfolioValue) {
-    // Check daily trade limit
-    const dailyTrades = await this.getDailyTradeCount();
-    if (dailyTrades >= this.MAX_DAILY_TRADES) {
-      this.trip(`Daily trade limit reached (${dailyTrades}/${this.MAX_DAILY_TRADES})`);
-      return { tripped: true, reason: this.tripReason };
-    }
-
     // Check weekly loss limit
     const weeklyLoss = await this.getWeeklyLoss(portfolioValue);
     if (weeklyLoss >= this.MAX_WEEKLY_LOSS_PCT) {
@@ -81,18 +72,6 @@ class CircuitBreaker {
   }
 
   /**
-   * Get daily trade count
-   */
-  async getDailyTradeCount() {
-    const result = await db.query(
-      `SELECT COUNT(*) as count
-       FROM trades
-       WHERE DATE(executed_at) = CURRENT_DATE`
-    );
-    return parseInt(result.rows[0]?.count || 0);
-  }
-
-  /**
    * Get weekly loss percentage
    */
   async getWeeklyLoss(currentPortfolioValue) {
@@ -125,7 +104,6 @@ class CircuitBreaker {
     return {
       isTripped: this.isTripped,
       reason: this.tripReason,
-      maxDailyTrades: this.MAX_DAILY_TRADES,
       maxWeeklyLoss: `${(this.MAX_WEEKLY_LOSS_PCT * 100).toFixed(0)}%`
     };
   }
