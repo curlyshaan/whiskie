@@ -3,13 +3,15 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const isPaperTrading = process.env.NODE_ENV === 'paper';
+const normalizeRuntimeMode = (value = '') => value.toString().trim().toLowerCase();
+const runtimeMode = normalizeRuntimeMode(process.env.TRADING_MODE || process.env.NODE_ENV);
+const isPaperTrading = ['paper', 'sandbox'].includes(runtimeMode);
+const BASE_URL = isPaperTrading
+  ? (process.env.TRADIER_SANDBOX_URL || 'https://sandbox.tradier.com/v1')
+  : (process.env.TRADIER_BASE_URL || 'https://api.tradier.com/v1');
 
-// CRITICAL SAFETY: Hardcode sandbox URL to prevent accidental live trading
-const BASE_URL = 'https://sandbox.tradier.com/v1';
-
-// Runtime assertion to ensure we're using sandbox
-if (!BASE_URL.includes('sandbox')) {
+// Runtime assertion to ensure paper mode cannot hit live brokerage endpoints
+if (isPaperTrading && !BASE_URL.includes('sandbox')) {
   throw new Error('SAFETY CHECK FAILED: Refusing to run against live Tradier API. BASE_URL must contain "sandbox".');
 }
 

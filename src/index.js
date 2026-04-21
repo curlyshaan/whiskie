@@ -64,6 +64,10 @@ app.use(express.json());
 app.use('/', dashboard);
 app.use('/adhoc-analyzer', adhocAnalyzer);
 
+const normalizeRuntimeMode = (value = '') => value.toString().trim().toLowerCase();
+const runtimeMode = normalizeRuntimeMode(process.env.TRADING_MODE || process.env.NODE_ENV);
+const isPaperTradingMode = ['paper', 'sandbox'].includes(runtimeMode);
+
 /**
  * Whiskie - AI Trading Bot
  * Main orchestration logic
@@ -74,7 +78,7 @@ class WhiskieBot {
     this.analysisRunning = false;
     this.apiServerStarted = false;
     this.latestGapReport = null; // Store pre-market gap scan results
-    this.isPaperTrading = process.env.NODE_ENV === 'paper';
+    this.isPaperTrading = isPaperTradingMode;
     this.sectorCache = new Map(); // Cache sector/industry lookups
     console.log(`🤖 Whiskie Bot initialized in ${this.isPaperTrading ? 'PAPER TRADING' : 'LIVE'} mode`);
   }
@@ -586,7 +590,7 @@ class WhiskieBot {
       res.json({
         status: 'ok',
         bot: 'running',
-        mode: process.env.NODE_ENV || 'development'
+        mode: runtimeMode || 'development'
       });
     });
 
@@ -966,7 +970,7 @@ class WhiskieBot {
     app.get('/status', (req, res) => {
       res.json({
         running: this.botStarted,
-        mode: process.env.NODE_ENV,
+        mode: runtimeMode,
         uptime: process.uptime()
       });
     });
