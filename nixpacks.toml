@@ -2,7 +2,7 @@
 nixPkgs = ['nodejs_20', 'postgresql', 'python311Full']
 
 [phases.install]
-cmds = ['npm ci', 'python3 -m ensurepip --upgrade', 'python3 -m pip install --break-system-packages earnings==1.1.0']
+cmds = ['npm ci', 'python3.11 -m venv .venv', '.venv/bin/python -m ensurepip --upgrade', '.venv/bin/python -m pip install --upgrade pip setuptools wheel', '.venv/bin/python -m pip install --no-cache-dir earnings==1.1.0']
 
 [start]
-cmd = 'node src/index.js'
+cmd = 'PYTHON_BIN=/app/.venv/bin/python node src/index.js'

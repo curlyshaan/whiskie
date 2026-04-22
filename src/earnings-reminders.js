@@ -337,6 +337,8 @@ function fetchEarningsWhispersTiming(symbol) {
     const args = ['/Users/sshanoor/ClaudeProjects/Whiskie/scripts/earnings-whispers-helper.py', symbol];
     const pythonCandidates = [
       process.env.PYTHON_BIN,
+      '/app/.venv/bin/python',
+      `${process.cwd()}/.venv/bin/python`,
       'python3',
       'python',
       '/usr/bin/python3',
