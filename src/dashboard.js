@@ -174,6 +174,9 @@ function renderPortfolioHubSection(portfolioHub = {}) {
     <div class="section">
       <div class="section-title">🧭 Portfolio Hub</div>
       <p class="subtitle" style="margin-top:0;">Separate from Whiskie live trading. Manual multi-account holdings with portfolio-wide analytics.</p>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
+        <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Refresh Holdings + Whiskie Guidance</button>
+      </div>
 
       <div class="stats" style="margin-top:16px;">
         <div class="stat-card"><div class="stat-label">Total Value</div><div class="stat-value">${formatMoney(summary.totalValue || 0)}</div></div>
@@ -586,6 +589,28 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         location.reload();
       } catch (error) {
         alert('Error saving Portfolio Hub transaction: ' + error.message);
+      }
+    }
+
+    async function refreshPortfolioHub() {
+      const btn = document.getElementById('portfolioHubRefreshBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Refreshing Portfolio Hub...';
+      }
+
+      try {
+        const response = await fetch('/api/portfolio-hub/refresh', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to refresh Portfolio Hub');
+        location.reload();
+      } catch (error) {
+        alert('Error refreshing Portfolio Hub: ' + error.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Refresh Holdings + Whiskie Guidance';
+        }
       }
     }
 
@@ -3275,6 +3300,15 @@ router.post('/api/portfolio-hub/transactions', async (req, res) => {
     res.json({ success: true, transaction });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/portfolio-hub/refresh', async (req, res) => {
+  try {
+    const portfolioHub = await buildPortfolioHubView();
+    res.json({ success: true, summary: portfolioHub.summary || null });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
