@@ -280,11 +280,11 @@ class TavilyAPI {
     const identity = companyName ? `"${companyName}" ${symbol}` : symbol;
 
     return await this.searchMany([
-      { query: `${identity} earnings preview`, options: { maxResults: 2, includeDomains } },
-      { query: `${identity} guidance outlook`, options: { maxResults: 2, includeDomains } },
-      { query: `${identity} consensus estimates analyst expectations`, options: { maxResults: 2, includeDomains } },
-      { query: `${identity} margin outlook revenue outlook EPS outlook pipeline`, options: { maxResults: 2, includeDomains } },
-      { query: `${symbol} earnings preview`, options: { maxResults: 2, includeDomains: [] } }
+      { query: `${identity} earnings preview`, options: { maxResults: 5, includeDomains } },
+      { query: `${identity} guidance outlook consensus estimates analyst expectations`, options: { maxResults: 5, includeDomains } },
+      { query: `${identity} margin outlook revenue outlook EPS outlook`, options: { maxResults: 4, includeDomains } },
+      { query: `${identity} analyst expectations price target sentiment`, options: { maxResults: 4, includeDomains } },
+      { query: `${symbol} earnings preview`, options: { maxResults: 4, includeDomains: [] } }
     ], {
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
