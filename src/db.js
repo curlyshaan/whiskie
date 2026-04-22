@@ -141,6 +141,50 @@ export async function initDatabase() {
       ON portfolio_hub_transactions(account_id);
     `);
 
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'portfolio_hub_transactions_type_check'
+        ) THEN
+          ALTER TABLE portfolio_hub_transactions
+          ADD CONSTRAINT portfolio_hub_transactions_type_check
+          CHECK (transaction_type IN ('buy', 'sell', 'short', 'cover', 'deposit', 'withdraw'));
+        END IF;
+      END
+      $$;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_advice_history (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        position_type VARCHAR(10),
+        weight_pct DECIMAL(8, 4),
+        sector VARCHAR(100),
+        sector_weight_pct DECIMAL(8, 4),
+        unrealized_pnl_pct DECIMAL(8, 4),
+        whiskie_pathway VARCHAR(100),
+        recommendation TEXT NOT NULL,
+        snapshot_payload JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_portfolio_hub_advice_history_symbol
+      ON portfolio_hub_advice_history(symbol);
+    `);
+
+    await client.query(`
+      ALTER TABLE portfolio_hub_advice_history
+      ADD COLUMN IF NOT EXISTS long_return_pct DECIMAL(8, 4),
+      ADD COLUMN IF NOT EXISTS short_return_pct DECIMAL(8, 4),
+      ADD COLUMN IF NOT EXISTS sector_snapshot JSONB;
+    `);
+
     // AI decisions - log all AI analysis and reasoning
     await client.query(`
       CREATE TABLE IF NOT EXISTS ai_decisions (
@@ -1830,14 +1874,14 @@ export async function createPortfolioHubTransaction(transaction) {
   const normalizedPrice = transaction.price == null || transaction.price === '' ? null : Number(transaction.price);
   const normalizedCash = transaction.cash_amount == null || transaction.cash_amount === '' ? null : Number(transaction.cash_amount);
 
-  const validTypes = new Set(['buy', 'sell', 'short', 'cover', 'cash_adjustment']);
+  const validTypes = new Set(['buy', 'sell', 'short', 'cover', 'deposit', 'withdraw']);
   if (!validTypes.has(normalizedType)) {
     throw new Error(`Unsupported portfolio hub transaction type: ${normalizedType}`);
   }
 
-  if (normalizedType === 'cash_adjustment') {
+  if (normalizedType === 'deposit' || normalizedType === 'withdraw') {
     if (!Number.isFinite(normalizedCash)) {
-      throw new Error('Cash adjustment transactions require cash_amount');
+      throw new Error(`${normalizedType} transactions require cash_amount`);
     }
   } else {
     if (!normalizedSymbol) {
@@ -1871,6 +1915,45 @@ export async function createPortfolioHubTransaction(transaction) {
     ]
   );
   return result.rows[0];
+}
+
+export async function recordPortfolioHubAdviceHistory(entries = []) {
+  if (!Array.isArray(entries) || !entries.length) return;
+
+  for (const entry of entries) {
+    await pool.query(
+      `INSERT INTO portfolio_hub_advice_history (
+         symbol, position_type, weight_pct, sector, sector_weight_pct,
+         unrealized_pnl_pct, whiskie_pathway, recommendation, snapshot_payload,
+         long_return_pct, short_return_pct, sector_snapshot
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        entry.symbol,
+        entry.positionType || null,
+        entry.weightPct ?? null,
+        entry.sector || null,
+        entry.sectorWeightPct ?? null,
+        entry.unrealizedPnLPct ?? null,
+        entry.whiskiePathway || null,
+        entry.recommendation || '',
+        entry.snapshotPayload ? JSON.stringify(entry.snapshotPayload) : null,
+        entry.longReturnPct ?? null,
+        entry.shortReturnPct ?? null,
+        entry.sectorSnapshot ? JSON.stringify(entry.sectorSnapshot) : null
+      ]
+    );
+  }
+}
+
+export async function getPortfolioHubAdviceHistorySince(date) {
+  const result = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_advice_history
+     WHERE created_at >= $1
+     ORDER BY created_at ASC, symbol ASC`,
+    [date]
+  );
+  return result.rows || [];
 }
 
 export async function getLatestStockProfilesForSymbols(symbols = []) {

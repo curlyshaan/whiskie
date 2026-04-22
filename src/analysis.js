@@ -20,9 +20,18 @@ class AnalysisEngine {
    */
   async getPortfolioState() {
     try {
-      const balances = await tradier.getBalances();
-      const positions = await tradier.getPositions();
       const dbPositions = await db.getPositions();
+      let balances = null;
+      let positions = [];
+      let tradierUnavailable = false;
+
+      try {
+        balances = await tradier.getBalances();
+        positions = await tradier.getPositions();
+      } catch (error) {
+        tradierUnavailable = true;
+        console.warn(`⚠️ Tradier portfolio fetch unavailable, falling back to DB/snapshot state: ${error.message}`);
+      }
       let marketOpen = false;
       try {
         marketOpen = await tradier.isMarketOpen();
@@ -31,7 +40,14 @@ class AnalysisEngine {
       }
 
       // Merge positions
-      const mergedPositions = this.mergePositions(positions, dbPositions);
+      const mergedPositions = tradierUnavailable
+        ? dbPositions.map(position => ({
+            ...position,
+            symbol: position.symbol,
+            quantity: position.quantity,
+            cost_basis: position.cost_basis
+          }))
+        : this.mergePositions(positions, dbPositions);
 
       // Fetch current prices for each position
       for (const position of mergedPositions) {
@@ -45,9 +61,22 @@ class AnalysisEngine {
       }
 
       // Calculate portfolio metrics
-      const cash = balances.total_cash || balances.cash?.cash_available || 0;
-      const positionsValue = balances.long_market_value || 0;
-      let totalValue = balances.total_equity || cash || this.INITIAL_CAPITAL;
+      let cash = balances?.total_cash || balances?.cash?.cash_available || 0;
+      let positionsValue = balances?.long_market_value || 0;
+      let totalValue = balances?.total_equity || cash || this.INITIAL_CAPITAL;
+
+      if (tradierUnavailable) {
+        positionsValue = mergedPositions.reduce((sum, position) => sum + (Number(position.currentPrice || 0) * Math.abs(Number(position.quantity || 0))), 0);
+        const snapshotResult = await db.query(
+          'SELECT cash, total_value FROM portfolio_snapshots ORDER BY snapshot_date DESC LIMIT 1'
+        );
+        cash = snapshotResult.rows.length > 0
+          ? Number(snapshotResult.rows[0].cash || 0)
+          : Number(process.env.INITIAL_CAPITAL || this.INITIAL_CAPITAL);
+        totalValue = snapshotResult.rows.length > 0
+          ? Number(snapshotResult.rows[0].total_value || (cash + positionsValue))
+          : cash + positionsValue;
+      }
 
       // Safety check: ensure totalValue is never 0 or undefined
       if (!totalValue || totalValue <= 0) {
@@ -74,10 +103,10 @@ class AnalysisEngine {
         positionsValue,
         positions: mergedPositions,
         drawdown,
-        balances
+        balances: balances || {}
       };
     } catch (error) {
-      console.error('Error getting portfolio state:', error);
+      console.error('Error getting portfolio state:', error.message);
       throw error;
     }
   }

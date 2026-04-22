@@ -64,6 +64,11 @@ class TradierAPI {
     this.BACKOFF_MS = [2000, 5000, 15000]; // Exponential backoff
   }
 
+  isTransientError(error) {
+    const status = Number(error?.response?.status || 0);
+    return status === 429 || status === 502 || status === 503 || status === 504 || error?.code === 'ECONNABORTED';
+  }
+
   /**
    * Execute API call with retry logic and graceful degradation
    */
@@ -77,6 +82,10 @@ class TradierAPI {
         if (isLastAttempt) {
           console.error(`❌ ${operationName} failed after ${this.MAX_RETRIES} attempts:`, error.message);
           throw new Error(`Tradier API unavailable: ${operationName} failed`);
+        }
+
+        if (!this.isTransientError(error)) {
+          throw error;
         }
 
         console.warn(`⚠️ ${operationName} attempt ${attempt + 1} failed, retrying in ${this.BACKOFF_MS[attempt]}ms...`);
