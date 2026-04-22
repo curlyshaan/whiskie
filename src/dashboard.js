@@ -3069,7 +3069,7 @@ function generateEarningsRemindersHTML(reminders) {
 <body>
   <div class="container">
     <h1>⏰ Earnings Predictor</h1>
-    <p class="subtitle">Search upcoming earnings, review catalysts, save one active predictor per symbol, and launch earnings-mode options analysis.</p>
+    <p class="subtitle">Search upcoming earnings, review catalysts, save one active predictor per symbol, and launch earnings-mode options analysis. The grid below is limited to today and tomorrow earnings calls.</p>
     <a href="/" class="back-btn">← Back to Dashboard</a>
 
     <div class="layout">

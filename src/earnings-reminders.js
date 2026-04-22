@@ -217,6 +217,29 @@ function summarizeTimingValue(value, maxLength) {
   return normalized.slice(0, maxLength).trim();
 }
 
+function parseYahooEarningsCallTime(html = '') {
+  const text = String(html || '');
+  const patterns = [
+    /[A-Z]{1,6}\s+Q[1-4]\s+\d{4}\s+earnings call[\s\S]{0,250}?\b([A-Z][a-z]{2,8}\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}(?::\d{2})?\s*[AP]M\s*(?:EDT|EST|ET)?)\b/i,
+    /\b([A-Z][a-z]{2,8}\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}(?::\d{2})?\s*[AP]M\s*(?:EDT|EST|ET)?)\b/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const raw = match?.[1];
+    if (!raw) continue;
+    return {
+      earningsTimeRaw: summarizeTimingValue(raw, TIMING_RAW_LIMIT),
+      earningsSession: normalizeSession(raw) || 'unknown'
+    };
+  }
+
+  return {
+    earningsTimeRaw: null,
+    earningsSession: 'unknown'
+  };
+}
+
 function normalizeTimingPayload(rawTiming, fallbackDate) {
   const earningsDate = toIsoDate(rawTiming?.earningsDate) || toIsoDate(fallbackDate) || fallbackDate || null;
   const rawTimeInput = String(rawTiming?.earningsTimeRaw || '').trim();
@@ -333,6 +356,31 @@ function classifyReaction(movePct, threshold = 1) {
 
 export async function enrichEarningsWhispersTiming(symbol) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+  try {
+    const response = await axios.get(`https://finance.yahoo.com/quote/${normalizedSymbol}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+      },
+      timeout: 10000
+    });
+
+    const html = String(response.data || '');
+    const parsedCallTime = parseYahooEarningsCallTime(html);
+    const quotedMatch = html.match(/"earningsDate"\s*:\s*\[[^\]]*"fmt"\s*:\s*"([^"]+)"/i);
+    const rawText = quotedMatch?.[1] || '';
+    const normalizedSession = normalizeSession(rawText);
+    const summarizedRaw = summarizeTimingValue(rawText, TIMING_RAW_LIMIT);
+
+    return {
+      symbol: normalizedSymbol,
+      earningsTimeRaw: parsedCallTime.earningsTimeRaw || summarizedRaw,
+      earningsSession: parsedCallTime.earningsSession !== 'unknown' ? parsedCallTime.earningsSession : (normalizedSession || 'unknown'),
+      source: 'yahoo'
+    };
+  } catch (error) {
+    console.warn(`⚠️ Yahoo timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
+  }
+
   return {
     symbol: normalizedSymbol,
     earningsTimeRaw: null,
@@ -429,12 +477,25 @@ export async function syncAutoEarningsReminders(options = {}) {
   for (const item of upcoming) {
     try {
       const existing = await db.getActiveEarningsReminder(item.symbol);
+      const earningsDate = item.earnings_date
+        ? new Date(item.earnings_date).toISOString().split('T')[0]
+        : null;
+      const shouldRefreshYahooTiming = !existing
+        || existing.earnings_session === 'unknown'
+        || (existing.earnings_date && earningsDate && new Date(existing.earnings_date).toISOString().split('T')[0] !== earningsDate);
+      const yahooTiming = shouldRefreshYahooTiming
+        ? await enrichEarningsWhispersTiming(item.symbol)
+        : null;
       const saved = await saveEarningsReminder({
         symbol: item.symbol,
         notes: existing?.notes || '',
-        earningsSession: existing?.earnings_session || undefined,
-        earningsTimeRaw: existing?.earnings_time_raw || undefined,
-        earningsSessionSource: existing?.earnings_session_source || undefined,
+        earningsSession: yahooTiming?.earningsSession && yahooTiming.earningsSession !== 'unknown'
+          ? yahooTiming.earningsSession
+          : existing?.earnings_session || undefined,
+        earningsTimeRaw: yahooTiming?.earningsTimeRaw || existing?.earnings_time_raw || undefined,
+        earningsSessionSource: yahooTiming?.earningsSession && yahooTiming.earningsSession !== 'unknown'
+          ? yahooTiming.source
+          : existing?.earnings_session_source || undefined,
         catalystSummary: existing?.catalyst_summary || undefined,
         emailEnabled: existing?.email_enabled !== false
       });

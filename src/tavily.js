@@ -1,5 +1,6 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
+import * as db from './db.js';
 
 dotenv.config();
 
@@ -61,6 +62,17 @@ class TavilyAPI {
     if (useCache) {
       const cached = this.getCachedResult(cacheKey);
       if (cached) {
+        await db.logTavilyUsageEvent({
+          activity: options.activity || 'unspecified',
+          symbol: options.symbol || null,
+          query: normalizedQuery,
+          topic: options.topic || 'general',
+          searchDepth: options.depth || 'basic',
+          maxResults: options.maxResults || 5,
+          resultCount: Array.isArray(cached) ? cached.length : 0,
+          cacheHit: true,
+          context: options.context || {}
+        });
         return cached;
       }
     }
@@ -85,6 +97,18 @@ class TavilyAPI {
       if (useCache && cacheTtlMs > 0) {
         this.setCachedResult(cacheKey, results, cacheTtlMs);
       }
+
+      await db.logTavilyUsageEvent({
+        activity: options.activity || 'unspecified',
+        symbol: options.symbol || null,
+        query: normalizedQuery,
+        topic: options.topic || 'general',
+        searchDepth: options.depth || 'basic',
+        maxResults: options.maxResults || 5,
+        resultCount: Array.isArray(results) ? results.length : 0,
+        cacheHit: false,
+        context: options.context || {}
+      });
 
       return results;
     } catch (error) {
@@ -236,10 +260,13 @@ class TavilyAPI {
       { query: `${identity} litigation investigation recall management change`, options: { maxResults: 2, includeDomains: [] } },
       { query: `${symbol} latest stock news earnings guidance analyst`, options: { maxResults: 2, includeDomains: [] } }
     ], {
+      activity: 'stock_context',
+      symbol,
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
       timeRange: options.timeRange || 'month',
       maxResults,
+      context: options.context || {},
       includeDomains: options.includeDomains || []
     });
   }
@@ -254,10 +281,13 @@ class TavilyAPI {
     ].join(' OR ');
 
     return await this.search(query, {
+      activity: 'monitoring_context',
+      symbol,
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
       timeRange: options.timeRange || 'month',
       maxResults,
+      context: options.context || {},
       includeDomains: options.includeDomains || []
     });
   }
@@ -286,10 +316,13 @@ class TavilyAPI {
       { query: `${identity} analyst expectations price target sentiment`, options: { maxResults: 4, includeDomains } },
       { query: `${symbol} earnings preview`, options: { maxResults: 4, includeDomains: [] } }
     ], {
+      activity: 'earnings_context',
+      symbol,
       depth: options.depth || 'advanced',
       topic: options.topic || 'news',
       timeRange: options.timeRange || 'week',
       maxResults,
+      context: options.context || {},
       includeDomains
     });
   }
@@ -304,10 +337,13 @@ class TavilyAPI {
     ].join(' OR ');
 
     return await this.search(query, {
+      activity: 'premarket_context',
+      symbol,
       depth: options.depth || 'basic',
       topic: options.topic || 'news',
       timeRange: options.timeRange || 'day',
       maxResults,
+      context: options.context || {},
       includeDomains: options.includeDomains || []
     });
   }

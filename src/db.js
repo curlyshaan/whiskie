@@ -1419,6 +1419,34 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS tavily_usage_events (
+        id SERIAL PRIMARY KEY,
+        activity VARCHAR(100) NOT NULL,
+        symbol VARCHAR(10),
+        query TEXT NOT NULL,
+        topic VARCHAR(30),
+        search_depth VARCHAR(20),
+        max_results INTEGER,
+        result_count INTEGER DEFAULT 0,
+        cache_hit BOOLEAN DEFAULT FALSE,
+        context JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_tavily_usage_events_activity ON tavily_usage_events(activity);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_tavily_usage_events_symbol ON tavily_usage_events(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_tavily_usage_events_created_at ON tavily_usage_events(created_at);
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS options_analysis_runs (
         id SERIAL PRIMARY KEY,
         symbol VARCHAR(10) NOT NULL,
@@ -1701,10 +1729,10 @@ export async function getPortfolioSummary() {
       'SELECT cash FROM portfolio_snapshots ORDER BY snapshot_date DESC LIMIT 1'
     );
     const cash = snapshotResult.rows.length > 0
-      ? snapshotResult.rows[0].cash
+      ? parseFloat(snapshotResult.rows[0].cash)
       : parseFloat(process.env.INITIAL_CAPITAL || 100000);
 
-    const totalValue = cash + positionsValue;
+    const totalValue = Number(cash) + Number(positionsValue);
 
     return {
       totalValue,
@@ -2321,6 +2349,9 @@ export async function getUpcomingEarningsDashboardRows(days = 1) {
         er.id AS reminder_id,
         er.status,
         er.notes,
+        er.earnings_session,
+        er.earnings_time_raw,
+        er.earnings_session_source,
         er.scheduled_send_at,
         er.predictor_run_at,
         er.predictor_snapshot_price,
@@ -2353,6 +2384,7 @@ export async function getUpcomingEarningsDashboardRows(days = 1) {
        ) sw ON TRUE
        WHERE ec.earnings_date >= CURRENT_DATE
          AND ec.earnings_date <= CURRENT_DATE + ($1::text || ' days')::interval
+         AND ec.session_normalized IN ('pre_market', 'post_market')
        ORDER BY ec.symbol,
                 ec.earnings_date ASC,
                 ec.source_priority DESC,
@@ -2994,6 +3026,41 @@ export async function logCronJobComplete(jobId, success, errorMessage = null) {
   } catch (error) {
     console.error('Error logging cron job completion:', error);
     throw error;
+  }
+}
+
+export async function logTavilyUsageEvent(payload = {}) {
+  const {
+    activity = 'unknown',
+    symbol = null,
+    query = '',
+    topic = null,
+    searchDepth = null,
+    maxResults = null,
+    resultCount = 0,
+    cacheHit = false,
+    context = {}
+  } = payload;
+
+  try {
+    await pool.query(
+      `INSERT INTO tavily_usage_events (
+        activity, symbol, query, topic, search_depth, max_results, result_count, cache_hit, context
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+      [
+        String(activity || 'unknown'),
+        symbol ? String(symbol).toUpperCase() : null,
+        String(query || ''),
+        topic || null,
+        searchDepth || null,
+        Number.isFinite(Number(maxResults)) ? Number(maxResults) : null,
+        Number.isFinite(Number(resultCount)) ? Number(resultCount) : 0,
+        Boolean(cacheHit),
+        JSON.stringify(context || {})
+      ]
+    );
+  } catch (error) {
+    console.error('Error logging Tavily usage event:', error);
   }
 }
 

@@ -516,6 +516,11 @@ class FMPClient {
     return data || [];
   }
 
+  async getEarningsBySymbol(symbol) {
+    const data = await this.request(`/earnings`, { symbol });
+    return data || [];
+  }
+
   /**
    * Get end-of-day historical price data for a symbol.
    * Returns ascending date order to match existing profile builder expectations.

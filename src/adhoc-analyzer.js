@@ -896,6 +896,11 @@ router.get('/profile-build-status/:symbol', async (req, res) => {
 
 router.get('/debug-build-profile', async (req, res) => {
   try {
+    const enabled = String(process.env.ENABLE_DEBUG_PROFILE_BUILD || '').toLowerCase() === 'true';
+    if (!enabled) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
     const symbol = String(req.query?.ticker || '').trim().toUpperCase();
     if (!symbol) {
       return res.status(400).json({ error: 'Ticker is required' });
