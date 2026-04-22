@@ -107,6 +107,40 @@ export async function initDatabase() {
       );
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_accounts (
+        id SERIAL PRIMARY KEY,
+        account_name VARCHAR(100) UNIQUE NOT NULL,
+        account_type VARCHAR(50),
+        cash_balance DECIMAL(14, 2) DEFAULT 0,
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_transactions (
+        id SERIAL PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES portfolio_hub_accounts(id) ON DELETE CASCADE,
+        symbol VARCHAR(10),
+        transaction_type VARCHAR(30) NOT NULL,
+        shares DECIMAL(14, 4),
+        price DECIMAL(14, 4),
+        cash_amount DECIMAL(14, 2),
+        stop_loss DECIMAL(14, 4),
+        take_profit DECIMAL(14, 4),
+        notes TEXT,
+        trade_date DATE NOT NULL DEFAULT CURRENT_DATE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_portfolio_hub_transactions_account_id
+      ON portfolio_hub_transactions(account_id);
+    `);
+
     // AI decisions - log all AI analysis and reasoning
     await client.query(`
       CREATE TABLE IF NOT EXISTS ai_decisions (
@@ -1746,6 +1780,123 @@ export async function getPortfolioSummary() {
   }
 }
 
+export async function getPortfolioHubAccounts() {
+  const result = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_accounts
+     WHERE is_active = TRUE
+     ORDER BY account_name`
+  );
+  return result.rows || [];
+}
+
+export async function upsertPortfolioHubAccount(account) {
+  const result = await pool.query(
+    `INSERT INTO portfolio_hub_accounts (
+       account_name, account_type, cash_balance, is_active, updated_at
+     ) VALUES ($1, $2, $3, COALESCE($4, TRUE), CURRENT_TIMESTAMP)
+     ON CONFLICT (account_name)
+     DO UPDATE SET
+       account_type = EXCLUDED.account_type,
+       cash_balance = EXCLUDED.cash_balance,
+       is_active = EXCLUDED.is_active,
+       updated_at = CURRENT_TIMESTAMP
+     RETURNING *`,
+    [
+      account.account_name,
+      account.account_type || null,
+      Number(account.cash_balance || 0),
+      account.is_active ?? true
+    ]
+  );
+  return result.rows[0];
+}
+
+export async function listPortfolioHubTransactions() {
+  const result = await pool.query(
+    `SELECT t.*, a.account_name, a.account_type
+     FROM portfolio_hub_transactions t
+     JOIN portfolio_hub_accounts a ON a.id = t.account_id
+     WHERE a.is_active = TRUE
+     ORDER BY t.trade_date DESC, t.id DESC`
+  );
+  return result.rows || [];
+}
+
+export async function createPortfolioHubTransaction(transaction) {
+  const normalizedType = String(transaction.transaction_type || '').trim().toLowerCase();
+  const normalizedSymbol = transaction.symbol ? String(transaction.symbol).trim().toUpperCase() : null;
+  const normalizedShares = transaction.shares == null || transaction.shares === '' ? null : Number(transaction.shares);
+  const normalizedPrice = transaction.price == null || transaction.price === '' ? null : Number(transaction.price);
+  const normalizedCash = transaction.cash_amount == null || transaction.cash_amount === '' ? null : Number(transaction.cash_amount);
+
+  const validTypes = new Set(['buy', 'sell', 'short', 'cover', 'cash_adjustment']);
+  if (!validTypes.has(normalizedType)) {
+    throw new Error(`Unsupported portfolio hub transaction type: ${normalizedType}`);
+  }
+
+  if (normalizedType === 'cash_adjustment') {
+    if (!Number.isFinite(normalizedCash)) {
+      throw new Error('Cash adjustment transactions require cash_amount');
+    }
+  } else {
+    if (!normalizedSymbol) {
+      throw new Error('Symbol is required for non-cash Portfolio Hub transactions');
+    }
+    if (!Number.isFinite(normalizedShares) || normalizedShares <= 0) {
+      throw new Error('Shares must be greater than zero for Portfolio Hub transactions');
+    }
+    if (!Number.isFinite(normalizedPrice) || normalizedPrice <= 0) {
+      throw new Error('Price must be greater than zero for Portfolio Hub transactions');
+    }
+  }
+
+  const result = await pool.query(
+    `INSERT INTO portfolio_hub_transactions (
+       account_id, symbol, transaction_type, shares, price, cash_amount,
+       stop_loss, take_profit, notes, trade_date
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, CURRENT_DATE))
+     RETURNING *`,
+    [
+      transaction.account_id,
+      normalizedSymbol,
+      normalizedType,
+      normalizedShares,
+      normalizedPrice,
+      normalizedCash,
+      transaction.stop_loss == null || transaction.stop_loss === '' ? null : Number(transaction.stop_loss),
+      transaction.take_profit == null || transaction.take_profit === '' ? null : Number(transaction.take_profit),
+      transaction.notes || null,
+      transaction.trade_date || null
+    ]
+  );
+  return result.rows[0];
+}
+
+export async function getLatestStockProfilesForSymbols(symbols = []) {
+  if (!Array.isArray(symbols) || symbols.length === 0) return {};
+  const result = await pool.query(
+    `SELECT DISTINCT ON (symbol) *
+     FROM stock_profiles
+     WHERE symbol = ANY($1)
+     ORDER BY symbol, last_updated DESC NULLS LAST, updated_at DESC NULLS LAST`,
+    [symbols]
+  );
+  return Object.fromEntries((result.rows || []).map(row => [row.symbol, row]));
+}
+
+export async function seedPortfolioHubAccounts(accountNames = []) {
+  for (const accountName of accountNames) {
+    if (!String(accountName || '').trim()) continue;
+    await upsertPortfolioHubAccount({
+      account_name: String(accountName).trim(),
+      account_type: null,
+      cash_balance: 0,
+      is_active: true
+    });
+  }
+}
+
 /**
  * Delete position (when fully sold)
  */
@@ -2237,7 +2388,7 @@ export async function searchUpcomingEarningsSymbols(queryText = '', limit = 10) 
 export async function getUpcomingEarningsForAutoReminders(days = 14, minMarketCap = 10000000000) {
   try {
     const result = await pool.query(
-      `SELECT DISTINCT ON (ec.symbol)
+      `SELECT DISTINCT ON (ec.symbol, ec.earnings_date)
         ec.symbol,
         ec.earnings_date,
         ec.earnings_time,
@@ -2259,7 +2410,10 @@ export async function getUpcomingEarningsForAutoReminders(days = 14, minMarketCa
        ORDER BY ec.symbol, ec.earnings_date ASC, ec.source_priority DESC, ec.last_verified_at DESC`,
       [days, minMarketCap]
     );
-    return result.rows;
+    return result.rows.filter((row, index, rows) => {
+      if (index === 0) return true;
+      return row.symbol !== rows[index - 1].symbol;
+    });
   } catch (error) {
     console.error('Error fetching upcoming earnings for auto reminders:', error);
     throw error;
@@ -2370,6 +2524,7 @@ export async function getUpcomingEarningsDashboardRows(days = 1) {
          FROM earnings_reminders er
          WHERE er.symbol = ec.symbol
            AND er.earnings_date = ec.earnings_date
+           AND er.status IN ('active', 'predicted', 'graded')
          ORDER BY er.updated_at DESC
          LIMIT 1
        ) er ON TRUE
@@ -2384,9 +2539,19 @@ export async function getUpcomingEarningsDashboardRows(days = 1) {
        ) sw ON TRUE
        WHERE ec.earnings_date >= CURRENT_DATE
          AND ec.earnings_date <= CURRENT_DATE + ($1::text || ' days')::interval
-         AND ec.session_normalized IN ('pre_market', 'post_market')
        ORDER BY ec.symbol,
                 ec.earnings_date ASC,
+                CASE
+                  WHEN ec.session_normalized IN ('pre_market', 'post_market') THEN 0
+                  WHEN LOWER(COALESCE(ec.timing_raw, ec.earnings_time, '')) LIKE '%before market open%'
+                    OR LOWER(COALESCE(ec.timing_raw, ec.earnings_time, '')) LIKE '%before open%'
+                    OR LOWER(COALESCE(ec.timing_raw, ec.earnings_time, '')) LIKE '%bmo%'
+                    OR LOWER(COALESCE(ec.timing_raw, ec.earnings_time, '')) LIKE '%after market close%'
+                    OR LOWER(COALESCE(ec.timing_raw, ec.earnings_time, '')) LIKE '%after close%'
+                    OR LOWER(COALESCE(ec.timing_raw, ec.earnings_time, '')) LIKE '%amc%'
+                    THEN 1
+                  ELSE 2
+                END ASC,
                 ec.source_priority DESC,
                 ec.last_verified_at DESC`,
       [days]

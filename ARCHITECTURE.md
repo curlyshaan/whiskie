@@ -178,6 +178,35 @@ Portfolio sync now has two layers:
 
 The previous daily trade-count cap has been removed from the active execution path. Current hard gating here is primarily approval state, earnings blackouts, portfolio/risk validation, and the circuit breaker weekly loss guard.
 
+## Portfolio Hub
+
+Portfolio Hub is a separate manual household-portfolio system and is explicitly not tied to Whiskie live trading positions or Tradier sync.
+
+Current model:
+
+- `portfolio_hub_accounts` stores named accounts and baseline cash balances
+- `portfolio_hub_transactions` stores the transaction ledger across accounts
+- holdings are derived from transactions rather than stored as the source of truth
+
+Supported transaction types:
+
+- `buy`
+- `sell`
+- `short`
+- `cover`
+- `cash_adjustment`
+
+This allows partial sells, partial covers, adds, and manual cash movements without rewriting position rows.
+
+Portfolio Hub uses Whiskie context for advisory analysis only:
+
+- stock profiles
+- earnings calendar
+- recent Tavily context
+- price/sector data from FMP
+
+It may surface recommendations like hold, trim, add selectively, event risk elevated, hold short thesis, or wait to cover, but it does not place trades or modify Whiskie live positions.
+
 ## Strategy-aware persisted management
 
 The system persists management-state fields and expects consistency across prompts, UI, DB, and exit logic:

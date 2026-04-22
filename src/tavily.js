@@ -17,6 +17,19 @@ class TavilyAPI {
     this.cache = new Map();
   }
 
+  normalizeSymbolToken(symbol) {
+    const normalized = String(symbol || '').trim().toUpperCase().replace(/^\$+/, '');
+    if (!normalized) return '';
+    return `$${normalized}`;
+  }
+
+  buildTickerIdentity(symbol, companyName = '') {
+    const ticker = this.normalizeSymbolToken(symbol);
+    const normalizedCompanyName = String(companyName || '').trim();
+    if (!ticker) return normalizedCompanyName;
+    return normalizedCompanyName ? `"${normalizedCompanyName}" ${ticker}` : ticker;
+  }
+
   /**
    * Search for news and information
    */
@@ -212,7 +225,8 @@ class TavilyAPI {
    * Search for stock-specific news
    */
   async searchStockNews(symbol, maxResults = 5, options = {}) {
-    const query = `${symbol} stock news latest`;
+    const ticker = this.normalizeSymbolToken(symbol);
+    const query = `${ticker} stock news latest`;
     return await this.search(query, {
       maxResults,
       depth: options.depth || 'basic',
@@ -251,14 +265,15 @@ class TavilyAPI {
   async searchStructuredStockContext(symbol, options = {}) {
     const maxResults = options.maxResults || 5;
     const companyName = String(options.companyName || '').trim();
-    const identity = companyName ? `"${companyName}" ${symbol}` : symbol;
+    const identity = this.buildTickerIdentity(symbol, companyName);
+    const ticker = this.normalizeSymbolToken(symbol);
 
     return await this.searchMany([
       { query: `${identity} earnings guidance outlook`, options: { maxResults: 2 } },
       { query: `${identity} analyst upgrade downgrade price target`, options: { maxResults: 2, includeDomains: [] } },
       { query: `${identity} partnership deal product launch customer announcement`, options: { maxResults: 2, includeDomains: [] } },
       { query: `${identity} litigation investigation recall management change`, options: { maxResults: 2, includeDomains: [] } },
-      { query: `${symbol} latest stock news earnings guidance analyst`, options: { maxResults: 2, includeDomains: [] } }
+      { query: `${ticker} latest stock news earnings guidance analyst`, options: { maxResults: 2, includeDomains: [] } }
     ], {
       activity: 'stock_context',
       symbol,
@@ -273,11 +288,12 @@ class TavilyAPI {
 
   async searchStructuredMonitoringContext(symbol, options = {}) {
     const maxResults = options.maxResults || 4;
+    const ticker = this.normalizeSymbolToken(symbol);
     const query = [
-      `${symbol} earnings guidance OR outlook`,
-      `${symbol} analyst upgrade OR analyst downgrade OR price target`,
-      `${symbol} product launch OR customer announcement OR partnership`,
-      `${symbol} litigation OR investigation OR recall OR management change`
+      `${ticker} earnings guidance OR outlook`,
+      `${ticker} analyst upgrade OR analyst downgrade OR price target`,
+      `${ticker} product launch OR customer announcement OR partnership`,
+      `${ticker} litigation OR investigation OR recall OR management change`
     ].join(' OR ');
 
     return await this.search(query, {
@@ -307,14 +323,15 @@ class TavilyAPI {
       'fool.com',
       'seekingalpha.com'
     ];
-    const identity = companyName ? `"${companyName}" ${symbol}` : symbol;
+    const identity = this.buildTickerIdentity(symbol, companyName);
+    const ticker = this.normalizeSymbolToken(symbol);
 
     return await this.searchMany([
       { query: `${identity} earnings preview`, options: { maxResults: 5, includeDomains } },
       { query: `${identity} guidance outlook consensus estimates analyst expectations`, options: { maxResults: 5, includeDomains } },
       { query: `${identity} margin outlook revenue outlook EPS outlook`, options: { maxResults: 4, includeDomains } },
       { query: `${identity} analyst expectations price target sentiment`, options: { maxResults: 4, includeDomains } },
-      { query: `${symbol} earnings preview`, options: { maxResults: 4, includeDomains: [] } }
+      { query: `${ticker} earnings preview`, options: { maxResults: 4, includeDomains: [] } }
     ], {
       activity: 'earnings_context',
       symbol,
@@ -329,11 +346,12 @@ class TavilyAPI {
 
   async searchStructuredPremarketContext(symbol, options = {}) {
     const maxResults = options.maxResults || 2;
+    const ticker = this.normalizeSymbolToken(symbol);
     const query = [
-      `${symbol} premarket move`,
-      `${symbol} earnings OR guidance OR analyst`,
-      `${symbol} upgrade OR downgrade OR price target`,
-      `${symbol} merger OR acquisition OR investigation`
+      `${ticker} premarket move`,
+      `${ticker} earnings OR guidance OR analyst`,
+      `${ticker} upgrade OR downgrade OR price target`,
+      `${ticker} merger OR acquisition OR investigation`
     ].join(' OR ');
 
     return await this.search(query, {

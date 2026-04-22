@@ -3,6 +3,18 @@ import * as db from './db.js';
 import { stripThinkingBlocks } from './utils.js';
 import earningsReminders from './earnings-reminders.js';
 import analysisEngine from './analysis.js';
+import fmp from './fmp.js';
+import tavily from './tavily.js';
+
+const DEFAULT_PORTFOLIO_HUB_ACCOUNTS = [
+  'Sai-Webull-Cash',
+  'Sai-Webull-Margin',
+  'Sai-Webull-IRA',
+  'Sai-Fidelity-IRA',
+  'Sai-Tradier-Cash',
+  'Sara-Webull-Cash',
+  'Sara-Webull-IRA'
+];
 
 const router = express.Router();
 
@@ -117,6 +129,230 @@ function renderPositionManagementPills(position) {
   if (!items.length) return '-';
 
   return `<div class="detail-chips">${items.map(item => `<span class="detail-chip">${escapeHtml(item)}</span>`).join('')}</div>`;
+}
+
+function formatPercent(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '-';
+  return `${numeric >= 0 ? '+' : ''}${numeric.toFixed(2)}%`;
+}
+
+function formatMoney(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '$0.00';
+  return `$${numeric.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function renderPortfolioHubSection(portfolioHub = {}) {
+  const summary = portfolioHub.summary || {};
+  const holdings = portfolioHub.holdings || [];
+  const accounts = portfolioHub.accounts || [];
+  const transactions = portfolioHub.transactions || [];
+  const sectorRows = portfolioHub.sectorAllocation || [];
+  const accountRows = portfolioHub.accountAllocation || [];
+  const insights = portfolioHub.insights || [];
+  const accountOptions = DEFAULT_PORTFOLIO_HUB_ACCOUNTS;
+
+  return `
+    <div class="section">
+      <div class="section-title">🧭 Portfolio Hub</div>
+      <p class="subtitle" style="margin-top:0;">Separate from Whiskie live trading. Manual multi-account holdings with portfolio-wide analytics.</p>
+
+      <div class="stats" style="margin-top:16px;">
+        <div class="stat-card"><div class="stat-label">Total Value</div><div class="stat-value">${formatMoney(summary.totalValue || 0)}</div></div>
+        <div class="stat-card"><div class="stat-label">Invested</div><div class="stat-value">${formatMoney(summary.investedValue || 0)}</div></div>
+        <div class="stat-card"><div class="stat-label">Cash</div><div class="stat-value">${formatMoney(summary.cash || 0)}</div></div>
+        <div class="stat-card"><div class="stat-label">Cash %</div><div class="stat-value">${formatPercent(summary.cashPct || 0)}</div></div>
+        <div class="stat-card"><div class="stat-label">Unrealized P/L</div><div class="stat-value ${Number(summary.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(summary.unrealizedPnL || 0)}<br>${formatPercent(summary.unrealizedPnLPct || 0)}</div></div>
+        <div class="stat-card"><div class="stat-label">Accounts / Holdings</div><div class="stat-value">${accounts.length} / ${holdings.length}</div></div>
+      </div>
+
+      <details style="margin-top:18px;">
+        <summary>✏️ Edit Portfolio Hub</summary>
+        <div style="margin-top:14px;">
+          <div class="detail-section-title">Account Cash</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+            <select id="phAccountName">${accountOptions.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}</select>
+            <input id="phAccountType" placeholder="Taxable / Roth / IRA / Brokerage" />
+            <input id="phCashBalance" type="number" step="0.01" placeholder="Cash balance" />
+            <button class="analyze-btn" onclick="savePortfolioHubAccount()">Save Account</button>
+          </div>
+
+          <div class="detail-section-title">Transaction</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <select id="phHoldingAccountId">
+              <option value="">Select account</option>
+              ${accounts.map(account => `<option value="${account.id}">${escapeHtml(account.account_name)}</option>`).join('')}
+            </select>
+            <select id="phTransactionType">
+              <option value="buy">Buy</option>
+              <option value="sell">Sell</option>
+              <option value="short">Short</option>
+              <option value="cover">Cover</option>
+              <option value="cash_adjustment">Cash Adjustment</option>
+            </select>
+            <input id="phSymbol" placeholder="Symbol" maxlength="10" />
+            <input id="phShares" type="number" step="0.0001" placeholder="Shares" />
+            <input id="phCostBasis" type="number" step="0.0001" placeholder="Price" />
+            <input id="phCashAmount" type="number" step="0.01" placeholder="Cash adjustment amount" />
+            <input id="phStopLoss" type="number" step="0.01" placeholder="Optional stop loss" />
+            <input id="phTakeProfit" type="number" step="0.01" placeholder="Optional take profit" />
+            <input id="phNotes" placeholder="Optional notes" />
+            <button class="analyze-btn" onclick="savePortfolioHubTransaction()">Save Transaction</button>
+          </div>
+        </div>
+      </details>
+
+      <div style="margin-top:18px;">
+        <div class="detail-section-title">Combined Holdings</div>
+        ${holdings.length === 0 ? '<div class="no-data">No Portfolio Hub holdings yet.</div>' : `
+          <table>
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Type</th>
+                <th>Accounts</th>
+                <th>Shares</th>
+                <th>Avg Cost</th>
+                <th>Current</th>
+                <th>Value</th>
+                <th>Weight</th>
+                <th>P/L</th>
+                <th>Sector</th>
+                <th>Earnings</th>
+                <th>Stop</th>
+                <th>Target</th>
+                <th>Whiskie View</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${holdings.map(row => `
+                <tr>
+                  <td><strong>${escapeHtml(row.symbol)}</strong></td>
+                  <td>${escapeHtml(row.positionType)}</td>
+                  <td>${escapeHtml((row.accounts || []).join(', '))}</td>
+                  <td>${Math.abs(Number(row.shares || 0)).toFixed(4)}</td>
+                  <td>${formatMoney(row.avgCost)}</td>
+                  <td>${formatMoney(row.currentPrice)}</td>
+                  <td>${formatMoney(row.marketValue)}</td>
+                  <td>${formatPercent(row.weightPct)}</td>
+                  <td class="${Number(row.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(row.unrealizedPnL)}<br>${formatPercent(row.unrealizedPnLPct)}</td>
+                  <td>${escapeHtml(row.sector || '-')}</td>
+                  <td>${escapeHtml(row.nextEarningsDate || '-')}</td>
+                  <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
+                  <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
+                  <td>${escapeHtml(row.whiskieView || '-')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="detail-section-title">Position Mix</div>
+        <table>
+          <thead><tr><th>Bucket</th><th>Value</th><th>Weight</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Long Exposure</td>
+              <td>${formatMoney(summary.longExposure || 0)}</td>
+              <td>${formatPercent(summary.longExposurePct || 0)}</td>
+            </tr>
+            <tr>
+              <td>Short Exposure</td>
+              <td>${formatMoney(summary.shortExposure || 0)}</td>
+              <td>${formatPercent(summary.shortExposurePct || 0)}</td>
+            </tr>
+            <tr>
+              <td>Net Exposure</td>
+              <td>${formatMoney(summary.netExposure || 0)}</td>
+              <td>${formatPercent(summary.netExposurePct || 0)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="detail-section-title">Account Allocation</div>
+        ${accountRows.length === 0 ? '<div class="no-data">No account allocation yet.</div>' : `
+          <table>
+            <thead><tr><th>Account</th><th>Type</th><th>Cash</th><th>Market Value</th><th>Total</th><th>Weight</th></tr></thead>
+            <tbody>
+              ${accountRows.map(row => `
+                <tr>
+                  <td>${escapeHtml(row.account_name)}</td>
+                  <td>${escapeHtml(row.account_type || '-')}</td>
+                  <td>${formatMoney(row.cash)}</td>
+                  <td>${formatMoney(row.marketValue)}</td>
+                  <td>${formatMoney(row.totalValue)}</td>
+                  <td>${formatPercent(row.weightPct)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="detail-section-title">Recent Transactions</div>
+        ${transactions.length === 0 ? '<div class="no-data">No Portfolio Hub transactions yet.</div>' : `
+          <table>
+            <thead><tr><th>Date</th><th>Account</th><th>Type</th><th>Symbol</th><th>Shares</th><th>Price</th><th>Cash</th><th>Notes</th></tr></thead>
+            <tbody>
+              ${transactions.slice(0, 25).map(tx => `
+                <tr>
+                  <td>${escapeHtml(tx.trade_date)}</td>
+                  <td>${escapeHtml(tx.account_name)}</td>
+                  <td>${escapeHtml(tx.transaction_type)}</td>
+                  <td>${escapeHtml(tx.symbol || '-')}</td>
+                  <td>${tx.shares == null ? '-' : Math.abs(Number(tx.shares)).toFixed(4)}</td>
+                  <td>${tx.price == null ? '-' : formatMoney(tx.price)}</td>
+                  <td>${tx.cash_amount == null ? '-' : formatMoney(tx.cash_amount)}</td>
+                  <td>${escapeHtml(tx.notes || '-')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="detail-section-title">Sector Allocation</div>
+        ${sectorRows.length === 0 ? '<div class="no-data">No sector allocation yet.</div>' : `
+          <table>
+            <thead><tr><th>Sector</th><th>Value</th><th>Weight</th></tr></thead>
+            <tbody>
+              ${sectorRows.map(row => `
+                <tr>
+                  <td>${escapeHtml(row.sector || 'Unknown')}</td>
+                  <td>${formatMoney(row.value)}</td>
+                  <td>${formatPercent(row.weightPct)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="detail-section-title">Portfolio Insights</div>
+        ${insights.length === 0 ? '<div class="no-data">No portfolio insights yet.</div>' : `<ul>${insights.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`}
+        <div class="position-summary-note" style="margin-top:12px;">Portfolio Hub guidance is advisory only. It uses Whiskie research context, earnings timing, and recent news, but does not place trades or alter live Whiskie positions.</div>
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="detail-section-title">How to use Portfolio Hub</div>
+        <ul>
+          <li>Record every account-level change as a transaction instead of editing a position snapshot.</li>
+          <li>Use <strong>buy</strong> and <strong>sell</strong> for long positions.</li>
+          <li>Use <strong>short</strong> and <strong>cover</strong> for short positions.</li>
+          <li>Use <strong>cash adjustment</strong> for deposits, withdrawals, dividends, or transfers.</li>
+          <li>Partial sells and partial covers are handled automatically because holdings are derived from the transaction ledger.</li>
+        </ul>
+      </div>
+    </div>
+  `;
 }
 
 /**
@@ -455,6 +691,231 @@ function renderExecutableTradesFromApprovals(approvals, analysisText) {
 /**
  * Dashboard UI - View all analyses and recommendations
  */
+async function buildPortfolioHubView() {
+  await db.seedPortfolioHubAccounts(DEFAULT_PORTFOLIO_HUB_ACCOUNTS).catch(() => {});
+
+  const [accounts, transactions] = await Promise.all([
+    db.getPortfolioHubAccounts().catch(() => []),
+    db.listPortfolioHubTransactions().catch(() => [])
+  ]);
+
+  if (!transactions.length && !accounts.length) {
+    return {
+      accounts: [],
+      holdings: [],
+      transactions: [],
+      sectorAllocation: [],
+      accountAllocation: [],
+      summary: { totalValue: 0, investedValue: 0, cash: 0, cashPct: 0, unrealizedPnL: 0, unrealizedPnLPct: 0 },
+      insights: []
+    };
+  }
+
+  const grouped = new Map();
+  const groupedByAccountSymbol = new Map();
+  const cashByAccount = new Map(accounts.map(account => [account.id, Number(account.cash_balance || 0)]));
+  const latestProtection = new Map();
+
+  for (const tx of [...transactions].reverse()) {
+    const type = String(tx.transaction_type || '').toLowerCase();
+    if (type === 'cash_adjustment') {
+      continue;
+    }
+
+    const symbol = String(tx.symbol || '').toUpperCase();
+    if (!symbol) continue;
+    const accountSymbolKey = `${tx.account_id}:${symbol}`;
+    if (!grouped.has(symbol)) {
+      grouped.set(symbol, {
+        symbol,
+        shares: 0,
+        totalCost: 0,
+        accounts: [],
+        stopLoss: null,
+        takeProfit: null,
+        notes: [],
+        positionType: 'long'
+      });
+    }
+    if (!groupedByAccountSymbol.has(accountSymbolKey)) {
+      groupedByAccountSymbol.set(accountSymbolKey, {
+        accountId: tx.account_id,
+        accountName: tx.account_name,
+        symbol,
+        shares: 0,
+        totalCost: 0
+      });
+    }
+    const row = grouped.get(symbol);
+    const accountRow = groupedByAccountSymbol.get(accountSymbolKey);
+    const shares = Number(tx.shares || 0);
+    const price = Number(tx.price || 0);
+    const signedShares = ['buy', 'cover'].includes(type) ? shares : ['sell', 'short'].includes(type) ? -shares : shares;
+
+    row.shares += signedShares;
+    row.totalCost += Math.abs(signedShares) * price;
+    row.accounts.push(tx.account_name);
+    accountRow.shares += signedShares;
+    accountRow.totalCost += Math.abs(signedShares) * price;
+    if (!latestProtection.has(symbol) || new Date(tx.trade_date) >= new Date(latestProtection.get(symbol).trade_date)) {
+      latestProtection.set(symbol, tx);
+    }
+    row.positionType = row.shares < 0 ? 'short' : 'long';
+    if (tx.notes) row.notes.push(tx.notes);
+  }
+
+  for (const [symbol, row] of grouped.entries()) {
+    const protection = latestProtection.get(symbol);
+    row.stopLoss = protection?.stop_loss ?? null;
+    row.takeProfit = protection?.take_profit ?? null;
+    if (Math.abs(row.shares) < 0.0001) {
+      grouped.delete(symbol);
+    }
+  }
+
+  const symbols = [...grouped.keys()];
+  const [profiles, earningsRows, recentContext] = await Promise.all([
+    db.getLatestStockProfilesForSymbols ? db.getLatestStockProfilesForSymbols(symbols).catch(() => ({})) : Promise.resolve({}),
+    db.query(
+      `SELECT DISTINCT ON (symbol) symbol, earnings_date
+       FROM earnings_calendar
+       WHERE symbol = ANY($1) AND earnings_date >= CURRENT_DATE
+       ORDER BY symbol, earnings_date ASC`,
+      [symbols]
+    ).then(result => result.rows).catch(() => []),
+    Promise.all(symbols.map(symbol =>
+      tavily.searchStructuredStockContext(symbol, { maxResults: 3, depth: 'basic', topic: 'news', timeRange: 'week' })
+        .then(results => ({ symbol, results }))
+        .catch(() => ({ symbol, results: [] }))
+    ))
+  ]);
+
+  const earningsMap = new Map(earningsRows.map(row => [row.symbol, row.earnings_date]));
+  const contextMap = new Map(recentContext.map(row => [row.symbol, row.results || []]));
+
+  let investedValue = 0;
+  let totalCost = 0;
+  let longExposure = 0;
+  let shortExposure = 0;
+  const sectorTotals = new Map();
+  const holdings = [];
+
+  for (const symbol of symbols) {
+    const row = grouped.get(symbol);
+    const quote = await fmp.getQuote(symbol).catch(() => null);
+    const currentPrice = Number(quote?.price || quote?.previousClose || quote?.close || 0);
+    const absShares = Math.abs(row.shares);
+    const avgCost = absShares > 0 ? row.totalCost / absShares : 0;
+    const marketValue = currentPrice * absShares;
+    const unrealizedPnL = row.positionType === 'short'
+      ? (avgCost - currentPrice) * absShares
+      : (currentPrice - avgCost) * absShares;
+    const unrealizedPnLPct = row.totalCost > 0 ? (unrealizedPnL / row.totalCost) * 100 : 0;
+    investedValue += marketValue;
+    totalCost += row.totalCost;
+    if (row.positionType === 'short') shortExposure += marketValue;
+    else longExposure += marketValue;
+
+    const profile = profiles?.[symbol] || null;
+    const sector = quote?.sector || profile?.industry_sector || quote?.industry || 'Unknown';
+    sectorTotals.set(sector, (sectorTotals.get(sector) || 0) + marketValue);
+
+    const recentNews = contextMap.get(symbol) || [];
+    const whiskieView = row.positionType === 'short'
+      ? (unrealizedPnLPct < -20 ? 'Wait to cover / risk review'
+        : unrealizedPnLPct > 15 ? 'Hold short thesis'
+        : recentNews.length && /earnings|guidance|upgrade|buyback/i.test(JSON.stringify(recentNews[0])) ? 'Cover risk elevated'
+        : 'Monitor short thesis')
+      : unrealizedPnLPct < -10 ? 'Hold / thesis review'
+      : unrealizedPnLPct > 20 ? 'Trim into strength'
+      : recentNews.length && /earnings|guidance|downgrade|cut/i.test(JSON.stringify(recentNews[0])) ? 'Event risk elevated'
+      : 'Hold / add selectively';
+
+    holdings.push({
+      symbol,
+      accounts: row.accounts,
+      shares: row.shares,
+      positionType: row.positionType,
+      avgCost,
+      currentPrice,
+      marketValue,
+      unrealizedPnL,
+      unrealizedPnLPct,
+      sector,
+      nextEarningsDate: earningsMap.get(symbol) || null,
+      stopLoss: row.stopLoss,
+      takeProfit: row.takeProfit,
+      whiskieView
+    });
+  }
+
+  const cash = [...cashByAccount.values()].reduce((sum, value) => sum + value, 0);
+  const totalValue = investedValue + cash;
+
+  holdings.sort((a, b) => b.marketValue - a.marketValue);
+  holdings.forEach(row => {
+    row.weightPct = totalValue > 0 ? (row.marketValue / totalValue) * 100 : 0;
+  });
+
+  const sectorAllocation = [...sectorTotals.entries()]
+    .map(([sector, value]) => ({ sector, value, weightPct: totalValue > 0 ? (value / totalValue) * 100 : 0 }))
+    .sort((a, b) => b.value - a.value);
+
+  const accountAllocation = accounts.map(account => {
+    const marketValue = [...groupedByAccountSymbol.values()]
+      .filter(row => row.accountId === account.id && Math.abs(row.shares) > 0.0001)
+      .reduce((sum, row) => {
+        const holding = holdings.find(item => item.symbol === row.symbol);
+        const currentPrice = Number(holding?.currentPrice || 0);
+        return sum + (Math.abs(row.shares) * currentPrice);
+      }, 0);
+    const accountCash = Number(cashByAccount.get(account.id) || 0);
+    const accountTotal = marketValue + accountCash;
+    return {
+      account_name: account.account_name,
+      account_type: account.account_type,
+      cash: accountCash,
+      marketValue,
+      totalValue: accountTotal,
+      weightPct: totalValue > 0 ? (accountTotal / totalValue) * 100 : 0
+    };
+  }).sort((a, b) => b.totalValue - a.totalValue);
+
+  const summary = {
+    totalValue,
+    investedValue,
+    cash,
+    cashPct: totalValue > 0 ? (cash / totalValue) * 100 : 0,
+    longExposure,
+    shortExposure,
+    longExposurePct: totalValue > 0 ? (longExposure / totalValue) * 100 : 0,
+    shortExposurePct: totalValue > 0 ? (shortExposure / totalValue) * 100 : 0,
+    netExposure: longExposure - shortExposure,
+    netExposurePct: totalValue > 0 ? ((longExposure - shortExposure) / totalValue) * 100 : 0,
+    unrealizedPnL: investedValue - totalCost,
+    unrealizedPnLPct: totalCost > 0 ? ((investedValue - totalCost) / totalCost) * 100 : 0
+  };
+
+  const insights = [];
+  if (holdings[0]) insights.push(`Largest holding is ${holdings[0].symbol} at ${holdings[0].weightPct.toFixed(1)}% of combined portfolio value.`);
+  if (summary.cashPct > 20) insights.push(`Cash is ${summary.cashPct.toFixed(1)}% of the combined portfolio, which provides meaningful dry powder.`);
+  const upcomingEarnings = holdings.filter(row => row.nextEarningsDate).slice(0, 5);
+  if (upcomingEarnings.length) insights.push(`Upcoming earnings to monitor: ${upcomingEarnings.map(row => `${row.symbol} (${row.nextEarningsDate})`).join(', ')}.`);
+  if (sectorAllocation[0]) insights.push(`Top sector exposure is ${sectorAllocation[0].sector} at ${sectorAllocation[0].weightPct.toFixed(1)}% of portfolio value.`);
+  const crowded = holdings.filter(row => row.weightPct > 15);
+  if (crowded.length) insights.push(`Concentration watchlist: ${crowded.map(row => `${row.symbol} (${row.weightPct.toFixed(1)}%)`).join(', ')}.`);
+  const shortRisk = holdings.filter(row => row.positionType === 'short' && row.unrealizedPnLPct < -15);
+  if (shortRisk.length) insights.push(`Short squeeze / cover review: ${shortRisk.map(row => `${row.symbol} (${row.unrealizedPnLPct.toFixed(1)}%)`).join(', ')}.`);
+  const longWeak = holdings.filter(row => row.positionType === 'long' && row.unrealizedPnLPct < -12);
+  if (longWeak.length) insights.push(`Long thesis review candidates: ${longWeak.map(row => `${row.symbol} (${row.unrealizedPnLPct.toFixed(1)}%)`).join(', ')}.`);
+  const strongWinners = holdings.filter(row => row.positionType === 'long' && row.unrealizedPnLPct > 18);
+  if (strongWinners.length) insights.push(`Possible trim/add review winners: ${strongWinners.map(row => `${row.symbol} (${row.unrealizedPnLPct.toFixed(1)}%)`).join(', ')}.`);
+  const shortWinners = holdings.filter(row => row.positionType === 'short' && row.unrealizedPnLPct > 12);
+  if (shortWinners.length) insights.push(`Profitable shorts worth managing actively: ${shortWinners.map(row => `${row.symbol} (${row.unrealizedPnLPct.toFixed(1)}%)`).join(', ')}.`);
+
+  return { accounts, holdings, transactions, sectorAllocation, accountAllocation, summary, insights };
+}
+
 router.get('/', async (req, res) => {
   try {
     // Get today's analyses (if table exists)
@@ -557,6 +1018,8 @@ router.get('/', async (req, res) => {
       // Table doesn't exist yet
     }
 
+    const portfolioHub = await buildPortfolioHubView();
+
     const html = generateDashboardHTML(
       analyses.rows,
       portfolio.rows,
@@ -564,7 +1027,8 @@ router.get('/', async (req, res) => {
       livePortfolioSummary || snapshot.rows[0],
       dailyState.rows,
       promotedDiscovery.rows,
-      todaysApprovals.rows
+      todaysApprovals.rows,
+      portfolioHub
     );
     res.send(html);
   } catch (error) {
@@ -756,7 +1220,7 @@ router.post('/api/earnings-reminders/save', async (req, res) => {
   }
 });
 
-function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState = [], promotedDiscovery = [], todaysApprovals = []) {
+function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState = [], promotedDiscovery = [], todaysApprovals = [], portfolioHub = null) {
   const totalValue = snapshot?.total_value || 100000;
   const cash = snapshot?.cash || snapshot?.cash_balance || 100000;
   const invested = totalValue - cash;
@@ -1352,6 +1816,61 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     </div>
 
     <div class="section">
+      <div class="section-title">💼 Current Positions</div>
+      ${positions.length === 0 ?
+        '<div class="no-data">No positions yet. Waiting for Opus recommendations.</div>' :
+        `<table>
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Shares</th>
+              <th>Entry Price</th>
+              <th>Current Price</th>
+              <th>Gain/Loss</th>
+              <th>Pathway Model</th>
+              <th>Intent</th>
+              <th>Management</th>
+              <th>Stop Loss</th>
+              <th>Take Profit</th>
+              <th>Rebalance</th>
+              <th>Trail</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${positions.map(p => {
+              const costBasis = parseFloat(p.cost_basis) || 0;
+              const currentPrice = parseFloat(p.current_price) || 0;
+              const stopLoss = parseFloat(p.stop_loss) || null;
+              const takeProfit = parseFloat(p.take_profit) || null;
+              const gainLoss = costBasis > 0 ? ((currentPrice - costBasis) / costBasis * 100).toFixed(2) : '0.00';
+              return `
+                <tr>
+                  <td><strong>${p.symbol}</strong></td>
+                  <td>${p.quantity}</td>
+                  <td>$${costBasis.toFixed(2)}</td>
+                  <td>$${currentPrice.toFixed(2)}</td>
+                  <td class="${gainLoss >= 0 ? 'positive' : 'negative'}">
+                    ${gainLoss >= 0 ? '+' : ''}${gainLoss}%
+                  </td>
+                  <td>${escapeHtml(p.pathway || p.strategy_type || '-')}<br><span class="timestamp">secondary: ${escapeHtml(((p.secondary_pathways || []).join(', ')) || 'none')}</span></td>
+                  <td>${escapeHtml(p.intent || p.current_intent || '-')}</td>
+                  <td class="position-management-cell">${renderPositionManagementPills(p)}</td>
+                  <td>${stopLoss ? '$' + stopLoss.toFixed(2) : '-'}</td>
+                  <td>${takeProfit ? '$' + takeProfit.toFixed(2) : (p.target_type === 'flexible_fundamental' ? 'Flexible' : '-')}</td>
+                  <td>${p.rebalance_threshold_pct ? p.rebalance_threshold_pct + '%' : '-'}</td>
+                  <td>${p.trailing_stop_pct ? p.trailing_stop_pct + '%' : '-'}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+        <div class="position-summary-note">Flexible fundamental targets show as <strong>Flexible</strong> instead of a fixed take-profit so the UI matches thesis-driven management.</div>`
+      }
+    </div>
+
+    ${portfolioHub ? renderPortfolioHubSection(portfolioHub) : ''}
+
+    <div class="section">
       <div class="section-title">🧠 Daily Symbol State</div>
       ${dailyState.length === 0 ?
         '<div class="no-data">No daily symbol state recorded yet for today.</div>' :
@@ -1414,59 +1933,6 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
             `).join('')}
           </tbody>
         </table>`
-      }
-    </div>
-
-    <div class="section">
-      <div class="section-title">💼 Current Positions</div>
-      ${positions.length === 0 ?
-        '<div class="no-data">No positions yet. Waiting for Opus recommendations.</div>' :
-        `<table>
-          <thead>
-            <tr>
-              <th>Symbol</th>
-              <th>Shares</th>
-              <th>Entry Price</th>
-              <th>Current Price</th>
-              <th>Gain/Loss</th>
-              <th>Pathway Model</th>
-              <th>Intent</th>
-              <th>Management</th>
-              <th>Stop Loss</th>
-              <th>Take Profit</th>
-              <th>Rebalance</th>
-              <th>Trail</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${positions.map(p => {
-              const costBasis = parseFloat(p.cost_basis) || 0;
-              const currentPrice = parseFloat(p.current_price) || 0;
-              const stopLoss = parseFloat(p.stop_loss) || null;
-              const takeProfit = parseFloat(p.take_profit) || null;
-              const gainLoss = costBasis > 0 ? ((currentPrice - costBasis) / costBasis * 100).toFixed(2) : '0.00';
-              return `
-                <tr>
-                  <td><strong>${p.symbol}</strong></td>
-                  <td>${p.quantity}</td>
-                  <td>$${costBasis.toFixed(2)}</td>
-                  <td>$${currentPrice.toFixed(2)}</td>
-                  <td class="${gainLoss >= 0 ? 'positive' : 'negative'}">
-                    ${gainLoss >= 0 ? '+' : ''}${gainLoss}%
-                  </td>
-                  <td>${escapeHtml(p.pathway || p.strategy_type || '-')}<br><span class="timestamp">secondary: ${escapeHtml(((p.secondary_pathways || []).join(', ')) || 'none')}</span></td>
-                  <td>${escapeHtml(p.intent || p.current_intent || '-')}</td>
-                  <td class="position-management-cell">${renderPositionManagementPills(p)}</td>
-                  <td>${stopLoss ? '$' + stopLoss.toFixed(2) : '-'}</td>
-                  <td>${takeProfit ? '$' + takeProfit.toFixed(2) : (p.target_type === 'flexible_fundamental' ? 'Flexible' : '-')}</td>
-                  <td>${p.rebalance_threshold_pct ? p.rebalance_threshold_pct + '%' : '-'}</td>
-                  <td>${p.trailing_stop_pct ? p.trailing_stop_pct + '%' : '-'}</td>
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
-        <div class="position-summary-note">Flexible fundamental targets show as <strong>Flexible</strong> instead of a fixed take-profit so the UI matches thesis-driven management.</div>`
       }
     </div>
 
@@ -1558,6 +2024,57 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
         alert('Error triggering portfolio sync: ' + error.message);
         btn.disabled = false;
         btn.textContent = '🔄 Sync Portfolio';
+      }
+    }
+
+    async function savePortfolioHubAccount() {
+      const payload = {
+        account_name: document.getElementById('phAccountName').value,
+        account_type: document.getElementById('phAccountType').value,
+        cash_balance: document.getElementById('phCashBalance').value || 0
+      };
+
+      try {
+        const response = await fetch('/api/portfolio-hub/accounts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save account');
+        alert('Portfolio Hub account saved.');
+        location.reload();
+      } catch (error) {
+        alert('Error saving Portfolio Hub account: ' + error.message);
+      }
+    }
+
+    async function savePortfolioHubTransaction() {
+      const transactionType = document.getElementById('phTransactionType').value;
+      const payload = {
+        account_id: document.getElementById('phHoldingAccountId').value,
+        transaction_type: transactionType,
+        symbol: document.getElementById('phSymbol').value,
+        shares: document.getElementById('phShares').value,
+        price: document.getElementById('phCostBasis').value,
+        cash_amount: document.getElementById('phCashAmount').value,
+        stop_loss: document.getElementById('phStopLoss').value,
+        take_profit: document.getElementById('phTakeProfit').value,
+        notes: document.getElementById('phNotes').value
+      };
+
+      try {
+        const response = await fetch('/api/portfolio-hub/transactions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save transaction');
+        alert('Portfolio Hub transaction saved.');
+        location.reload();
+      } catch (error) {
+        alert('Error saving Portfolio Hub transaction: ' + error.message);
       }
     }
 
@@ -2698,6 +3215,24 @@ router.post('/api/approvals/:id/approve', async (req, res) => {
     const result = await tradeApproval.approveTrade(parseInt(req.params.id));
     await tradeExecutor.executeApprovalById(parseInt(req.params.id));
     res.json(result);
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/portfolio-hub/accounts', async (req, res) => {
+  try {
+    const account = await db.upsertPortfolioHubAccount(req.body || {});
+    res.json({ success: true, account });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/portfolio-hub/transactions', async (req, res) => {
+  try {
+    const transaction = await db.createPortfolioHubTransaction(req.body || {});
+    res.json({ success: true, transaction });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

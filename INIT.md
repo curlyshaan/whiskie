@@ -29,6 +29,9 @@ Use this file as a quick-start memory reset for future sessions.
 - approving a trade in the dashboard now triggers immediate execution submission plus a post-trade metadata sync path
 - homepage includes a manual `Sync Portfolio` button for Tradier -> Whiskie reconciliation
 - flexible fundamental positions intentionally show `Flexible` in the Take Profit column instead of forcing a fixed numeric target
+- Portfolio Hub is now a separate transaction-ledger-based multi-account system, not part of Whiskie live trading positions
+- Portfolio Hub supports `buy`, `sell`, `short`, `cover`, and `cash_adjustment` transactions and derives holdings from ledger history
+- default Portfolio Hub accounts are: Sai-Webull-Cash, Sai-Webull-Margin, Sai-Webull-IRA, Sai-Fidelity-IRA, Sai-Tradier-Cash, Sara-Webull-Cash, Sara-Webull-IRA
 - Phase 1 ranking is a hard prior; Phase 4 must justify overrides and emit 1:1 execution lines
 - there is no active daily trade-count cap in execution; weekly loss guard remains in the circuit breaker
 - Railway paper trading should use `TRADING_MODE=paper` even if `NODE_ENV=production`

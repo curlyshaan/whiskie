@@ -9,6 +9,25 @@ import email from './email.js';
 import analysisEngine from './analysis.js';
 
 class OrderReconciliation {
+  async ensurePositionMetadataColumns() {
+    await db.query(`
+      ALTER TABLE positions
+      ADD COLUMN IF NOT EXISTS secondary_pathways JSONB,
+      ADD COLUMN IF NOT EXISTS pathway_selection_rule TEXT,
+      ADD COLUMN IF NOT EXISTS confidence VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS growth_potential VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS target_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS has_fixed_target BOOLEAN,
+      ADD COLUMN IF NOT EXISTS trailing_stop_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS rebalance_threshold_pct DECIMAL(5, 2),
+      ADD COLUMN IF NOT EXISTS max_holding_days INTEGER,
+      ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB,
+      ADD COLUMN IF NOT EXISTS catalysts JSONB,
+      ADD COLUMN IF NOT EXISTS news_links JSONB;
+    `);
+  }
+
   /**
    * Reconcile positions with broker state
    */
@@ -162,6 +181,8 @@ class OrderReconciliation {
 
   async syncPositionMetadataFromLots() {
     try {
+      await this.ensurePositionMetadataColumns();
+
       const symbolsResult = await db.query(
         `SELECT DISTINCT symbol
          FROM position_lots`
