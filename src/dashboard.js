@@ -547,9 +547,21 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
   </div>
   <script>
     async function savePortfolioHubAccount() {
+      const cashInput = document.getElementById('phCashBalance').value;
+      if (cashInput == null || cashInput === '') {
+        alert('Enter an exact cash balance before using Override Cash Balance.');
+        return;
+      }
+
+      const normalizedCash = Number(cashInput);
+      if (!Number.isFinite(normalizedCash) || normalizedCash < 0) {
+        alert('Cash balance override must be a non-negative number.');
+        return;
+      }
+
       const payload = {
         account_name: document.getElementById('phAccountName').value,
-        cash_balance: document.getElementById('phCashBalance').value || 0
+        cash_balance: normalizedCash
       };
 
       try {
@@ -2098,9 +2110,21 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
 
     async function savePortfolioHubAccount() {
+      const cashInput = document.getElementById('phCashBalance').value;
+      if (cashInput == null || cashInput === '') {
+        alert('Enter an exact cash balance before using Override Cash Balance.');
+        return;
+      }
+
+      const normalizedCash = Number(cashInput);
+      if (!Number.isFinite(normalizedCash) || normalizedCash < 0) {
+        alert('Cash balance override must be a non-negative number.');
+        return;
+      }
+
       const payload = {
         account_name: document.getElementById('phAccountName').value,
-        cash_balance: document.getElementById('phCashBalance').value || 0
+        cash_balance: normalizedCash
       };
 
       try {
@@ -2111,7 +2135,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
         });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save account');
-        alert('Portfolio Hub account saved.');
+        alert('Portfolio Hub cash balance overridden.');
         location.reload();
       } catch (error) {
         alert('Error saving Portfolio Hub account: ' + error.message);

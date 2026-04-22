@@ -1835,6 +1835,20 @@ export async function getPortfolioHubAccounts() {
 }
 
 export async function upsertPortfolioHubAccount(account) {
+  const normalizedAccountName = String(account.account_name || '').trim();
+  if (!normalizedAccountName) {
+    throw new Error('Portfolio Hub account_name is required');
+  }
+
+  if (account.cash_balance == null || account.cash_balance === '') {
+    throw new Error('Portfolio Hub cash override requires an explicit cash balance');
+  }
+
+  const normalizedCashBalance = Number(account.cash_balance);
+  if (!Number.isFinite(normalizedCashBalance) || normalizedCashBalance < 0) {
+    throw new Error('Portfolio Hub cash balance must be a valid non-negative number');
+  }
+
   const result = await pool.query(
     `INSERT INTO portfolio_hub_accounts (
        account_name, account_type, cash_balance, is_active, updated_at
@@ -1847,9 +1861,9 @@ export async function upsertPortfolioHubAccount(account) {
        updated_at = CURRENT_TIMESTAMP
      RETURNING *`,
     [
-      account.account_name,
+      normalizedAccountName,
       account.account_type || null,
-      Number(account.cash_balance || 0),
+      normalizedCashBalance,
       account.is_active ?? true
     ]
   );
