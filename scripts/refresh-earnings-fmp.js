@@ -1,6 +1,6 @@
 import fmp from '../src/fmp.js';
 import * as db from '../src/db.js';
-import { enrichYahooEarningsTiming } from '../src/earnings-reminders.js';
+import { enrichEarningsWhispersTiming } from '../src/earnings-reminders.js';
 
 /**
  * Refresh earnings calendar from FMP
@@ -25,9 +25,9 @@ async function refreshEarningsCalendar() {
     console.log(`   Found ${eligibleSymbols.size} stocks in universe`);
 
     let totalInserted = 0;
-    let yahooEnriched = 0;
-    let yahooKnownSessions = 0;
-    let yahooKnownRawTimes = 0;
+    let timingEnriched = 0;
+    let knownSessions = 0;
+    let knownRawTimes = 0;
     const now = new Date();
     const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
     const fourteenDaysAhead = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
@@ -114,26 +114,26 @@ async function refreshEarningsCalendar() {
       }
     }
 
-    console.log('   Running best-effort Yahoo timing enrichment...');
+    console.log('   Running best-effort Earnings Whispers timing enrichment...');
     for (const earning of filteredEarnings) {
       try {
         const symbol = String(earning.symbol).trim().toUpperCase();
-        const yahooTiming = await enrichYahooEarningsTiming(symbol, earning.date);
-        if (!yahooTiming) continue;
+        const timing = await enrichEarningsWhispersTiming(symbol);
+        if (!timing) continue;
 
-        const hasKnownSession = yahooTiming.earningsSession === 'pre_market' || yahooTiming.earningsSession === 'post_market';
-        const hasRawTiming = Boolean(String(yahooTiming.earningsTimeRaw || '').trim());
+        const hasKnownSession = timing.earningsSession === 'pre_market' || timing.earningsSession === 'post_market';
+        const hasRawTiming = Boolean(String(timing.earningsTimeRaw || '').trim());
 
         if (!hasKnownSession && !hasRawTiming) {
           continue;
         }
 
-        await db.enrichEarningTiming(symbol, earning.date, yahooTiming);
-        yahooEnriched++;
-        if (hasKnownSession) yahooKnownSessions++;
-        if (hasRawTiming) yahooKnownRawTimes++;
+        await db.enrichEarningTiming(symbol, earning.date, timing);
+        timingEnriched++;
+        if (hasKnownSession) knownSessions++;
+        if (hasRawTiming) knownRawTimes++;
       } catch (err) {
-        console.warn(`   ⚠️ Yahoo enrichment failed for ${earning.symbol} ${earning.date}: ${err.message}`);
+        console.warn(`   ⚠️ Earnings Whispers enrichment failed for ${earning.symbol} ${earning.date}: ${err.message}`);
       }
     }
 
@@ -144,7 +144,7 @@ async function refreshEarningsCalendar() {
     );
 
     console.log(`   ✅ Inserted/updated ${totalInserted} earnings events (durable window: -3d to +14d)`);
-    console.log(`   ✅ Yahoo enriched ${yahooEnriched} rows (${yahooKnownSessions} known sessions, ${yahooKnownRawTimes} raw timing strings)`);
+    console.log(`   ✅ Earnings Whispers enriched ${timingEnriched} rows (${knownSessions} known sessions, ${knownRawTimes} raw timing strings)`);
     process.exit(0);
 
   } catch (error) {

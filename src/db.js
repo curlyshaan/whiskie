@@ -2531,8 +2531,8 @@ export async function enrichEarningTiming(symbol, earningsDate, timing = {}) {
 
   const sessionNormalized = timing.earningsSession || 'unknown';
   const timingRaw = timing.earningsTimeRaw || null;
-  const timingSource = timing.source || 'yahoo';
-  const sourcePriority = timingSource === 'manual' ? 300 : timingSource === 'yahoo' ? 200 : 100;
+  const timingSource = timing.source || 'earnings_whispers';
+  const sourcePriority = timingSource === 'manual' ? 300 : (timingSource === 'yahoo' || timingSource === 'earnings_whispers') ? 200 : 100;
   const manualOverride = timingSource === 'manual';
 
   try {

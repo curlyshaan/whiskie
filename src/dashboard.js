@@ -3398,7 +3398,7 @@ function generateEarningsRemindersHTML(reminders) {
       document.getElementById('detailSendAt').textContent = scheduled && !Number.isNaN(scheduled.getTime())
         ? scheduled.toLocaleString('en-US', { timeZone: 'America/New_York' }) + ' ET'
         : '-';
-      document.getElementById('timingRaw').textContent = payload.timing.earningsTimeRaw || 'No Yahoo timing detail found.';
+      document.getElementById('timingRaw').textContent = payload.timing.earningsTimeRaw || 'No timing detail found.';
       document.getElementById('catalystSummary').innerHTML = renderMarkdownLike('Loading catalyst brief...');
       document.getElementById('existingNotes').textContent = payload.reminder?.notes || 'None saved yet.';
       notesEl.value = payload.reminder?.notes || '';

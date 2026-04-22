@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { spawn } from 'node:child_process';
 import * as db from './db.js';
 import fmp from './fmp.js';
 import tavily from './tavily.js';
@@ -186,44 +187,6 @@ function choosePreferredSession(...candidates) {
   return 'unknown';
 }
 
-function deriveSessionFromYahooRow(row = {}) {
-  return choosePreferredSession(
-    normalizeSession(row.startdatetimetype),
-    normalizeSession(row.time),
-    normalizeSession(row.timeType),
-    normalizeSession(row.epsestimate)
-  );
-}
-
-function formatEasternCallTime(rawSeconds) {
-  if (!Number.isFinite(rawSeconds)) return null;
-  const date = new Date(rawSeconds * 1000);
-  if (Number.isNaN(date.getTime())) return null;
-  const formatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: EASTERN_TIMEZONE,
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-    timeZoneName: 'short'
-  });
-
-  return formatter.format(date);
-}
-
-function extractYahooQuoteSummaryPayload(html) {
-  const matches = [...String(html || '').matchAll(/<script type="application\/json" data-sveltekit-fetched[^>]*data-url="https:\/\/query1\.finance\.yahoo\.com\/v10\/finance\/quoteSummary\/[^>]*>([\s\S]*?)<\/script>/g)];
-  for (const match of matches) {
-    try {
-      const envelope = JSON.parse(match[1]);
-      if (!envelope?.body) continue;
-      const body = JSON.parse(envelope.body);
-      const result = body?.quoteSummary?.result?.[0];
-      if (result) return result;
-    } catch {}
-  }
-  return null;
-}
-
 function mapLegacyEarningsTime(value) {
   const normalized = String(value || '').toLowerCase();
   if (normalized === 'bmo') return 'pre_market';
@@ -369,89 +332,55 @@ function classifyReaction(movePct, threshold = 1) {
   return movePct > 0 ? 'up' : 'down';
 }
 
-export async function enrichYahooEarningsTiming(symbol, expectedDate = null) {
+function fetchEarningsWhispersTiming(symbol) {
+  return new Promise((resolve, reject) => {
+    const args = ['/Users/sshanoor/ClaudeProjects/Whiskie/scripts/earnings-whispers-helper.py', symbol];
+
+    const child = spawn('python3', args, {
+      env: process.env
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', chunk => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `earnings-whispers-helper exited with code ${code}`));
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(stdout.trim() || '{}'));
+      } catch (error) {
+        reject(new Error(`Failed to parse earnings-whispers-helper output: ${error.message}`));
+      }
+    });
+  });
+}
+
+export async function enrichEarningsWhispersTiming(symbol) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
-  const url = `https://finance.yahoo.com/calendar/earnings?symbol=${encodeURIComponent(normalizedSymbol)}`;
   const fallback = {
     symbol: normalizedSymbol,
-    earningsDate: expectedDate,
     earningsTimeRaw: null,
     earningsSession: 'unknown',
-    source: 'yahoo'
+    source: 'earnings_whispers'
   };
 
-  const response = await axios.get(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-    },
-    validateStatus: status => status >= 200 && status < 500
-  });
-
-  if (response.status >= 400) {
-    return fallback;
-  }
-
-  const $ = cheerio.load(response.data);
-  const scripts = $('script').map((_, el) => $(el).html()).get().filter(Boolean);
-
-  for (const script of scripts) {
-    if (!script.includes(normalizedSymbol)) continue;
-
-    const matches = script.match(/"rows":(\[[\s\S]*?\])\s*,\s*"sortFields"/);
-    if (!matches) continue;
-
-    try {
-      const rows = JSON.parse(matches[1]);
-      const row = rows.find(item => String(item.symbol || '').toUpperCase() === normalizedSymbol);
-      if (!row) continue;
-
-      const isoDate = toIsoDate(row.startdatetime || row.startDate || row.earningsDate) || expectedDate;
-      const rawText = row.startdatetimetype || row.time || row.timeType || null;
-      return {
-        symbol: normalizedSymbol,
-        earningsDate: isoDate,
-        earningsTimeRaw: rawText,
-        earningsSession: deriveSessionFromYahooRow(row),
-        source: 'yahoo'
-      };
-    } catch {}
-  }
-
-  let quoteResponse;
-  try {
-    quoteResponse = await axios.get(`https://finance.yahoo.com/calendar/earnings?symbol=${encodeURIComponent(normalizedSymbol)}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-      },
-      validateStatus: status => status >= 200 && status < 500
-    });
-  } catch {
-    return fallback;
-  }
-
-  if (quoteResponse.status >= 400) {
-    return fallback;
-  }
-
-  const quoteSummary = extractYahooQuoteSummaryPayload(quoteResponse.data);
-  const earnings = quoteSummary?.calendarEvents?.earnings || null;
-  const earningsCallDate = earnings?.earningsCallDate?.[0];
-  const earningsDate = earnings?.earningsDate?.[0];
-
-  if (earningsCallDate?.raw || earningsDate?.raw) {
-    const callDateIso = toIsoDate((earningsCallDate?.raw || earningsDate?.raw) * 1000) || expectedDate;
-    const rawTimeText = formatEasternCallTime(earningsCallDate?.raw);
-    const sessionFromCallTime = normalizeSession(rawTimeText);
-    return {
-      symbol: normalizedSymbol,
-      earningsDate: callDateIso,
-      earningsTimeRaw: rawTimeText,
-      earningsSession: isSessionKnown(sessionFromCallTime) ? sessionFromCallTime : 'unknown',
-      source: 'yahoo'
-    };
-  }
-
-  return fallback;
+  const timing = await fetchEarningsWhispersTiming(normalizedSymbol);
+  return {
+    ...fallback,
+    ...timing
+  };
 }
 
 export async function buildEarningsCatalystSummary(symbol, options = {}) {
@@ -491,23 +420,23 @@ export async function getEarningsReminderDetails(symbol) {
   };
 
   try {
-    const yahooTiming = await enrichYahooEarningsTiming(normalizedSymbol, upcoming.earnings_date);
-    const normalizedYahooTiming = normalizeTimingPayload(yahooTiming, upcoming.earnings_date);
-    if (normalizedYahooTiming?.earningsTimeRaw || isSessionKnown(normalizedYahooTiming?.earningsSession)) {
+    const earningsWhispersTiming = await enrichEarningsWhispersTiming(normalizedSymbol);
+    const normalizedEarningsWhispersTiming = normalizeTimingPayload(earningsWhispersTiming, upcoming.earnings_date);
+    if (normalizedEarningsWhispersTiming?.earningsTimeRaw || isSessionKnown(normalizedEarningsWhispersTiming?.earningsSession)) {
       timing = {
         ...timing,
-        ...normalizedYahooTiming,
+        ...normalizedEarningsWhispersTiming,
         earningsSession: choosePreferredSession(
-          normalizedYahooTiming.earningsSession,
+          normalizedEarningsWhispersTiming.earningsSession,
           timing.earningsSession
         ),
-        earningsTimeRaw: normalizedYahooTiming.earningsTimeRaw || timing.earningsTimeRaw || null,
-        source: normalizedYahooTiming.source || timing.source || 'unknown'
+        earningsTimeRaw: normalizedEarningsWhispersTiming.earningsTimeRaw || timing.earningsTimeRaw || null,
+        source: normalizedEarningsWhispersTiming.source || timing.source || 'unknown'
       };
-      await db.enrichEarningTiming(normalizedSymbol, upcoming.earnings_date, normalizedYahooTiming).catch(() => null);
+      await db.enrichEarningTiming(normalizedSymbol, upcoming.earnings_date, normalizedEarningsWhispersTiming).catch(() => null);
     }
   } catch (error) {
-    console.warn(`⚠️ Yahoo timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
+    console.warn(`⚠️ Earnings Whispers timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
   }
 
   timing = normalizeTimingPayload(timing, upcoming.earnings_date);
@@ -808,7 +737,7 @@ export default {
   buildEarningsCatalystSummary,
   buildEarningsCatalystBrief,
   buildLiveReminderPreview,
-  enrichYahooEarningsTiming,
+  enrichEarningsWhispersTiming,
   calculateScheduledSendAt,
   calculateGradeEligibleAt
 };
