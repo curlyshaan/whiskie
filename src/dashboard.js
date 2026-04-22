@@ -239,11 +239,11 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <details style="margin-top:18px;">
         <summary>✏️ Edit Portfolio Hub</summary>
         <div style="margin-top:14px;">
-          <div class="detail-section-title">Account Cash</div>
+          <div class="detail-section-title">Account Cash Override</div>
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
             <select id="phAccountName">${accountOptions.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}</select>
-            <input id="phCashBalance" type="number" step="0.01" placeholder="Current cash balance" />
-            <button class="analyze-btn" onclick="savePortfolioHubAccount()">Save Account</button>
+            <input id="phCashBalance" type="number" step="0.01" placeholder="Set broker cash to exact current balance" />
+            <button class="analyze-btn" onclick="savePortfolioHubAccount()">Override Cash Balance</button>
           </div>
 
           <div class="detail-section-title">Transaction</div>
@@ -267,7 +267,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
             <input id="phNotes" placeholder="Optional notes" />
             <button class="analyze-btn" onclick="savePortfolioHubTransaction()">Save Transaction</button>
           </div>
-          <div class="position-summary-note" style="margin-top:10px;">Set current account cash above. Use transactions here only for buys, sells, shorts, covers, deposits, and withdrawals.</div>
+          <div class="position-summary-note" style="margin-top:10px;">Transactions now auto-update account cash: buy/cover/withdraw reduce cash, sell/short/deposit increase cash. Use the cash override only to sync Portfolio Hub back to the broker's exact live cash balance.</div>
         </div>
       </details>
 
@@ -447,10 +447,12 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <div style="margin-top:18px;">
         <div class="detail-section-title">How to use Portfolio Hub</div>
         <ul>
-          <li>Set each account's current cash balance directly in the account cash row.</li>
+          <li>Start each account by setting its exact broker cash once in the cash override row.</li>
           <li>Use <strong>buy</strong> and <strong>sell</strong> for long positions.</li>
           <li>Use <strong>short</strong> and <strong>cover</strong> for short positions.</li>
-          <li>Use <strong>deposit</strong> or <strong>withdraw</strong> only if you want to keep an account-cash trail in the ledger too.</li>
+          <li>Each saved transaction automatically updates account cash, account totals, portfolio cash, and cash percentage.</li>
+          <li>Use <strong>deposit</strong> and <strong>withdraw</strong> when cash moves in or out of the account.</li>
+          <li>Use the cash override only when Portfolio Hub needs to be snapped back to the broker's exact live cash balance.</li>
           <li>Partial sells and partial covers are handled automatically because holdings are derived from the transaction ledger.</li>
         </ul>
       </div>
@@ -558,7 +560,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save account');
-        alert('Portfolio Hub account saved.');
+        alert('Portfolio Hub cash balance overridden.');
         location.reload();
       } catch (error) {
         alert('Error saving Portfolio Hub account: ' + error.message);
@@ -585,7 +587,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save transaction');
-        alert('Portfolio Hub transaction saved.');
+        alert('Portfolio Hub transaction saved and cash balance updated.');
         location.reload();
       } catch (error) {
         alert('Error saving Portfolio Hub transaction: ' + error.message);

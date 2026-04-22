@@ -1895,26 +1895,88 @@ export async function createPortfolioHubTransaction(transaction) {
     }
   }
 
-  const result = await pool.query(
-    `INSERT INTO portfolio_hub_transactions (
-       account_id, symbol, transaction_type, shares, price, cash_amount,
-       stop_loss, take_profit, notes, trade_date
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, CURRENT_DATE))
-     RETURNING *`,
-    [
-      transaction.account_id,
-      normalizedSymbol,
-      normalizedType,
-      normalizedShares,
-      normalizedPrice,
-      normalizedCash,
-      transaction.stop_loss == null || transaction.stop_loss === '' ? null : Number(transaction.stop_loss),
-      transaction.take_profit == null || transaction.take_profit === '' ? null : Number(transaction.take_profit),
-      transaction.notes || null,
-      transaction.trade_date || null
-    ]
-  );
-  return result.rows[0];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const accountResult = await client.query(
+      `SELECT id, cash_balance
+       FROM portfolio_hub_accounts
+       WHERE id = $1
+       FOR UPDATE`,
+      [transaction.account_id]
+    );
+
+    const account = accountResult.rows[0];
+    if (!account) {
+      throw new Error(`Portfolio Hub account not found: ${transaction.account_id}`);
+    }
+
+    const tradeCashValue = Number.isFinite(normalizedCash)
+      ? normalizedCash
+      : (Number(normalizedShares || 0) * Number(normalizedPrice || 0));
+
+    const signedCashDelta = (() => {
+      switch (normalizedType) {
+        case 'deposit':
+          return tradeCashValue;
+        case 'withdraw':
+        case 'buy':
+        case 'cover':
+          return -tradeCashValue;
+        case 'sell':
+        case 'short':
+          return tradeCashValue;
+        default:
+          return 0;
+      }
+    })();
+
+    const currentCashBalance = Number(account.cash_balance || 0);
+    const nextCashBalance = currentCashBalance + signedCashDelta;
+    if (nextCashBalance < -0.0001) {
+      throw new Error(`Transaction would make account cash negative (${nextCashBalance.toFixed(2)}). Update the account cash balance first if the broker balance already changed.`);
+    }
+
+    const result = await client.query(
+      `INSERT INTO portfolio_hub_transactions (
+         account_id, symbol, transaction_type, shares, price, cash_amount,
+         stop_loss, take_profit, notes, trade_date
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, CURRENT_DATE))
+       RETURNING *`,
+      [
+        transaction.account_id,
+        normalizedSymbol,
+        normalizedType,
+        normalizedShares,
+        normalizedPrice,
+        normalizedCash,
+        transaction.stop_loss == null || transaction.stop_loss === '' ? null : Number(transaction.stop_loss),
+        transaction.take_profit == null || transaction.take_profit === '' ? null : Number(transaction.take_profit),
+        transaction.notes || null,
+        transaction.trade_date || null
+      ]
+    );
+
+    await client.query(
+      `UPDATE portfolio_hub_accounts
+       SET cash_balance = $2,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [transaction.account_id, nextCashBalance]
+    );
+
+    await client.query('COMMIT');
+    return {
+      ...result.rows[0],
+      account_cash_balance: nextCashBalance
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function recordPortfolioHubAdviceHistory(entries = []) {
