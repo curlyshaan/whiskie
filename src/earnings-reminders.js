@@ -334,7 +334,8 @@ function classifyReaction(movePct, threshold = 1) {
 
 function fetchEarningsWhispersTiming(symbol) {
   return new Promise((resolve, reject) => {
-    const args = ['/Users/sshanoor/ClaudeProjects/Whiskie/scripts/earnings-whispers-helper.py', symbol];
+    const helperScriptPath = new URL('../scripts/earnings-whispers-helper.py', import.meta.url);
+    const args = [helperScriptPath, symbol];
     const pythonCandidates = [
       process.env.PYTHON_BIN,
       '/app/.venv/bin/python',
