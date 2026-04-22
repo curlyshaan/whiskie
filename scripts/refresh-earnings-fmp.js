@@ -1,6 +1,5 @@
 import fmp from '../src/fmp.js';
 import * as db from '../src/db.js';
-import { enrichEarningsWhispersTiming } from '../src/earnings-reminders.js';
 
 /**
  * Refresh earnings calendar from FMP
@@ -25,9 +24,6 @@ async function refreshEarningsCalendar() {
     console.log(`   Found ${eligibleSymbols.size} stocks in universe`);
 
     let totalInserted = 0;
-    let timingEnriched = 0;
-    let knownSessions = 0;
-    let knownRawTimes = 0;
     const now = new Date();
     const threeDaysAgo = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
     const fourteenDaysAhead = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
@@ -114,29 +110,6 @@ async function refreshEarningsCalendar() {
       }
     }
 
-    console.log('   Running best-effort Earnings Whispers timing enrichment...');
-    for (const earning of filteredEarnings) {
-      try {
-        const symbol = String(earning.symbol).trim().toUpperCase();
-        const timing = await enrichEarningsWhispersTiming(symbol);
-        if (!timing) continue;
-
-        const hasKnownSession = timing.earningsSession === 'pre_market' || timing.earningsSession === 'post_market';
-        const hasRawTiming = Boolean(String(timing.earningsTimeRaw || '').trim());
-
-        if (!hasKnownSession && !hasRawTiming) {
-          continue;
-        }
-
-        await db.enrichEarningTiming(symbol, earning.date, timing);
-        timingEnriched++;
-        if (hasKnownSession) knownSessions++;
-        if (hasRawTiming) knownRawTimes++;
-      } catch (err) {
-        console.warn(`   ⚠️ Earnings Whispers enrichment failed for ${earning.symbol} ${earning.date}: ${err.message}`);
-      }
-    }
-
     await db.query(
       `DELETE FROM earnings_calendar
        WHERE earnings_date < CURRENT_DATE - INTERVAL '3 days'
@@ -144,7 +117,6 @@ async function refreshEarningsCalendar() {
     );
 
     console.log(`   ✅ Inserted/updated ${totalInserted} earnings events (durable window: -3d to +14d)`);
-    console.log(`   ✅ Earnings Whispers enriched ${timingEnriched} rows (${knownSessions} known sessions, ${knownRawTimes} raw timing strings)`);
     process.exit(0);
 
   } catch (error) {

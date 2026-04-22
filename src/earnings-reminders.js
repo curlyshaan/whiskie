@@ -1,6 +1,5 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { spawn } from 'node:child_process';
 import * as db from './db.js';
 import fmp from './fmp.js';
 import tavily from './tavily.js';
@@ -332,83 +331,13 @@ function classifyReaction(movePct, threshold = 1) {
   return movePct > 0 ? 'up' : 'down';
 }
 
-function fetchEarningsWhispersTiming(symbol) {
-  return new Promise((resolve, reject) => {
-    const helperScriptPath = new URL('../scripts/earnings-whispers-helper.py', import.meta.url).pathname;
-    const args = [helperScriptPath, symbol];
-    const pythonCandidates = [
-      process.env.PYTHON_BIN,
-      '/app/.venv/bin/python',
-      `${process.cwd()}/.venv/bin/python`,
-      'python3',
-      'python',
-      '/usr/bin/python3',
-      '/usr/local/bin/python3'
-    ].filter(Boolean);
-
-    const trySpawn = async (index = 0) => {
-      if (index >= pythonCandidates.length) {
-        reject(new Error('No usable Python runtime found for earnings-whispers-helper'));
-        return;
-      }
-
-      const candidate = pythonCandidates[index];
-      const child = spawn(candidate, args, {
-        env: process.env
-      });
-
-      let stdout = '';
-      let stderr = '';
-      let retried = false;
-
-      child.stdout.on('data', chunk => {
-        stdout += chunk.toString();
-      });
-
-      child.stderr.on('data', chunk => {
-        stderr += chunk.toString();
-      });
-
-      child.on('error', error => {
-        if (error?.code === 'ENOENT' && !retried) {
-          retried = true;
-          void trySpawn(index + 1);
-          return;
-        }
-        reject(error);
-      });
-
-      child.on('close', code => {
-        if (code !== 0) {
-          reject(new Error(stderr.trim() || `earnings-whispers-helper exited with code ${code}`));
-          return;
-        }
-
-        try {
-          resolve(JSON.parse(stdout.trim() || '{}'));
-        } catch (error) {
-          reject(new Error(`Failed to parse earnings-whispers-helper output: ${error.message}`));
-        }
-      });
-    };
-
-    void trySpawn(0);
-  });
-}
-
 export async function enrichEarningsWhispersTiming(symbol) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
-  const fallback = {
+  return {
     symbol: normalizedSymbol,
     earningsTimeRaw: null,
     earningsSession: 'unknown',
-    source: 'earnings_whispers'
-  };
-
-  const timing = await fetchEarningsWhispersTiming(normalizedSymbol);
-  return {
-    ...fallback,
-    ...timing
+    source: 'yahoo'
   };
 }
 
@@ -447,26 +376,6 @@ export async function getEarningsReminderDetails(symbol) {
     earningsSession: fallbackSession || 'unknown',
     source: upcoming.timing_source || upcoming.source || 'unknown'
   };
-
-  try {
-    const earningsWhispersTiming = await enrichEarningsWhispersTiming(normalizedSymbol);
-    const normalizedEarningsWhispersTiming = normalizeTimingPayload(earningsWhispersTiming, upcoming.earnings_date);
-    if (normalizedEarningsWhispersTiming?.earningsTimeRaw || isSessionKnown(normalizedEarningsWhispersTiming?.earningsSession)) {
-      timing = {
-        ...timing,
-        ...normalizedEarningsWhispersTiming,
-        earningsSession: choosePreferredSession(
-          normalizedEarningsWhispersTiming.earningsSession,
-          timing.earningsSession
-        ),
-        earningsTimeRaw: normalizedEarningsWhispersTiming.earningsTimeRaw || timing.earningsTimeRaw || null,
-        source: normalizedEarningsWhispersTiming.source || timing.source || 'unknown'
-      };
-      await db.enrichEarningTiming(normalizedSymbol, upcoming.earnings_date, normalizedEarningsWhispersTiming).catch(() => null);
-    }
-  } catch (error) {
-    console.warn(`⚠️ Earnings Whispers timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
-  }
 
   timing = normalizeTimingPayload(timing, upcoming.earnings_date);
 
