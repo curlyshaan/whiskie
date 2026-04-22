@@ -2,7 +2,7 @@
 cmds = []
 
 [phases.setup]
-nixPkgs = ['nodejs_20', 'postgresql', 'python311Full']
+nixPkgs = ['nodejs_20', 'postgresql', 'python311Full', 'stdenv.cc.cc.lib']
 
 [phases.install]
 cmds = ['npm ci', 'python3.11 -m venv .venv', '.venv/bin/python -m ensurepip --upgrade', '.venv/bin/python -m pip install --upgrade pip setuptools wheel', '.venv/bin/python -m pip install --no-cache-dir earnings==1.1.0']
