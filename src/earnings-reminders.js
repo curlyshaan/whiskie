@@ -335,35 +335,61 @@ function classifyReaction(movePct, threshold = 1) {
 function fetchEarningsWhispersTiming(symbol) {
   return new Promise((resolve, reject) => {
     const args = ['/Users/sshanoor/ClaudeProjects/Whiskie/scripts/earnings-whispers-helper.py', symbol];
+    const pythonCandidates = [
+      process.env.PYTHON_BIN,
+      'python3',
+      'python',
+      '/usr/bin/python3',
+      '/usr/local/bin/python3'
+    ].filter(Boolean);
 
-    const child = spawn('python3', args, {
-      env: process.env
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', chunk => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on('data', chunk => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', reject);
-    child.on('close', code => {
-      if (code !== 0) {
-        reject(new Error(stderr.trim() || `earnings-whispers-helper exited with code ${code}`));
+    const trySpawn = async (index = 0) => {
+      if (index >= pythonCandidates.length) {
+        reject(new Error('No usable Python runtime found for earnings-whispers-helper'));
         return;
       }
 
-      try {
-        resolve(JSON.parse(stdout.trim() || '{}'));
-      } catch (error) {
-        reject(new Error(`Failed to parse earnings-whispers-helper output: ${error.message}`));
-      }
-    });
+      const candidate = pythonCandidates[index];
+      const child = spawn(candidate, args, {
+        env: process.env
+      });
+
+      let stdout = '';
+      let stderr = '';
+      let retried = false;
+
+      child.stdout.on('data', chunk => {
+        stdout += chunk.toString();
+      });
+
+      child.stderr.on('data', chunk => {
+        stderr += chunk.toString();
+      });
+
+      child.on('error', error => {
+        if (error?.code === 'ENOENT' && !retried) {
+          retried = true;
+          void trySpawn(index + 1);
+          return;
+        }
+        reject(error);
+      });
+
+      child.on('close', code => {
+        if (code !== 0) {
+          reject(new Error(stderr.trim() || `earnings-whispers-helper exited with code ${code}`));
+          return;
+        }
+
+        try {
+          resolve(JSON.parse(stdout.trim() || '{}'));
+        } catch (error) {
+          reject(new Error(`Failed to parse earnings-whispers-helper output: ${error.message}`));
+        }
+      });
+    };
+
+    void trySpawn(0);
   });
 }
 
