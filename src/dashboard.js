@@ -1249,6 +1249,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     <p class="subtitle">AI-Powered Portfolio Manager • Paper Trading Mode</p>
 
     <button class="refresh-btn" onclick="location.reload()">🔄 Refresh</button>
+    <button class="refresh-btn" onclick="triggerPortfolioSync()" id="syncBtn">🔄 Sync Portfolio</button>
     <button class="analyze-btn" onclick="triggerAnalysis()" id="analyzeBtn">🤖 Analyze Now</button>
 
     <div class="nav-grid">
@@ -1453,8 +1454,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
                   <td class="${gainLoss >= 0 ? 'positive' : 'negative'}">
                     ${gainLoss >= 0 ? '+' : ''}${gainLoss}%
                   </td>
-                  <td>${escapeHtml(p.pathway || '-')}<br><span class="timestamp">secondary: ${escapeHtml(((p.secondary_pathways || []).join(', ')) || 'none')}</span></td>
-                  <td>${p.intent || '-'}</td>
+                  <td>${escapeHtml(p.pathway || p.strategy_type || '-')}<br><span class="timestamp">secondary: ${escapeHtml(((p.secondary_pathways || []).join(', ')) || 'none')}</span></td>
+                  <td>${escapeHtml(p.intent || p.current_intent || '-')}</td>
                   <td class="position-management-cell">${renderPositionManagementPills(p)}</td>
                   <td>${stopLoss ? '$' + stopLoss.toFixed(2) : '-'}</td>
                   <td>${takeProfit ? '$' + takeProfit.toFixed(2) : (p.target_type === 'flexible_fundamental' ? 'Flexible' : '-')}</td>
@@ -1537,6 +1538,26 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
         alert('Error triggering analysis: ' + error.message);
         btn.disabled = false;
         btn.textContent = '🤖 Analyze Now';
+      }
+    }
+
+    async function triggerPortfolioSync() {
+      const btn = document.getElementById('syncBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Syncing...';
+
+      try {
+        const response = await fetch('/api/trigger-portfolio-sync', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'Portfolio sync failed');
+        }
+        alert(data.message);
+        setTimeout(() => location.reload(), 1200);
+      } catch (error) {
+        alert('Error triggering portfolio sync: ' + error.message);
+        btn.disabled = false;
+        btn.textContent = '🔄 Sync Portfolio';
       }
     }
 
@@ -2607,7 +2628,7 @@ router.get('/approvals', async (req, res) => {
         const data = await res.json();
 
         if (data.success) {
-          alert('Trade approved!');
+          alert('Trade approved and sent to Tradier. Portfolio sync started.');
           location.reload();
         } else {
           alert('Error: ' + data.error);
@@ -2673,7 +2694,9 @@ router.get('/approvals', async (req, res) => {
 router.post('/api/approvals/:id/approve', async (req, res) => {
   try {
     const tradeApproval = (await import('./trade-approval.js')).default;
+    const tradeExecutor = (await import('./trade-executor.js')).default;
     const result = await tradeApproval.approveTrade(parseInt(req.params.id));
+    await tradeExecutor.executeApprovalById(parseInt(req.params.id));
     res.json(result);
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });

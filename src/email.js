@@ -151,6 +151,40 @@ class EmailAlerts {
   /**
    * Send error alert email
    */
+  async sendAlert(subject, message) {
+    const html = `
+      <h2>${subject}</h2>
+      <pre style="font-family: Menlo, Monaco, Consolas, 'Courier New', monospace; white-space: pre-wrap;">${String(message || '')}</pre>
+      <hr>
+      <p><em>Sent at ${new Date().toLocaleString()}</em></p>
+    `;
+
+    try {
+      await this.sendEmail(this.alertEmail, subject, html);
+      console.log(`📧 Alert email sent: ${subject}`);
+    } catch (error) {
+      console.error(`Failed to send alert email (${subject}):`, error);
+      throw error;
+    }
+  }
+
+  async sendPositionAlert(position, currentPrice, percentDown) {
+    const subject = `⚠️ Position Alert: ${position.symbol} down ${percentDown.toFixed(1)}%`;
+    const html = `
+      <h2>Position Alert</h2>
+      <p><strong>Symbol:</strong> ${position.symbol}</p>
+      <p><strong>Current Price:</strong> $${Number(currentPrice || 0).toFixed(2)}</p>
+      <p><strong>Cost Basis:</strong> $${Number(position.cost_basis || 0).toFixed(2)}</p>
+      <p><strong>Drawdown:</strong> ${percentDown.toFixed(1)}%</p>
+      <p><strong>Quantity:</strong> ${position.quantity}</p>
+    `;
+
+    await this.sendEmail(this.alertEmail, subject, html);
+  }
+
+  /**
+   * Send error alert email
+   */
   async sendErrorAlert(error, context) {
     const subject = `🚨 Whiskie Error Alert`;
     const html = `

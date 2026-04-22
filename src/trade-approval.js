@@ -96,9 +96,15 @@ class TradeApprovalManager {
       ADD COLUMN IF NOT EXISTS rebalance_threshold_pct DECIMAL(5, 2),
       ADD COLUMN IF NOT EXISTS max_holding_days INTEGER,
       ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB,
+      ADD COLUMN IF NOT EXISTS secondary_pathways JSONB,
+      ADD COLUMN IF NOT EXISTS pathway_selection_rule TEXT,
       ADD COLUMN IF NOT EXISTS override_phase2_decision VARCHAR(10),
       ADD COLUMN IF NOT EXISTS override_symbol VARCHAR(10),
-      ADD COLUMN IF NOT EXISTS override_reason TEXT
+      ADD COLUMN IF NOT EXISTS override_reason TEXT,
+      ADD COLUMN IF NOT EXISTS decision_run_id INTEGER,
+      ADD COLUMN IF NOT EXISTS source_phase VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS raw_model_quantity INTEGER,
+      ADD COLUMN IF NOT EXISTS quantity_adjustment_note TEXT
     `);
 
     console.log('✅ Trade approval table initialized');
@@ -367,7 +373,7 @@ class TradeApprovalManager {
 
     return {
       success: true,
-      message: 'Trade approved and queued for execution',
+      message: 'Trade approved and ready for execution',
       approvalId
     };
   }

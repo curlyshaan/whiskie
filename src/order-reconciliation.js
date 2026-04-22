@@ -159,6 +159,96 @@ class OrderReconciliation {
 
     await email.sendAlert('Position Reconciliation Alert', message);
   }
+
+  async syncPositionMetadataFromLots() {
+    try {
+      const symbolsResult = await db.query(
+        `SELECT DISTINCT symbol
+         FROM position_lots`
+      );
+
+      for (const row of symbolsResult.rows || []) {
+        const symbol = row.symbol;
+        const lotResult = await db.query(
+          `SELECT pathway, current_intent, strategy_type, thesis_state, holding_posture,
+                  holding_period, secondary_pathways, pathway_selection_rule, confidence,
+                  growth_potential, stop_type, target_type, trailing_stop_pct,
+                  rebalance_threshold_pct, max_holding_days, stop_loss, take_profit,
+                  has_fixed_target, fundamental_stop_conditions, catalysts, news_links
+           FROM position_lots
+           WHERE symbol = $1
+           ORDER BY entry_date DESC NULLS LAST, id DESC
+           LIMIT 1`,
+          [symbol]
+        );
+
+        const lot = lotResult.rows?.[0];
+        if (!lot) continue;
+
+        await db.query(
+          `UPDATE positions
+           SET pathway = COALESCE(pathway, $2),
+               intent = COALESCE(intent, $3),
+               strategy_type = COALESCE(strategy_type, $4),
+               thesis_state = COALESCE(thesis_state, $5),
+               holding_posture = COALESCE(holding_posture, $6),
+               holding_period = COALESCE(holding_period, $7),
+               secondary_pathways = CASE
+                 WHEN secondary_pathways IS NULL OR secondary_pathways = '[]'::jsonb THEN $8::jsonb
+                 ELSE secondary_pathways
+               END,
+               pathway_selection_rule = CASE
+                 WHEN pathway_selection_rule IS NULL OR pathway_selection_rule = 'unclassified' THEN $9
+                 ELSE pathway_selection_rule
+               END,
+               confidence = COALESCE(confidence, $10),
+               growth_potential = COALESCE(growth_potential, $11),
+               stop_type = COALESCE(stop_type, $12),
+               target_type = COALESCE(target_type, $13),
+               trailing_stop_pct = COALESCE(trailing_stop_pct, $14),
+               rebalance_threshold_pct = COALESCE(rebalance_threshold_pct, $15),
+               max_holding_days = COALESCE(max_holding_days, $16),
+               stop_loss = COALESCE(stop_loss, $17),
+               take_profit = COALESCE(take_profit, $18),
+               has_fixed_target = COALESCE(has_fixed_target, $19),
+               fundamental_stop_conditions = COALESCE(fundamental_stop_conditions, $20::jsonb),
+               catalysts = COALESCE(catalysts, $21::jsonb),
+               news_links = COALESCE(news_links, $22::jsonb),
+               updated_at = CURRENT_TIMESTAMP
+           WHERE symbol = $1`,
+          [
+            symbol,
+            lot.pathway || null,
+            lot.current_intent || null,
+            lot.strategy_type || null,
+            lot.thesis_state || null,
+            lot.holding_posture || null,
+            lot.holding_period || null,
+            JSON.stringify(lot.secondary_pathways || []),
+            lot.pathway_selection_rule || (lot.pathway ? 'lot_primary_pathway' : 'unclassified'),
+            lot.confidence || null,
+            lot.growth_potential || null,
+            lot.stop_type || null,
+            lot.target_type || null,
+            lot.trailing_stop_pct ?? null,
+            lot.rebalance_threshold_pct ?? null,
+            lot.max_holding_days ?? null,
+            lot.stop_loss ?? null,
+            lot.take_profit ?? null,
+            lot.has_fixed_target ?? null,
+            lot.fundamental_stop_conditions ? JSON.stringify(lot.fundamental_stop_conditions) : null,
+            lot.catalysts ? JSON.stringify(lot.catalysts) : null,
+            lot.news_links ? JSON.stringify(lot.news_links) : null
+          ]
+        );
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Error syncing position metadata from lots:', error);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 export default new OrderReconciliation();

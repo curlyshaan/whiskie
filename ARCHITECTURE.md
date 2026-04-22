@@ -162,7 +162,19 @@ If a stock profile exists, it is included in prompt context. If not, the analysi
 - `executed`
 - `expired`
 
-Approved trades are executed during market-hours monitoring.
+Approved trades can now be executed directly from the dashboard approval action. The approval endpoint marks the trade approved, submits it to Tradier through `trade-executor`, and then runs the portfolio metadata sync path. The scheduled/manual trade executor still exists as a retry/operations path for already-approved rows that remain unexecuted.
+
+For long trades:
+
+- fixed-target setups use broker protection orders when the management plan has both stop-loss and take-profit
+- after-hours limit-entry setups use `OTOCO`
+- market-hours fixed-protection setups wait for the entry fill, then place `OCO`
+- `flexible_fundamental` setups intentionally persist thesis management metadata without forcing a broker take-profit bracket
+
+Portfolio sync now has two layers:
+
+- `syncPositionsFromBroker()` refreshes broker position quantities/prices into `positions`
+- `syncPositionMetadataFromLots()` restores thesis/pathway/intent management fields from `position_lots`
 
 The previous daily trade-count cap has been removed from the active execution path. Current hard gating here is primarily approval state, earnings blackouts, portfolio/risk validation, and the circuit breaker weekly loss guard.
 
@@ -214,6 +226,7 @@ Operational routes in `src/index.js`:
 - `POST /api/trigger-eod-summary`
 - `POST /api/trigger-earnings-reminders`
 - `POST /api/trigger-trade-executor`
+- `POST /api/trigger-portfolio-sync`
 
 ## Earnings predictor lifecycle
 

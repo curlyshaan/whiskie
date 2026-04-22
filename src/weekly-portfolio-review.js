@@ -96,7 +96,13 @@ export async function runWeeklyPortfolioReview() {
     );
 
     // Send email summary
-    await email.sendWeeklyReview(review.analysis, positions.rows, trades.rows);
+    await email.sendWeeklyReview({
+      totalValue: positions.rows.reduce((sum, position) => sum + ((Number(position.current_price || 0) || 0) * (Number(position.quantity || 0) || 0)), 0),
+      weeklyChange: 0,
+      totalReturn: 0,
+      analysis: review.analysis,
+      recommendations: review.analysis
+    });
 
     console.log('');
     console.log('═══════════════════════════════════════');
@@ -119,7 +125,7 @@ function buildReviewPrompt(positions, quotes, profiles, trades, snapshots, mainW
     const currentPrice = quote?.last || pos.current_price;
     const unrealizedPnL = (currentPrice - pos.avg_cost) * pos.quantity;
     const unrealizedPnLPercent = ((currentPrice - pos.avg_cost) / pos.avg_cost * 100).toFixed(2);
-    const profile = profiles.find(p => p.symbol === pos.symbol);
+    const profile = profiles?.[pos.symbol] || null;
 
     return {
       symbol: pos.symbol,

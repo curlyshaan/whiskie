@@ -26,6 +26,9 @@ Use this file as a quick-start memory reset for future sessions.
 - earnings grading now runs at 11:00 AM ET
 - grading rule: pre-market earnings grade same day 11:00 AM ET; post-market earnings grade next trading day 11:00 AM ET
 - dashboard cash/invested display now prefers live Tradier-backed portfolio state when available
+- approving a trade in the dashboard now triggers immediate execution submission plus a post-trade metadata sync path
+- homepage includes a manual `Sync Portfolio` button for Tradier -> Whiskie reconciliation
+- flexible fundamental positions intentionally show `Flexible` in the Take Profit column instead of forcing a fixed numeric target
 - Phase 1 ranking is a hard prior; Phase 4 must justify overrides and emit 1:1 execution lines
 - there is no active daily trade-count cap in execution; weekly loss guard remains in the circuit breaker
 - Railway paper trading should use `TRADING_MODE=paper` even if `NODE_ENV=production`

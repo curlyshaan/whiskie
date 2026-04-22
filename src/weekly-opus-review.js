@@ -118,7 +118,7 @@ class WeeklyOpusReview {
                  pathway_selection_rule = $9,
                  opus_conviction = $1,
                  opus_reasoning = $2
-             WHERE symbol = $3`,
+             WHERE symbol = $3 AND pathway = $4`,
             [stock.opusScore, stock.opusReasoning, stock.symbol, pathway, activationCycleId, rank, JSON.stringify(stock.secondaryPathways || []), JSON.stringify(stock.pathwayScoresSnapshot || {}), stock.pathwaySelectionRule || 'weekly_opus_primary_pathway']
           );
           rank++;

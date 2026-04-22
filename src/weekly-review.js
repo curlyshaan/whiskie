@@ -606,7 +606,8 @@ export async function runWeeklyReview() {
     // Run fundamental screening (weekly)
     console.log('💎 Running fundamental screening...');
     const valueCandidates = await fundamentalScreener.runWeeklyScreen();
-    console.log(`   ✅ Value Watchlist updated with ${valueCandidates.length} stocks\n`);
+    const totalScreenedCandidates = (valueCandidates?.longs?.length || 0) + (valueCandidates?.shorts?.length || 0);
+    console.log(`   ✅ Value Watchlist updated with ${totalScreenedCandidates} stocks\n`);
 
     const reviews = [];
 

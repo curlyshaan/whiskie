@@ -31,7 +31,7 @@ class PartialFillHandler {
         await this.waitForFill(order.order.id);
 
         // Check fill status
-        const orderStatus = await tradier.getOrder(order.order.id);
+        const orderStatus = await tradier.getOrderStatus(order.order.id);
         const filled = orderStatus.quantity - (orderStatus.remaining_quantity || 0);
 
         totalFilled += filled;
@@ -71,7 +71,7 @@ class PartialFillHandler {
     const startTime = Date.now();
 
     while (Date.now() - startTime < timeoutMs) {
-      const order = await tradier.getOrder(orderId);
+      const order = await tradier.getOrderStatus(orderId);
 
       if (order.status === 'filled' || order.status === 'partially_filled') {
         return order;

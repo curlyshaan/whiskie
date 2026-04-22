@@ -3101,7 +3101,7 @@ export async function getLatestSaturdayWatchlistEntry(symbol) {
     `SELECT *
      FROM saturday_watchlist
      WHERE symbol = $1
-     ORDER BY added_date DESC NULLS LAST, created_at DESC NULLS LAST
+     ORDER BY added_date DESC NULLS LAST
      LIMIT 1`,
     [symbol]
   );

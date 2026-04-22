@@ -1,4 +1,5 @@
 import fmp from './fmp.js';
+import tradier from './tradier.js';
 import * as db from './db.js';
 
 /**
@@ -30,7 +31,6 @@ class ShortManager {
     this.MAX_DAYS_TO_COVER = 5;          // Block if >5
     this.ELEVATED_DAYS_TO_COVER = 4;     // Reduce to 8% if >=4
     this.MAX_SHORT_FLOAT = 0.20;         // Max 20% short float
-    this.MAX_IV_PERCENTILE = 0.80;       // 80th percentile IV (relative to 1-year history)
     this.SQUEEZE_LOOKBACK_DAYS = 180;    // Check for squeezes in past 6 months
   }
 
@@ -381,13 +381,9 @@ class ShortManager {
     try {
       const optionsData = await tradier.getOptionsChain(symbol);
 
-      if (!optionsData || !optionsData.options || !optionsData.options.option) {
+      if (!Array.isArray(optionsData) || optionsData.length === 0) {
         return null;
       }
-
-      const options = Array.isArray(optionsData.options.option)
-        ? optionsData.options.option
-        : [optionsData.options.option];
 
       // Get current stock price
       const quote = await fmp.getQuote(symbol);
@@ -398,7 +394,7 @@ class ShortManager {
       }
 
       // Find ATM (at-the-money) options - closest strike to current price
-      const atmOptions = options
+      const atmOptions = optionsData
         .filter(opt => opt.greeks && opt.greeks.mid_iv)
         .map(opt => ({
           strike: opt.strike,
@@ -437,9 +433,9 @@ class ShortManager {
   async calculateATRStopLoss(symbol, entryPrice, period = 14) {
     try {
       // Fetch historical data for ATR calculation
-      const history = await tradier.getHistoricalPrices(symbol, period + 1);
+      const history = await tradier.getHistory(symbol, 'daily', `${period + 5}d`);
 
-      if (!history || history.length < period + 1) {
+      if (!Array.isArray(history) || history.length < period + 1) {
         console.warn(`Insufficient data for ATR calculation on ${symbol}`);
         return null;
       }

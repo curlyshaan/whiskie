@@ -513,6 +513,79 @@ class OptionsAnalyzer {
 
     return result;
   }
+
+  async analyzeMultipleSymbols(symbols = []) {
+    const normalizedSymbols = [...new Set(
+      (Array.isArray(symbols) ? symbols : [])
+        .map(symbol => String(symbol || '').trim().toUpperCase())
+        .filter(Boolean)
+    )];
+
+    const results = await Promise.all(normalizedSymbols.map(async symbol => {
+      try {
+        const expirations = await tradier.getOptionsExpirations(symbol);
+        const nearestExpiration = Array.isArray(expirations) && expirations.length
+          ? expirations.slice().sort((a, b) => new Date(a) - new Date(b))[0]
+          : null;
+
+        if (!nearestExpiration) {
+          return {
+            symbol,
+            putCallVolumeRatio: null,
+            impliedVolatility: null,
+            sentiment: 'NO_DATA',
+            unusualActivity: { calls: 0, puts: 0 }
+          };
+        }
+
+        const chain = this.normalizeChain(await tradier.getOptionsChain(symbol, nearestExpiration));
+        if (!chain.length) {
+          return {
+            symbol,
+            putCallVolumeRatio: null,
+            impliedVolatility: null,
+            sentiment: 'NO_DATA',
+            unusualActivity: { calls: 0, puts: 0 }
+          };
+        }
+
+        const quote = await fmp.getQuote(symbol).catch(() => null);
+        const currentPrice = Number(quote?.price || 0) || chain[0]?.strike || 0;
+        const sentimentSummary = this.summarizeSentiment(chain, currentPrice);
+        const putCallVolumeRatio = sentimentSummary.putCallVolumeRatio;
+        const sentiment = putCallVolumeRatio == null
+          ? 'NEUTRAL'
+          : putCallVolumeRatio < 0.7
+            ? 'BULLISH'
+            : putCallVolumeRatio > 1.3
+              ? 'BEARISH'
+              : 'NEUTRAL';
+
+        return {
+          symbol,
+          putCallVolumeRatio,
+          impliedVolatility: sentimentSummary.atmImpliedVolatility,
+          sentiment,
+          unusualActivity: {
+            calls: sentimentSummary.unusualCalls,
+            puts: sentimentSummary.unusualPuts
+          }
+        };
+      } catch (error) {
+        console.warn(`⚠️ Options analyzer failed for ${symbol}:`, error.message);
+        return {
+          symbol,
+          putCallVolumeRatio: null,
+          impliedVolatility: null,
+          sentiment: 'ERROR',
+          unusualActivity: { calls: 0, puts: 0 },
+          error: error.message
+        };
+      }
+    }));
+
+    return results;
+  }
 }
 
 export default new OptionsAnalyzer();

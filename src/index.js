@@ -822,10 +822,12 @@ class WhiskieBot {
             const stockProfilesModule = await import('./stock-profiles.js');
             const stockProfiles = stockProfilesModule.default;
 
-            // Get pending stocks from saturday_watchlist for pre-Opus profile building
+            // Get pending and active stocks from saturday_watchlist to match scheduled profile prep behavior
             const watchlistResult = await db.query(
-              'SELECT DISTINCT symbol FROM saturday_watchlist WHERE status = $1 ORDER BY symbol',
-              ['pending']
+              `SELECT DISTINCT symbol
+               FROM saturday_watchlist
+               WHERE status IN ('pending', 'active')
+               ORDER BY symbol`
             );
 
             const watchlistSymbols = watchlistResult.rows.map(r => r.symbol);
@@ -1034,9 +1036,14 @@ class WhiskieBot {
       try {
         console.log('📡 Manual portfolio sync triggered via API');
         const result = await orderReconciliation.syncPositionsFromBroker();
+        const metadataSync = await orderReconciliation.syncPositionMetadataFromLots();
 
         if (!result.success) {
           return res.status(500).json(result);
+        }
+
+        if (!metadataSync.success) {
+          return res.status(500).json(metadataSync);
         }
 
         res.json({
@@ -1136,17 +1143,12 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
    * Check if bot should run now (9 AM - 5 PM ET, Mon-Fri)
    */
   async shouldRunNow() {
-    const now = new Date();
-    const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-
-    const hour = etTime.getHours();
-    const day = etTime.getDay(); // 0 = Sunday, 6 = Saturday
-
-    // Only run Mon-Fri (1-5), 9 AM - 5 PM ET
-    const isWeekday = day >= 1 && day <= 5;
-    const isTradingHours = hour >= 9 && hour < 17;
-
-    return isWeekday && isTradingHours;
+    try {
+      return await tradier.isMarketOpen();
+    } catch (error) {
+      console.warn('⚠️ Could not determine market-open status in shouldRunNow, defaulting to closed:', error.message);
+      return false;
+    }
   }
 
 

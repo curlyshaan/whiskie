@@ -17,22 +17,18 @@ import { resolveMarketPrice } from './utils.js';
  */
 
 class PathwayExitMonitor {
-  constructor() {
-    this.MARKET_OPEN = 9; // 9am ET
-    this.MARKET_CLOSE = 16; // 4pm ET
-  }
-
   /**
    * Main monitoring function - called every 45 minutes
    */
   async checkPathwayExits() {
     console.log('\n🔍 Checking pathway exit conditions...');
 
-    // Check if market is open
-    const now = new Date();
-    const hour = now.getHours();
+    const marketOpen = await tradier.isMarketOpen().catch(error => {
+      console.warn('   ⚠️ Could not determine market-open status for pathway exit checks:', error.message);
+      return false;
+    });
 
-    if (hour < this.MARKET_OPEN || hour >= this.MARKET_CLOSE) {
+    if (!marketOpen) {
       console.log('   Market closed - skipping pathway exit checks');
       return;
     }

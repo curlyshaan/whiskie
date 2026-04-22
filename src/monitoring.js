@@ -155,7 +155,7 @@ class PerformanceMonitor {
     try {
       await db.query(
         `INSERT INTO performance_metrics (
-          metric_name, metric_value, metadata, created_at
+          metric_name, metric_value, period, calculated_at
         ) VALUES ($1, $2, $3, NOW())`,
         [
           timer.operationName,
