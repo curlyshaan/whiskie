@@ -2033,12 +2033,19 @@ export async function getLatestStockProfilesForSymbols(symbols = []) {
 export async function seedPortfolioHubAccounts(accountNames = []) {
   for (const accountName of accountNames) {
     if (!String(accountName || '').trim()) continue;
-    await upsertPortfolioHubAccount({
-      account_name: String(accountName).trim(),
-      account_type: null,
-      cash_balance: 0,
-      is_active: true
-    });
+    await pool.query(
+      `INSERT INTO portfolio_hub_accounts (
+         account_name, account_type, cash_balance, is_active, updated_at
+       ) VALUES ($1, $2, $3, TRUE, CURRENT_TIMESTAMP)
+       ON CONFLICT (account_name) DO UPDATE
+       SET is_active = TRUE,
+           updated_at = CURRENT_TIMESTAMP`,
+      [
+        String(accountName).trim(),
+        null,
+        0
+      ]
+    );
   }
 }
 
