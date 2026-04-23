@@ -4,6 +4,7 @@ import { stripThinkingBlocks } from './utils.js';
 import earningsReminders from './earnings-reminders.js';
 import analysisEngine from './analysis.js';
 import { buildPortfolioHubView, DEFAULT_PORTFOLIO_HUB_ACCOUNTS, runPortfolioHubOpusReview } from './portfolio-hub.js';
+import { getEarningsReminderDetails } from './earnings-reminders.js';
 
 const router = express.Router();
 
@@ -265,9 +266,51 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         <div class="stat-card"><div class="stat-label">Cash %</div><div class="stat-value">${formatPercent(summary.cashPct || 0)}</div></div>
         <div class="stat-card"><div class="stat-label">Unrealized P/L</div><div class="stat-value ${Number(summary.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(summary.unrealizedPnL || 0)}<br>${formatPercent(summary.unrealizedPnLPct || 0)}</div></div>
         <div class="stat-card"><div class="stat-label">Accounts / Holdings</div><div class="stat-value">${accounts.length} / ${holdings.length}</div></div>
-        <div class="stat-card"><div class="stat-label">Today Performance</div><div class="stat-value ${Number(summary.performancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.performancePct || 0)}<br><span style="font-size:1rem;">${formatSignedMoney(summary.performanceValue || 0)}</span></div></div>
-        <div class="stat-card"><div class="stat-label">Long / Short Today</div><div class="stat-value"><span class="${Number(summary.longPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.longPerformancePct || 0)} / ${formatSignedMoney(summary.longPerformanceValue || 0)}</span><br><span class="${Number(summary.shortPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.shortPerformancePct || 0)} / ${formatSignedMoney(summary.shortPerformanceValue || 0)}</span></div></div>
+        <div class="stat-card"><div class="stat-label">Range Performance</div><div class="stat-value ${Number(summary.performancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.performancePct || 0)}<br><span style="font-size:1rem;">${formatSignedMoney(summary.performanceValue || 0)}</span></div></div>
+        <div class="stat-card"><div class="stat-label">Benchmark vs Active</div><div class="stat-value"><span class="${Number(summary.benchmarkReturnPct || 0) >= 0 ? 'positive' : 'negative'}">${escapeHtml(summary.benchmarkSymbol || 'SPY')}: ${formatPercent(summary.benchmarkReturnPct || 0)} / ${formatSignedMoney(summary.benchmarkReturnValue || 0)}</span><br><span class="${Number(summary.activeReturnPct || 0) >= 0 ? 'positive' : 'negative'}">Active: ${formatPercent(summary.activeReturnPct || 0)} / ${formatSignedMoney(summary.activeReturnValue || 0)}</span></div></div>
+        <div class="stat-card"><div class="stat-label">Long / Short Range</div><div class="stat-value"><span class="${Number(summary.longPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.longPerformancePct || 0)} / ${formatSignedMoney(summary.longPerformanceValue || 0)}</span><br><span class="${Number(summary.shortPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.shortPerformancePct || 0)} / ${formatSignedMoney(summary.shortPerformanceValue || 0)}</span></div></div>
       </div>
+
+      <details style="margin-top:18px;">
+        <summary>⚠️ Risk Metrics & Correlation</summary>
+        <div style="margin-top:12px;">
+          ${portfolioHub.riskMetrics ? `
+            <table>
+              <thead><tr><th>Metric</th><th>Value</th><th>Metric</th><th>Value</th></tr></thead>
+              <tbody>
+                <tr><td>Volatility</td><td>${escapeHtml(portfolioHub.riskMetrics.volatility || 'N/A')}</td><td>Sharpe</td><td>${escapeHtml(portfolioHub.riskMetrics.sharpeRatio || 'N/A')}</td></tr>
+                <tr><td>Sortino</td><td>${escapeHtml(portfolioHub.riskMetrics.sortinoRatio || 'N/A')}</td><td>Beta</td><td>${escapeHtml(portfolioHub.riskMetrics.beta || 'N/A')}</td></tr>
+                <tr><td>Max Drawdown</td><td>${escapeHtml(portfolioHub.riskMetrics.maxDrawdown || 'N/A')}</td><td>VaR 95%</td><td>${escapeHtml(portfolioHub.riskMetrics.valueAtRisk95 || 'N/A')} ${portfolioHub.riskMetrics.valueAtRisk95Value != null ? `(${formatSignedMoney(portfolioHub.riskMetrics.valueAtRisk95Value)})` : ''}</td></tr>
+                <tr><td>Diversification</td><td>${escapeHtml(portfolioHub.riskMetrics.diversificationScore || 'N/A')}</td><td>Concentration</td><td>${escapeHtml(portfolioHub.riskMetrics.concentrationRisk || 'N/A')}</td></tr>
+              </tbody>
+            </table>
+            <div class="position-summary-note" style="margin:12px 0 8px;">Highest correlation pairs</div>
+            ${(portfolioHub.riskMetrics.correlationMatrix || []).length ? `
+              <table>
+                <thead><tr><th>Pair</th><th>Correlation</th></tr></thead>
+                <tbody>
+                  ${(portfolioHub.riskMetrics.correlationMatrix || []).map(row => `<tr><td>${escapeHtml(`${row.left} / ${row.right}`)}</td><td>${escapeHtml(String(row.correlation))}</td></tr>`).join('')}
+                </tbody>
+              </table>
+            ` : '<div class="no-data">Not enough overlapping history yet for a correlation matrix.</div>'}
+          ` : '<div class="no-data">Risk metrics unavailable.</div>'}
+        </div>
+      </details>
+
+      <details style="margin-top:18px;">
+        <summary>🔄 ETF Rotation Overlay</summary>
+        <div style="margin-top:12px;">
+          ${portfolioHub.etfRotationContext?.leading?.length || portfolioHub.etfRotationContext?.lagging?.length ? `
+            <table>
+              <thead><tr><th>Signal</th><th>Sector</th><th>ETF</th><th>4w RS</th><th>12w RS</th><th>Purpose</th></tr></thead>
+              <tbody>
+                ${(portfolioHub.etfRotationContext?.leading || []).map(item => `<tr><td>Leading</td><td>${escapeHtml(item.sector)}</td><td>${escapeHtml(item.etf)}</td><td>${escapeHtml(String(item.relativeStrength4w || '-'))}</td><td>${escapeHtml(String(item.relativeStrength12w || '-'))}</td><td>${escapeHtml(item.purpose || '-')}</td></tr>`).join('')}
+                ${(portfolioHub.etfRotationContext?.lagging || []).map(item => `<tr><td>Lagging</td><td>${escapeHtml(item.sector)}</td><td>${escapeHtml(item.etf)}</td><td>${escapeHtml(String(item.relativeStrength4w || '-'))}</td><td>${escapeHtml(String(item.relativeStrength12w || '-'))}</td><td>${escapeHtml(item.purpose || '-')}</td></tr>`).join('')}
+              </tbody>
+            </table>
+          ` : '<div class="no-data">No ETF rotation cache available yet.</div>'}
+        </div>
+      </details>
 
       <details style="margin-top:18px;">
         <summary>📈 Performance Chart</summary>
@@ -411,6 +454,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                 <th>Stop</th>
                 <th>Target</th>
                 <th>Whiskie View</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -430,9 +474,14 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
                   <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
                   <td><strong>${escapeHtml(row.whiskieActionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(row.whiskieView || '-')}</span>${row.whiskieShareCountText ? `<br><span class="timestamp">${escapeHtml(row.whiskieShareCountText)}</span>` : ''}${row.whiskiePlanProgressText ? `<br><span class="timestamp">${escapeHtml(row.whiskiePlanProgressText)}</span>` : ''}</td>
+                  <td>
+                    <a class="analyze-btn" style="display:inline-block; text-decoration:none; margin-bottom:8px;" href="/adhoc-analyzer?ticker=${encodeURIComponent(row.symbol)}&intent=${row.positionType === 'short' ? 'SHORT' : 'LONG'}&costBasis=${encodeURIComponent(row.avgCost || '')}">Analyze</a>
+                    <br>
+                    <a class="analyze-btn" style="display:inline-block; text-decoration:none;" href="/options-analyzer?symbol=${encodeURIComponent(row.symbol)}">Options</a>
+                  </td>
                 </tr>
                 <tr>
-                  <td colspan="14" style="background:#131a30;">
+                  <td colspan="15" style="background:#131a30;">
                     <details>
                       <summary>Whiskie details for ${escapeHtml(row.symbol)}</summary>
                       <div style="margin-top:10px; display:grid; gap:10px;">
@@ -777,7 +826,10 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         const response = await fetch('/api/portfolio-hub/opus-review', { method: 'POST' });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.error || 'Failed to run Opus portfolio review');
-        alert('Opus portfolio review completed and saved.');
+        const reviewedCount = Array.isArray(data.result?.holdings) ? data.result.holdings.length : 0;
+        alert(reviewedCount > 0
+          ? ('Opus portfolio review completed for ' + reviewedCount + ' holding(s) and saved.')
+          : 'No Portfolio Hub holdings needed an Opus refresh right now.');
         location.reload();
       } catch (error) {
         alert('Error running Opus portfolio review: ' + error.message);
@@ -820,6 +872,95 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       }
     });
   </script>
+</body>
+</html>
+  `;
+}
+
+function generateSymbolOverviewHTML(symbol, data = {}) {
+  const overviewSymbol = escapeHtml(symbol);
+  const holdings = Array.isArray(data.portfolioHub?.holdings) ? data.portfolioHub.holdings.filter(row => row.symbol === symbol) : [];
+  const optionsRun = data.optionsRun || null;
+  const earningsDetails = data.earningsDetails || null;
+  const watchlist = data.watchlist || null;
+  const profile = data.profile || null;
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>${overviewSymbol} Overview - Whiskie</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0e27; color: #e0e0e0; padding: 20px; line-height: 1.6; }
+    .container { max-width: 1300px; margin: 0 auto; }
+    .card { background: #1a1f3a; border: 1px solid #2a2f4a; border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+    .muted { color: #94a3b8; }
+    .btn { display: inline-block; padding: 10px 14px; border-radius: 8px; text-decoration: none; color: #fff; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin-right: 8px; margin-bottom: 8px; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #0f1425; padding: 12px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a href="/" class="btn">← Dashboard</a>
+    <a href="/adhoc-analyzer?ticker=${encodeURIComponent(symbol)}" class="btn">Adhoc Analyzer</a>
+    <a href="/options-analyzer?symbol=${encodeURIComponent(symbol)}" class="btn">Options Analyzer</a>
+    <a href="/portfolio-hub" class="btn">Portfolio Hub</a>
+
+    <div class="card">
+      <h1>${overviewSymbol} Overview</h1>
+      <p class="muted">Unified symbol workspace across Whiskie research, options, earnings, and Portfolio Hub context.</p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>Watchlist / Profile</h2>
+        <p><strong>Watchlist status:</strong> ${escapeHtml(watchlist?.status || '-')}</p>
+        <p><strong>Pathway:</strong> ${escapeHtml(watchlist?.primary_pathway || watchlist?.pathway || '-')}</p>
+        <p><strong>Profile version:</strong> ${escapeHtml(profile?.profile_version || '-')}</p>
+      </div>
+      <div class="card">
+        <h2>Earnings</h2>
+        <p><strong>Date:</strong> ${escapeHtml(earningsDetails?.timing?.earningsDate || earningsDetails?.nextEarning?.earnings_date || '-')}</p>
+        <p><strong>Session:</strong> ${escapeHtml(earningsDetails?.timing?.earningsSession || '-')}</p>
+        <p><strong>Catalyst summary:</strong> ${escapeHtml(earningsDetails?.catalystSummary || '-')}</p>
+      </div>
+      <div class="card">
+        <h2>Latest Options View</h2>
+        <p><strong>Strategy:</strong> ${escapeHtml(optionsRun?.strategy_type || '-')}</p>
+        <p><strong>Recommendation:</strong> ${escapeHtml(optionsRun?.recommendation_type || '-')}</p>
+        <p><strong>Conviction:</strong> ${escapeHtml(optionsRun?.conviction || '-')}</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Portfolio Hub Holdings</h2>
+      ${holdings.length ? holdings.map(row => `
+        <div style="margin-bottom:12px;">
+          <strong>${escapeHtml(row.symbol)}</strong> — ${escapeHtml(row.positionType)} — ${formatMoney(row.marketValue)} — ${formatPercent(row.unrealizedPnLPct)}
+          <div class="muted">${escapeHtml(row.whiskieView || '-')}</div>
+        </div>
+      `).join('') : '<div class="muted">No Portfolio Hub holding for this symbol.</div>'}
+    </div>
+
+    <div class="card">
+      <h2>Stock Profile Snapshot</h2>
+      <pre>${escapeHtml(JSON.stringify(profile || {}, null, 2))}</pre>
+    </div>
+
+    <div class="card">
+      <h2>Latest Options Analysis Payload</h2>
+      <pre>${escapeHtml(JSON.stringify(optionsRun?.result_payload || {}, null, 2))}</pre>
+    </div>
+
+    <div class="card">
+      <h2>Earnings Reminder Detail</h2>
+      <pre>${escapeHtml(JSON.stringify(earningsDetails || {}, null, 2))}</pre>
+    </div>
+  </div>
 </body>
 </html>
   `;
@@ -1280,6 +1421,35 @@ router.get('/portfolio-hub', async (req, res) => {
   } catch (error) {
     console.error('Portfolio Hub error:', error);
     res.status(500).send('Error loading Portfolio Hub');
+  }
+});
+
+router.get('/symbol/:symbol', async (req, res) => {
+  try {
+    const symbol = String(req.params.symbol || '').trim().toUpperCase();
+    if (!symbol) {
+      return res.status(400).send('Symbol is required');
+    }
+
+    const [portfolioHub, profile, watchlist, optionsRuns, earningsDetails] = await Promise.all([
+      buildPortfolioHubView({ performanceRange: 'week', performanceMetric: 'pct' }).catch(() => ({ holdings: [] })),
+      db.getLatestStockProfile(symbol).catch(() => null),
+      db.getLatestSaturdayWatchlistEntry(symbol).catch(() => null),
+      db.getRecentOptionsAnalysisRuns(20).catch(() => []),
+      getEarningsReminderDetails(symbol).catch(() => null)
+    ]);
+
+    const optionsRun = (optionsRuns || []).find(run => String(run.symbol || '').toUpperCase() === symbol) || null;
+    res.send(generateSymbolOverviewHTML(symbol, {
+      portfolioHub,
+      profile,
+      watchlist,
+      optionsRun,
+      earningsDetails
+    }));
+  } catch (error) {
+    console.error('Symbol overview error:', error);
+    res.status(500).send('Error loading symbol overview');
   }
 });
 
@@ -1987,10 +2157,25 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
         <div class="nav-card-title">🧭 Portfolio Hub</div>
         <div class="nav-card-copy">Separate manual household portfolio dashboard kept distinct from the live bot.</div>
       </a>
+      <a href="/symbol/SPY" class="nav-card options">
+        <div class="nav-card-title">🧩 Symbol Overview</div>
+        <div class="nav-card-copy">Unified per-symbol workspace across adhoc, options, earnings, and portfolio context.</div>
+      </a>
       <a href="/cron-status" class="nav-card cron">
         <div class="nav-card-title">⏰ Cron Jobs</div>
         <div class="nav-card-copy">Inspect schedules, run history, and manual job triggers.</div>
       </a>
+    </div>
+
+    <div class="section" style="margin-top:20px;">
+      <div class="section-title">🔎 Global Symbol Search</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <input id="globalSymbolSearch" type="text" placeholder="Search AAPL, NVDA, TSLA..." style="flex:1; min-width:260px; padding:12px; border-radius:8px; border:1px solid #2a2f4a; background:#0f1425; color:#fff;" />
+        <button class="refresh-btn" onclick="jumpToFeature('overview')">Open Overview</button>
+        <button class="refresh-btn" onclick="jumpToFeature('adhoc')">Open Adhoc</button>
+        <button class="refresh-btn" onclick="jumpToFeature('options')">Open Options</button>
+        <button class="refresh-btn" onclick="jumpToFeature('earnings')">Open Earnings</button>
+      </div>
     </div>
 
     <div class="stats">
@@ -2958,6 +3143,7 @@ router.get('/approvals', async (req, res) => {
     const tradeApproval = (await import('./trade-approval.js')).default;
     const pending = await tradeApproval.getPendingApprovals();
     const stats = await tradeApproval.getApprovalStats();
+    const analytics = await tradeApproval.getApprovalAnalytics();
 
     res.send(`
 <!DOCTYPE html>
@@ -3015,6 +3201,17 @@ router.get('/approvals', async (req, res) => {
       border-radius: 5px;
       font-weight: 600;
       font-size: 0.9rem;
+    }
+    .source-pill {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(102, 126, 234, 0.15);
+      color: #c7d2fe;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
     }
     .action-buy { background: #10b98120; color: #10b981; }
     .action-sell { background: #ef444420; color: #ef4444; }
@@ -3203,6 +3400,20 @@ router.get('/approvals', async (req, res) => {
     .actions {
       display: flex;
       gap: 10px;
+      flex-wrap: wrap;
+    }
+    .batch-toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin: 18px 0;
+      padding: 14px;
+      background: #11182b;
+      border: 1px solid #2a2f4a;
+      border-radius: 10px;
+    }
+    .batch-toolbar .btn {
+      flex: initial;
     }
     .btn {
       padding: 12px 24px;
@@ -3248,7 +3459,7 @@ router.get('/approvals', async (req, res) => {
 <body>
   <div class="container">
     <h1>⚖️ Trade Approvals</h1>
-    <p class="subtitle">Review and approve pending trades</p>
+    <p class="subtitle">Review and approve pending trades, including pathway-exit actions now routed through approvals.</p>
 
     <a href="/" class="btn btn-back">← Back to Dashboard</a>
     ${pending.length > 0 ? `<button class="btn btn-clear-all" onclick="clearAllPending()">🗑️ Clear All Pending</button>` : ''}
@@ -3270,6 +3481,25 @@ router.get('/approvals', async (req, res) => {
         <div class="stat-value">${stats.executed}</div>
         <div class="stat-label">Executed (30d)</div>
       </div>
+      <div class="stat-card">
+        <div class="stat-value">${stats.expired}</div>
+        <div class="stat-label">Expired (30d)</div>
+      </div>
+    </div>
+
+    <div class="trade-card" style="margin-bottom:24px;">
+      <div class="trade-symbol">Approval Analytics</div>
+      ${analytics.length ? `
+        <div class="trade-details">
+          ${analytics.map(row => `
+            <div class="detail-item">
+              <div class="detail-label">${escapeHtml(row.source_phase)} · ${escapeHtml(row.status)}</div>
+              <div class="detail-value">${escapeHtml(row.count)}</div>
+              <div class="detail-label">avg ${(Number(row.avg_decision_seconds || 0) / 60).toFixed(1)} min</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : '<div class="muted">No analytics yet.</div>'}
     </div>
 
     ${pending.length === 0 ? `
@@ -3277,7 +3507,14 @@ router.get('/approvals', async (req, res) => {
         <h2>✅ No pending approvals</h2>
         <p>All trades have been reviewed</p>
       </div>
-    ` : pending.map(trade => {
+    ` : `
+      <div class="batch-toolbar">
+        <button class="btn btn-approve" onclick="approveSelectedTrades()">Approve Selected</button>
+        <button class="btn btn-reject" onclick="rejectSelectedTrades()">Reject Selected</button>
+        <button class="btn btn-back" onclick="toggleAllApprovals(true)">Select All</button>
+        <button class="btn btn-back" onclick="toggleAllApprovals(false)">Clear Selection</button>
+      </div>
+    ` + pending.map(trade => {
       const catalysts = parseListValue(trade.catalysts);
       const newsLinks = parseListValue(trade.news_links);
       const fundamentals = formatStructuredText(trade.fundamentals);
@@ -3290,10 +3527,14 @@ router.get('/approvals', async (req, res) => {
 
       return `
       <div class="trade-card">
+        <div style="margin-bottom:12px;"><label><input type="checkbox" class="approval-checkbox" value="${trade.id}"> Select for batch action</label></div>
         <div class="trade-header">
           <div class="trade-symbol">${escapeHtml(trade.symbol)}</div>
-          <div class="trade-action ${trade.action.includes('buy') ? 'action-buy' : 'action-sell'}">
-            ${escapeHtml(formatTradeAction(trade.action))}
+          <div>
+            <div class="trade-action ${trade.action.includes('buy') ? 'action-buy' : 'action-sell'}">
+              ${escapeHtml(formatTradeAction(trade.action))}
+            </div>
+            ${trade.source_phase ? `<div class="source-pill">${escapeHtml(trade.source_phase)}</div>` : ''}
           </div>
         </div>
 
@@ -3348,10 +3589,11 @@ router.get('/approvals', async (req, res) => {
           <div class="reasoning-copy">${escapeHtml(trade.reasoning || '')}</div>
         </div>
 
-        ${(trade.investment_thesis || trade.strategy_type || trade.thesis_state || trade.holding_posture || trade.holding_period || trade.confidence || trade.growth_potential || trade.stop_type || trade.target_type) ? `
+        ${(trade.source_phase || trade.investment_thesis || trade.strategy_type || trade.thesis_state || trade.holding_posture || trade.holding_period || trade.confidence || trade.growth_potential || trade.stop_type || trade.target_type) ? `
         <div class="detail-block">
           <strong>Trade Thesis & Plan</strong>
           ${renderMetricGrid([
+            { label: 'Source Phase', value: trade.source_phase },
             { label: 'Strategy', value: trade.strategy_type },
             { label: 'Thesis State', value: trade.thesis_state },
             { label: 'Holding Posture', value: trade.holding_posture },
@@ -3439,6 +3681,71 @@ router.get('/approvals', async (req, res) => {
       }
     }
 
+    function getSelectedApprovalIds() {
+      return Array.from(document.querySelectorAll('.approval-checkbox:checked')).map(input => Number(input.value)).filter(Number.isFinite);
+    }
+
+    function toggleAllApprovals(selected) {
+      document.querySelectorAll('.approval-checkbox').forEach(input => {
+        input.checked = selected;
+      });
+    }
+
+    async function approveSelectedTrades() {
+      const approvalIds = getSelectedApprovalIds();
+      if (!approvalIds.length) {
+        alert('Select at least one approval first.');
+        return;
+      }
+      if (!confirm(\`Approve \${approvalIds.length} selected trade(s)?\`)) return;
+
+      try {
+        const res = await fetch('/api/approvals/batch/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approvalIds })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          alert(\`Approved \${data.count} trade(s)\`);
+          location.reload();
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (error) {
+        alert('Error approving selected trades: ' + error.message);
+      }
+    }
+
+    async function rejectSelectedTrades() {
+      const approvalIds = getSelectedApprovalIds();
+      if (!approvalIds.length) {
+        alert('Select at least one approval first.');
+        return;
+      }
+      const reason = prompt('Reason for rejecting selected trades:', 'User rejected batch');
+      if (reason === null) return;
+
+      try {
+        const res = await fetch('/api/approvals/batch/reject', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approvalIds, reason })
+        });
+        const data = await res.json();
+
+        if (data.success) {
+          alert(\`Rejected \${data.count} trade(s)\`);
+          location.reload();
+        } else {
+          alert('Error: ' + data.error);
+        }
+      } catch (error) {
+        alert('Error rejecting selected trades: ' + error.message);
+      }
+    }
+
     async function clearAllPending() {
       if (!confirm('Clear all pending approvals? This will reject all pending trades.')) return;
 
@@ -3469,6 +3776,33 @@ router.get('/approvals', async (req, res) => {
 });
 
 // API endpoints for approval actions
+router.post('/api/approvals/batch/approve', async (req, res) => {
+  try {
+    const tradeApproval = (await import('./trade-approval.js')).default;
+    const tradeExecutor = (await import('./trade-executor.js')).default;
+    const approvalIds = Array.isArray(req.body?.approvalIds) ? req.body.approvalIds : [];
+    const result = await tradeApproval.approveBatch(approvalIds);
+    for (const approval of result.approvals || []) {
+      await tradeExecutor.executeApprovalById(Number(approval.approvalId));
+    }
+    res.json({ success: true, count: (result.approvals || []).length });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/approvals/batch/reject', async (req, res) => {
+  try {
+    const tradeApproval = (await import('./trade-approval.js')).default;
+    const approvalIds = Array.isArray(req.body?.approvalIds) ? req.body.approvalIds : [];
+    const reason = req.body?.reason || 'User rejected batch';
+    const result = await tradeApproval.rejectBatch(approvalIds, reason);
+    res.json({ success: true, count: (result.approvals || []).length });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/api/approvals/:id/approve', async (req, res) => {
   try {
     const tradeApproval = (await import('./trade-approval.js')).default;
@@ -3493,6 +3827,17 @@ router.post('/api/portfolio-hub/accounts', async (req, res) => {
 router.post('/api/portfolio-hub/transactions', async (req, res) => {
   try {
     const transaction = await db.createPortfolioHubTransaction(req.body || {});
+    const transactionType = String(transaction.transaction_type || '').toLowerCase();
+    const positionType = transactionType === 'short' || transactionType === 'cover' ? 'short' : 'long';
+    const actionLabel = transactionType === 'sell' ? 'Trim' : transactionType === 'cover' ? 'Cover' : null;
+    if (actionLabel && transaction.symbol && transaction.shares) {
+      await db.recordPortfolioHubExecution(
+        String(transaction.symbol).toUpperCase(),
+        positionType,
+        Math.abs(Number(transaction.shares || 0)),
+        actionLabel
+      ).catch(() => null);
+    }
     res.json({ success: true, transaction });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
@@ -3816,6 +4161,34 @@ function generateCronStatusHTML(executions, days) {
           btn.textContent = originalText;
           btn.disabled = false;
         }, 3000);
+      }
+    }
+
+    function getGlobalSymbol() {
+      return String(document.getElementById('globalSymbolSearch')?.value || '').trim().toUpperCase();
+    }
+
+    function jumpToFeature(feature) {
+      const symbol = getGlobalSymbol();
+      if (!symbol) {
+        alert('Enter a symbol first.');
+        return;
+      }
+
+      if (feature === 'overview') {
+        window.location.href = '/symbol/' + encodeURIComponent(symbol);
+        return;
+      }
+      if (feature === 'adhoc') {
+        window.location.href = '/adhoc-analyzer?ticker=' + encodeURIComponent(symbol);
+        return;
+      }
+      if (feature === 'options') {
+        window.location.href = '/options-analyzer?symbol=' + encodeURIComponent(symbol);
+        return;
+      }
+      if (feature === 'earnings') {
+        window.location.href = '/earnings-reminders';
       }
     }
   </script>

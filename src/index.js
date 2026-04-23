@@ -507,6 +507,56 @@ class WhiskieBot {
       });
 
       // Schedule hourly check to expire old trade approvals
+
+      cron.schedule('15 18 * * 1-5', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Exit Follow-Through Updater', 'daily', scheduledTime);
+        try {
+          const pendingExitAudits = await db.getPendingExitFollowThrough(scheduledTime);
+          for (const audit of pendingExitAudits) {
+            const fromDate = new Date(audit.created_at || scheduledTime);
+            const endDate = new Date(fromDate);
+            endDate.setDate(endDate.getDate() + 8);
+            const history = await fmp.getHistoricalPriceEodFull(
+              audit.symbol,
+              fromDate.toISOString().split('T')[0],
+              endDate.toISOString().split('T')[0]
+            ).catch(() => []);
+            const benchmarkHistory = await fmp.getHistoricalPriceEodFull(
+              'SPY',
+              fromDate.toISOString().split('T')[0],
+              endDate.toISOString().split('T')[0]
+            ).catch(() => []);
+            const oneWeekRow = history.find(row => String(row.date) >= endDate.toISOString().split('T')[0]) || history[history.length - 1] || null;
+            const benchmarkStart = benchmarkHistory[0] || null;
+            const benchmarkEnd = benchmarkHistory.find(row => String(row.date) >= endDate.toISOString().split('T')[0]) || benchmarkHistory[benchmarkHistory.length - 1] || null;
+            if (!oneWeekRow) continue;
+
+            const executedPrice = Number(audit.executed_price || audit.trigger_price || 0);
+            const oneWeekPrice = Number(oneWeekRow.close || 0);
+            const oneWeekReturnPct = executedPrice > 0 ? ((oneWeekPrice - executedPrice) / executedPrice) * 100 : null;
+            const benchmarkOneWeekReturnPct = benchmarkStart && benchmarkEnd && Number(benchmarkStart.close || 0) > 0
+              ? ((Number(benchmarkEnd.close || 0) - Number(benchmarkStart.close || 0)) / Number(benchmarkStart.close || 0)) * 100
+              : null;
+            const relativeOneWeekReturnPct = oneWeekReturnPct != null && benchmarkOneWeekReturnPct != null
+              ? oneWeekReturnPct - benchmarkOneWeekReturnPct
+              : null;
+
+            await db.updateExitAuditFollowThrough(audit.id, {
+              oneWeekPrice,
+              oneWeekReturnPct,
+              benchmarkSymbol: 'SPY',
+              benchmarkOneWeekReturnPct,
+              relativeOneWeekReturnPct
+            });
+          }
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Exit follow-through updater failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+        }
+      });
+
       cron.schedule('0 * * * *', async () => {
         try {
           await tradeApproval.expirePendingApprovals();
@@ -4044,6 +4094,22 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
       const quote = await fmp.getQuote(symbol);
       const marketOpen = await tradier.isMarketOpen().catch(() => false);
       const price = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
+      const fundamentals = await fmp.getFundamentals(symbol).catch(() => null);
+      const impliedVolatility = action === 'sell_to_open'
+        ? await shortManager.getImpliedVolatility(symbol).catch(() => null)
+        : null;
+      const nextEarnings = await db.query(
+        `SELECT earnings_date
+         FROM earnings_calendar
+         WHERE symbol = $1 AND earnings_date >= CURRENT_DATE
+         ORDER BY earnings_date ASC
+         LIMIT 1`,
+        [symbol]
+      ).catch(() => ({ rows: [] }));
+      const convictionThesis = options.convictionThesis || options.thesis || options.reasoning || '';
+      const technicalConfirmation = options.technicalConfirmation
+        ?? Boolean(options.technicalSetup || options.technicalConfirmationReason);
+      const nextEarningsDate = nextEarnings.rows?.[0]?.earnings_date || null;
 
       // Validate trade
       const portfolio = await analysisEngine.getPortfolioState();
@@ -4056,7 +4122,13 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         symbol,
         quantity,
         price,
-        assetClass: sector
+        assetClass: sector,
+        position_type: action === 'sell_to_open' ? 'short' : 'long',
+        marketCap: fundamentals?.marketCap || quote?.marketCap || 0,
+        iv: impliedVolatility || 0,
+        convictionThesis,
+        technicalConfirmation,
+        nextEarningsDate
       };
 
       const validation = await riskManager.validateTrade(trade, portfolio);
@@ -4071,6 +4143,8 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         console.log('⚠️ Warnings:');
         validation.warnings.forEach(warn => console.log(`   - ${warn}`));
       }
+
+      const regime = await vixRegime.getRegime();
 
       // CRITICAL: Check trade safeguards (code-enforced limits)
       const safeguardCheck = await tradeSafeguard.canTrade(symbol, action, quantity, price, portfolio);
@@ -4095,6 +4169,28 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         status: order.status,
         reasoning: options.reasoning || 'Manual execution'
       });
+
+      if (trade.position_type === 'short' && regime.convictionShortsAllowed && !regime.newShortsAllowed) {
+        await db.query(
+          `INSERT INTO conviction_override_log (
+            symbol, regime, vix_level, market_cap, iv,
+            conviction_thesis, technical_confirmation,
+            position_size, created_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+          [
+            trade.symbol,
+            regime.name,
+            regime.vix,
+            trade.marketCap || null,
+            trade.iv || null,
+            trade.convictionThesis || null,
+            trade.technicalConfirmation || false,
+            portfolio.totalValue > 0 ? (trade.quantity * trade.price) / portfolio.totalValue : null
+          ]
+        );
+
+        console.log(`📝 Logged conviction override: ${trade.symbol} in ${regime.name} regime (VIX ${regime.vix.toFixed(1)})`);
+      }
 
       // Handle BUY (long) or SELL_TO_OPEN (short) - Create lots
       if (action === 'buy' || action === 'buy_to_open' || action === 'sell_to_open') {

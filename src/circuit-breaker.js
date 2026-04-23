@@ -13,6 +13,7 @@ import email from './email.js';
 class CircuitBreaker {
   constructor() {
     this.MAX_WEEKLY_LOSS_PCT = 0.05;
+    this.MAX_DAILY_LOSS_PCT = 0.03;
     this.isTripped = false;
     this.tripReason = null;
   }
@@ -21,10 +22,16 @@ class CircuitBreaker {
    * Check if circuit breaker is tripped
    */
   async checkCircuitBreaker(portfolioValue) {
+    const dailyLoss = await this.getDailyLoss(portfolioValue);
+    if (dailyLoss >= this.MAX_DAILY_LOSS_PCT) {
+      await this.trip(`Daily loss limit reached (${(dailyLoss * 100).toFixed(1)}%)`);
+      return { tripped: true, reason: this.tripReason };
+    }
+
     // Check weekly loss limit
     const weeklyLoss = await this.getWeeklyLoss(portfolioValue);
     if (weeklyLoss >= this.MAX_WEEKLY_LOSS_PCT) {
-      this.trip(`Weekly loss limit reached (${(weeklyLoss * 100).toFixed(1)}%)`);
+      await this.trip(`Weekly loss limit reached (${(weeklyLoss * 100).toFixed(1)}%)`);
       return { tripped: true, reason: this.tripReason };
     }
 
@@ -97,6 +104,28 @@ class CircuitBreaker {
     }
   }
 
+  async getDailyLoss(currentPortfolioValue) {
+    try {
+      const result = await db.query(
+        `SELECT total_value
+         FROM portfolio_snapshots
+         WHERE snapshot_date < CURRENT_DATE
+         ORDER BY snapshot_date DESC
+         LIMIT 1`
+      );
+
+      if (result.rows.length === 0) return 0;
+
+      const priorValue = parseFloat(result.rows[0].total_value);
+      if (!priorValue) return 0;
+      const loss = (priorValue - currentPortfolioValue) / priorValue;
+      return Math.max(0, loss);
+    } catch (error) {
+      console.error('Error calculating daily loss:', error);
+      return 0;
+    }
+  }
+
   /**
    * Get circuit breaker status
    */
@@ -104,7 +133,8 @@ class CircuitBreaker {
     return {
       isTripped: this.isTripped,
       reason: this.tripReason,
-      maxWeeklyLoss: `${(this.MAX_WEEKLY_LOSS_PCT * 100).toFixed(0)}%`
+      maxWeeklyLoss: `${(this.MAX_WEEKLY_LOSS_PCT * 100).toFixed(0)}%`,
+      maxDailyLoss: `${(this.MAX_DAILY_LOSS_PCT * 100).toFixed(0)}%`
     };
   }
 }

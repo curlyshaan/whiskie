@@ -3,13 +3,45 @@
  * Monitors Fed policy, yield curve, unemployment, sector rotation
  */
 
-import axios from 'axios';
+import dotenv from 'dotenv';
 import * as db from './db.js';
+
+dotenv.config();
 
 class MacroRegimeDetector {
   constructor() {
-    // FRED API for economic data (free, no key required for basic access)
+    this.FRED_API_KEY = process.env.FRED_API_KEY || '2958ae89236d50a86d62cdd43ab3bc0c';
     this.FRED_BASE_URL = 'https://api.stlouisfed.org/fred/series/observations';
+    this.SERIES = {
+      yieldCurve: 'T10Y2Y',
+      unemployment: 'UNRATE',
+      fedFunds: 'FEDFUNDS'
+    };
+  }
+
+  async fetchLatestSeriesValue(seriesId) {
+    const url = new URL(this.FRED_BASE_URL);
+    url.searchParams.set('series_id', seriesId);
+    url.searchParams.set('api_key', this.FRED_API_KEY);
+    url.searchParams.set('file_type', 'json');
+    url.searchParams.set('sort_order', 'desc');
+    url.searchParams.set('limit', '5');
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`FRED ${seriesId} request failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const observation = (data.observations || []).find(item => Number.isFinite(Number(item?.value)));
+    if (!observation) {
+      throw new Error(`No valid observations returned for ${seriesId}`);
+    }
+
+    return {
+      value: Number(observation.value),
+      date: observation.date
+    };
   }
 
   /**
@@ -44,25 +76,24 @@ class MacroRegimeDetector {
    * Get yield curve spread (10Y - 2Y)
    */
   async getYieldCurveSpread() {
-    // Placeholder - would fetch from FRED or similar
-    // For now, return mock data
-    return 0.5; // 50 basis points
+    const observation = await this.fetchLatestSeriesValue(this.SERIES.yieldCurve);
+    return observation.value;
   }
 
   /**
    * Get unemployment rate
    */
   async getUnemploymentRate() {
-    // Placeholder - would fetch from FRED
-    return 4.2; // 4.2%
+    const observation = await this.fetchLatestSeriesValue(this.SERIES.unemployment);
+    return observation.value;
   }
 
   /**
    * Get Fed Funds rate
    */
   async getFedFundsRate() {
-    // Placeholder - would fetch from FRED
-    return 4.5; // 4.5%
+    const observation = await this.fetchLatestSeriesValue(this.SERIES.fedFunds);
+    return observation.value;
   }
 
   /**

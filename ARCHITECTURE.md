@@ -90,6 +90,8 @@ Profiles live in `stock_profiles` and are treated as a canonical current snapsho
   - missing profile → build first
   - stale profile → incremental refresh first
   - fresh profile → reuse current row
+- if profile refresh/build fails, adhoc analysis can continue with reduced context and returns warnings to the UI instead of hard-failing
+- BUY-style adhoc responses may also attach an options-alternative payload from `options-analyzer`
 
 The UI surfaces this as a loading-state message so the operator can see when profile construction is happening before analysis.
 
@@ -178,6 +180,39 @@ Portfolio sync now has two layers:
 
 The previous daily trade-count cap has been removed from the active execution path. Current hard gating here is primarily approval state, earnings blackouts, portfolio/risk validation, and the circuit breaker weekly loss guard.
 
+### Short-risk and VIX regime model
+
+- `src/risk-manager.js` is the source of truth for portfolio-level short sizing/exposure limits
+- `src/short-manager.js` keeps symbol-level shortability checks such as ETB, IV, and squeeze-risk filters
+- `src/vix-regime.js` now uses a 6-state model:
+  - `CALM` `<15`
+  - `NORMAL` `15-20`
+  - `ELEVATED` `20-25` with hysteresis and conviction-only shorts
+  - `CAUTION` `25-28` with tighter conviction rules and smaller short sizing
+  - `FEAR` `28-35` with quality-long bias and no single-name shorts
+  - `PANIC` `35+` with no new positions
+- conviction short validation uses market cap, IV, documented deterioration thesis, technical confirmation, and earnings-distance checks
+- approved/triggered conviction short entries are logged to `conviction_override_log` for later empirical review
+
+### Shared reliability services
+
+Whiskie now includes lightweight shared services for cross-feature reliability:
+
+- `src/services/profile-build-service.js` coordinates stock profile refresh/build requests so features do not duplicate work
+- `src/services/news-cache-service.js` caches structured Tavily lookups for 15 minutes
+- `src/services/quote-service.js` caches quotes for 1 minute and supports batch reuse
+- `src/services/opus-cache-service.js` caches reusable analysis payloads for 4 hours
+
+These services are currently used by adhoc analysis, options analysis, and Portfolio Hub context/research flows to reduce duplicate provider calls and improve stability under API pressure.
+
+### Exit workflow updates
+
+- expired `trade_approvals` now record rejection metadata when auto-expired
+- pathway exit monitor still evaluates positions automatically, but trim/exit actions now submit approvals instead of directly executing broker orders
+- earnings trim lot updates now run transactionally so partial lot-state writes do not occur if the process fails mid-update
+- circuit breaker protection now covers both weekly loss and daily drawdown checks
+- approval UI now surfaces `source_phase`, which is especially important for pathway-exit-generated approvals
+
 ## Portfolio Hub
 
 Portfolio Hub is a separate manual household-portfolio system and is explicitly not tied to Whiskie live trading positions, `positions`, `trade_approvals`, or Tradier sync.
@@ -240,6 +275,7 @@ Current Portfolio Hub Opus review behavior:
 
 - Portfolio Hub holdings are grouped by `symbol + position_type` so long and short rows never merge into one P/L line
 - before Portfolio Hub Opus review runs, holdings missing a Whiskie `stock_profiles` row are auto-built through the existing profile builder
+- Portfolio Hub Opus review is now incremental and only refreshes holdings that are stale, materially changed, or near earnings
 - the Opus review prompt uses:
   - VIX regime context
   - SPY trend regime / allocation guidance
@@ -251,6 +287,11 @@ Current Portfolio Hub Opus review behavior:
 - Sector Reduction Plan can remain rule-based for threshold detection, but Opus context is now rich enough to rank trim priority more intelligently in future refinements
 
 It may surface recommendations like hold, trim, add selectively, event risk elevated, hold short thesis, or wait to cover, but it does not place trades or modify Whiskie live positions.
+
+Portfolio Hub UI also now exposes direct navigation links from each holding row into:
+
+- `Adhoc Analyzer`
+- `Options Analyzer`
 
 ## Strategy-aware persisted management
 

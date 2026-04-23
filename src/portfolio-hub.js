@@ -6,7 +6,10 @@ import claude from './claude.js';
 import tavily from './tavily.js';
 import vixRegime from './vix-regime.js';
 import riskManager from './risk-manager.js';
-import { ensureFreshStockProfile } from './stock-profiles.js';
+import newsCacheService from './services/news-cache-service.js';
+import profileBuildService from './services/profile-build-service.js';
+import portfolioRiskMetrics from './portfolio-risk-metrics.js';
+import etfManager from './etf-manager.js';
 
 export const DEFAULT_PORTFOLIO_HUB_ACCOUNTS = [
   'Sai-Webull-Cash',
@@ -219,7 +222,7 @@ async function buildPortfolioHubStockNewsContext(holdings = [], sectorTrimCandid
 
   const stockNewsRows = await Promise.all(
     ranked.map(async row => {
-      const results = await tavily.searchStructuredStockContext(row.symbol, {
+      const results = await newsCacheService.getStructuredStockContext(row.symbol, {
         maxResults: 4,
         timeRange: 'month',
         context: {
@@ -262,7 +265,7 @@ async function ensurePortfolioHubProfiles(holdings = []) {
   const built = [];
   for (const symbol of missingSymbols) {
     try {
-      const result = await ensureFreshStockProfile(symbol, { staleAfterDays: 14, incrementalRefreshDays: 14 });
+      const result = await profileBuildService.ensureFreshProfile(symbol, { staleAfterDays: 14, incrementalRefreshDays: 14 });
       built.push({ symbol, action: result?.action || 'built' });
     } catch (error) {
       built.push({ symbol, action: 'failed', error: error.message });
@@ -270,6 +273,27 @@ async function ensurePortfolioHubProfiles(holdings = []) {
   }
 
   return built;
+}
+
+function shouldIncrementalReviewHolding(row) {
+  if (!row) return false;
+  if (!row.opusReviewCreatedAt) return true;
+
+  const lastReview = new Date(row.opusReviewCreatedAt);
+  if (Number.isNaN(lastReview.getTime())) return true;
+
+  const ageDays = (Date.now() - lastReview.getTime()) / (1000 * 60 * 60 * 24);
+  if (ageDays >= 7) return true;
+  if (Math.abs(Number(row.unrealizedPnLPct || 0)) >= 10) return true;
+  if (row.nextEarningsDate) {
+    const earningsDate = new Date(row.nextEarningsDate);
+    if (!Number.isNaN(earningsDate.getTime())) {
+      const daysToEarnings = (earningsDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+      if (daysToEarnings <= 7) return true;
+    }
+  }
+
+  return false;
 }
 
 export async function buildPortfolioHubView(options = {}) {
@@ -505,14 +529,33 @@ export async function buildPortfolioHubView(options = {}) {
   const historyStart = selectHistoryWindow(performanceRange);
   const adviceHistory = await db.getPortfolioHubAdviceHistorySince(historyStart).catch(() => []);
   const historyRows = adviceHistory.filter(row => String(row.view_scope || 'day') === performanceRange);
+  const accountGroup = 'default';
+  await db.upsertPortfolioHubBaseline(accountGroup, historyStart.toISOString().split('T')[0], totalValue, holdings).catch(() => null);
+  const explicitBaseline = await db.getPortfolioHubBaseline(accountGroup, historyStart.toISOString().split('T')[0]).catch(() => null);
   const baselineRow = historyRows[0] || adviceHistory[0] || null;
-  const baselineTotalValue = Number(baselineRow?.total_portfolio_value || baselineRow?.baseline_total_value || baselineRow?.snapshot_payload?.totalPortfolioValue || totalValue);
+  const baselineTotalValue = Number(explicitBaseline?.total_value || baselineRow?.total_portfolio_value || baselineRow?.baseline_total_value || baselineRow?.snapshot_payload?.totalPortfolioValue || totalValue);
   const performancePct = baselineTotalValue > 0 ? ((totalValue - baselineTotalValue) / baselineTotalValue) * 100 : 0;
   const longPerformancePct = longCost > 0 ? ((longExposure - longCost) / longCost) * 100 : 0;
   const shortPerformancePct = shortCost > 0 ? ((shortExposure - shortCost) / shortCost) * 100 : 0;
   const performanceValue = totalValue - baselineTotalValue;
   const longPerformanceValue = longExposure - longCost;
   const shortPerformanceValue = shortExposure - shortCost;
+
+  const benchmarkSymbol = 'SPY';
+  const benchmarkBaselineValue = baselineTotalValue > 0 ? baselineTotalValue : totalValue;
+  const benchmarkHistorySeries = historyRows.map(row => ({
+    label: formatPerformancePointLabel(row.created_at, performanceRange),
+    benchmarkReturnPct: Number(row.benchmark_return_pct ?? 0),
+    benchmarkReturnValue: Number(row.benchmark_return_value ?? 0),
+    activeReturnPct: Number(row.active_return_pct ?? 0),
+    activeReturnValue: Number(row.active_return_value ?? 0)
+  }));
+  const riskMetrics = await portfolioRiskMetrics.calculateRiskMetrics(totalValue, { benchmarkSymbol });
+  const benchmarkReturnPct = Number.parseFloat(String(riskMetrics.benchmarkReturnPct || '0').replace('%', '')) || 0;
+  const activeReturnPct = Number.parseFloat(String(riskMetrics.activeReturnPct || '0').replace('%', '')) || 0;
+  const benchmarkReturnValue = benchmarkBaselineValue * (benchmarkReturnPct / 100);
+  const activeReturnValue = totalValue - benchmarkBaselineValue - benchmarkReturnValue;
+  const etfRotationContext = await etfManager.getRotationAwareSummary().catch(() => ({ leading: [], lagging: [], availableETFs: [] }));
   const performanceSeries = historyRows
     .map(row => ({
       label: formatPerformancePointLabel(row.created_at, performanceRange),
@@ -527,6 +570,16 @@ export async function buildPortfolioHubView(options = {}) {
   const upcomingEarnings = holdings.filter(row => row.nextEarningsDate).slice(0, 5);
   if (upcomingEarnings.length) insights.push(`Upcoming earnings to monitor: ${upcomingEarnings.map(row => `${row.symbol} (${row.nextEarningsDate})`).join(', ')}.`);
   if (sectorAllocation[0]) insights.push(`Top sector exposure is ${sectorAllocation[0].sector} at ${sectorAllocation[0].weightPct.toFixed(1)}% of portfolio value.`);
+  insights.push(`Benchmark ${benchmarkSymbol}: ${benchmarkReturnPct >= 0 ? '+' : ''}${benchmarkReturnPct.toFixed(2)}% over the selected range versus portfolio ${performancePct >= 0 ? '+' : ''}${performancePct.toFixed(2)}% (active ${activeReturnPct >= 0 ? '+' : ''}${activeReturnPct.toFixed(2)}%).`);
+  if (riskMetrics?.diversificationScore && riskMetrics.diversificationScore !== 'N/A') {
+    insights.push(`Diversification score ${riskMetrics.diversificationScore}/100 with ${riskMetrics.concentrationRisk}.`);
+  }
+  if (etfRotationContext.leading?.length) {
+    insights.push(`Leading ETF rotation groups: ${etfRotationContext.leading.slice(0, 3).map(item => `${item.sector} (${item.etf})`).join(', ')}.`);
+  }
+  if (etfRotationContext.lagging?.length) {
+    insights.push(`Lagging ETF rotation groups: ${etfRotationContext.lagging.slice(0, 3).map(item => `${item.sector} (${item.etf})`).join(', ')}.`);
+  }
   insights.push(`Current sizing policy targets: max long target weight ${PORTFOLIO_HUB_POLICY.long.maxTargetWeightPct}%, max short concentration ${PORTFOLIO_HUB_POLICY.short.concentrationWeightPct}%, max sector concentration ${PORTFOLIO_HUB_POLICY.long.sectorConcentrationThresholdPct}%.`);
   sectorTrimCandidates.forEach(item => {
     if (!item.candidates.length) return;
@@ -563,7 +616,14 @@ export async function buildPortfolioHubView(options = {}) {
         shortPerformanceValue,
         sourceLabel: row.whiskieSource,
         opusReview: row.opusReview,
-        opusReviewCreatedAt: row.opusReviewCreatedAt
+        opusReviewCreatedAt: row.opusReviewCreatedAt,
+        benchmarkSymbol,
+        benchmarkReturnPct,
+        benchmarkReturnValue,
+        activeReturnPct,
+        activeReturnValue,
+        riskMetrics,
+        etfRotationContext
       }))
     ).catch(() => {});
   }
@@ -582,11 +642,19 @@ export async function buildPortfolioHubView(options = {}) {
       longPerformancePct,
       shortPerformancePct,
       longPerformanceValue,
-      shortPerformanceValue
+      shortPerformanceValue,
+      benchmarkSymbol,
+      benchmarkReturnPct,
+      benchmarkReturnValue,
+      activeReturnPct,
+      activeReturnValue
     },
     insights,
     sectorTrimCandidates,
     performanceSeries,
+    benchmarkHistorySeries,
+    riskMetrics,
+    etfRotationContext,
     performanceRange,
     performanceMetric,
     latestFullReviewAt
@@ -599,9 +667,13 @@ export async function runPortfolioHubOpusReview() {
   if (!holdings.length) {
     return { reviewedAt: new Date().toISOString(), holdings: [] };
   }
-  const profileBuildResults = await ensurePortfolioHubProfiles(holdings);
+  const holdingsToReview = holdings.filter(shouldIncrementalReviewHolding);
+  if (!holdingsToReview.length) {
+    return { reviewedAt: new Date().toISOString(), holdings: [] };
+  }
+  const profileBuildResults = await ensurePortfolioHubProfiles(holdingsToReview);
   const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
-  const stockNewsContext = await buildPortfolioHubStockNewsContext(holdings, portfolioHub.sectorTrimCandidates || []);
+  const stockNewsContext = await buildPortfolioHubStockNewsContext(holdingsToReview, portfolioHub.sectorTrimCandidates || []);
 
   const prompt = `You are reviewing a household portfolio dashboard called Portfolio Hub. Return JSON only.
 
@@ -653,7 +725,7 @@ Profile build results for holdings that were missing a Whiskie stock profile:
 ${JSON.stringify(profileBuildResults, null, 2)}
 
 Holdings:
-${JSON.stringify(holdings.map(row => ({
+${JSON.stringify(holdingsToReview.map(row => ({
     symbol: row.symbol,
     positionType: row.positionType,
     shares: row.shares,
@@ -686,7 +758,7 @@ ${JSON.stringify(holdings.map(row => ({
   const reviewedAt = new Date().toISOString();
 
   await db.recordPortfolioHubAdviceHistory(
-    holdings.map(row => {
+    holdingsToReview.map(row => {
       const opusReview = bySymbol.get(row.symbol) || null;
       return {
         symbol: row.symbol,
@@ -721,7 +793,7 @@ ${JSON.stringify(holdings.map(row => ({
 
   return {
     reviewedAt,
-    holdings: holdings.map(row => ({
+    holdings: holdingsToReview.map(row => ({
       symbol: row.symbol,
       positionType: row.positionType,
       opusReview: bySymbol.get(row.symbol) || null

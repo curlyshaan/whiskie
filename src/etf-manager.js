@@ -237,6 +237,61 @@ class ETFManager {
 
     return summary;
   }
+
+
+  async getRotationAwareSummary() {
+    const etfs = await this.getActiveETFs();
+    const sectorRotationRows = await db.query(
+      `SELECT metric_value, calculated_at
+       FROM performance_metrics
+       WHERE metric_name = 'sector_rotation_cache'
+         AND period = 'weekly'
+       ORDER BY calculated_at DESC
+       LIMIT 1`
+    ).catch(() => ({ rows: [] }));
+
+    let ranking = [];
+    try {
+      ranking = sectorRotationRows.rows?.[0]?.metric_value
+        ? JSON.parse(sectorRotationRows.rows[0].metric_value)
+        : [];
+    } catch (error) {
+      ranking = [];
+    }
+
+    const etfMap = new Map((etfs || []).map(etf => [String(etf.symbol || '').toUpperCase(), etf]));
+    const leading = [];
+    const lagging = [];
+
+    for (const row of ranking || []) {
+      const etf = etfMap.get(String(row.etf || '').toUpperCase());
+      const payload = {
+        sector: row.sector,
+        etf: row.etf,
+        signal: row.signal || row.status || 'NEUTRAL',
+        score: Number(row.score || 0),
+        relativeStrength4w: row.relativeStrength4w,
+        relativeStrength12w: row.relativeStrength12w,
+        purpose: etf?.purpose || null,
+        currentPrice: etf?.current_price || null
+      };
+      if (String(payload.signal).toUpperCase() === 'LEADING') leading.push(payload);
+      if (String(payload.signal).toUpperCase() === 'LAGGING') lagging.push(payload);
+    }
+
+    return {
+      generatedAt: sectorRotationRows.rows?.[0]?.calculated_at || null,
+      leading,
+      lagging,
+      availableETFs: (etfs || []).map(etf => ({
+        symbol: etf.symbol,
+        category: etf.category,
+        purpose: etf.purpose,
+        currentPrice: etf.current_price
+      }))
+    };
+  }
+
 }
 
 export default new ETFManager();

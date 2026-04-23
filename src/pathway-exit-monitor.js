@@ -4,6 +4,7 @@ import pathwayStrategies from './pathway-exit-strategies.js';
 import email from './email.js';
 import tradier from './tradier.js';
 import { resolveMarketPrice } from './utils.js';
+import tradeApproval from './trade-approval.js';
 
 /**
  * Pathway Exit Monitor
@@ -13,7 +14,7 @@ import { resolveMarketPrice } from './utils.js';
  * - Trailing stop activation (e.g., deepValue at +50%)
  * - Fundamental exit conditions (ROE drops, dividend cuts)
  *
- * Auto-executes pathway exits and sends email notifications.
+ * Routes material exits through approval workflow and sends notifications.
  */
 
 class PathwayExitMonitor {
@@ -319,23 +320,32 @@ class PathwayExitMonitor {
    */
   async executeActions(actions) {
     const results = [];
+    const priority = {
+      fundamental_exit: 1,
+      trailing_stop_triggered: 2,
+      time_stop_exit: 3,
+      rebalance_trim: 4,
+      trim: 5,
+      activate_trailing_stop: 6
+    };
+    const dedupedActions = [...actions]
+      .sort((a, b) => (priority[a.type] || 99) - (priority[b.type] || 99))
+      .filter((action, index, array) => index === array.findIndex(candidate => candidate.symbol === action.symbol));
 
-    for (const action of actions) {
+    for (const action of dedupedActions) {
       try {
         let result;
 
         switch (action.type) {
           case 'trim':
           case 'rebalance_trim':
-            result = await this.executeTrim(action);
-            break;
-          case 'activate_trailing_stop':
-            result = await this.activateTrailingStop(action);
-            break;
           case 'trailing_stop_triggered':
           case 'fundamental_exit':
           case 'time_stop_exit':
-            result = await this.executeTrailingStopExit(action);
+            result = await this.submitApproval(action);
+            break;
+          case 'activate_trailing_stop':
+            result = await this.activateTrailingStop(action);
             break;
           default:
             console.warn(`   ⚠️ Unknown action type: ${action.type}`);
@@ -366,73 +376,52 @@ class PathwayExitMonitor {
   /**
    * Execute position trim
    */
-  async executeTrim(action) {
-    const { symbol, quantity, currentPrice, reason, position } = action;
+  async submitApproval(action) {
+    const { symbol, quantity, currentPrice, reason, position, type } = action;
     const isShort = position.quantity < 0;
-
-    console.log(`   📉 Trimming ${symbol}: ${quantity} shares at $${currentPrice.toFixed(2)}`);
-    console.log(`      Reason: ${reason}`);
-
-    // Place market order to trim
     const orderType = isShort ? 'buy_to_cover' : 'sell';
-    const order = await tradier.placeOrder(symbol, orderType, quantity, 'market');
-
-    // Update position in database
-    const newQuantity = position.quantity + (isShort ? quantity : -quantity);
-
-    // Add to trim history
-    const trimHistory = position.trim_history || [];
-    trimHistory.push({
-      date: new Date().toISOString(),
+    const latestPositions = await db.getPositions();
+    const currentPosition = latestPositions.find(p => p.symbol === symbol);
+    if (!currentPosition || Math.abs(Number(currentPosition.quantity || 0)) < quantity) {
+      throw new Error(`Position changed before exit approval for ${symbol}; aborting stale exit action`);
+    }
+    const approvalId = await tradeApproval.submitForApproval({
+      symbol,
+      action: orderType,
       quantity,
-      price: currentPrice,
-      reason
+      entryPrice: currentPrice,
+      stopLoss: position.stop_loss || null,
+      takeProfit: position.take_profit || null,
+      pathway: position.pathway,
+      intent: position.intent,
+      reasoning: `[Pathway Exit:${type}] ${reason}`,
+      investmentThesis: position.thesis || null,
+      strategyType: position.strategy_type || null,
+      thesisState: position.thesis_state || null,
+      holdingPosture: position.holding_posture || null,
+      targetType: position.target_type || null,
+      sourcePhase: 'pathway_exit_monitor'
     });
 
-    await db.query(
-      `UPDATE positions
-       SET quantity = $1,
-           last_trim_date = NOW(),
-           trim_history = $2
-       WHERE symbol = $3`,
-      [newQuantity, JSON.stringify(trimHistory), symbol]
-    );
-
-    // If position fully closed, remove from positions table
-    if (Math.abs(newQuantity) < 1) {
-      await db.query('DELETE FROM positions WHERE symbol = $1', [symbol]);
-    } else {
-      // Cancel old OCO and place new one for remaining shares
-      if (position.oco_order_id) {
-        await tradier.cancelOrder(position.oco_order_id);
-
-        // Place new OCO for remaining shares
-        const newOCO = await tradier.placeOTOCOOrder(
-          symbol,
-          isShort ? 'buy_to_cover' : 'sell',
-          Math.abs(newQuantity),
-          currentPrice,
-          position.stop_loss,
-          position.take_profit
-        );
-
-        await db.query(
-          'UPDATE positions SET oco_order_id = $1 WHERE symbol = $2',
-          [newOCO.order.id, symbol]
-        );
-      }
-    }
-
-    console.log(`   ✅ Trim executed: ${symbol} ${quantity} shares at $${currentPrice.toFixed(2)}`);
+    await db.insertExitAuditLog({
+      symbol,
+      actionType: type,
+      triggerSource: 'pathway_exit_monitor',
+      triggerReason: reason,
+      triggerPrice: currentPrice,
+      quantity,
+      status: 'pending',
+      approvalId
+    });
 
     return {
       symbol,
-      action: 'trim',
+      action: type,
       success: true,
       quantity,
       price: currentPrice,
       reason,
-      orderId: order.order.id
+      approvalId
     };
   }
 
@@ -489,46 +478,6 @@ class PathwayExitMonitor {
   /**
    * Execute trailing stop exit
    */
-  async executeTrailingStopExit(action) {
-    const { symbol, quantity, currentPrice, stopPrice, reason, position } = action;
-    const isShort = position.quantity < 0;
-
-    console.log(`   🛑 Trailing stop triggered for ${symbol}`);
-    console.log(`      Exit price: $${currentPrice.toFixed(2)} (stop at $${stopPrice.toFixed(2)})`);
-    console.log(`      Reason: ${reason}`);
-
-    // Place market order to exit
-    const orderType = isShort ? 'buy_to_cover' : 'sell';
-    const order = await tradier.placeOrder(symbol, orderType, quantity, 'market');
-
-    // Remove position from database
-    await db.query('DELETE FROM positions WHERE symbol = $1', [symbol]);
-
-    // Log trade
-    await db.logTrade({
-      symbol,
-      action: orderType,
-      quantity: isShort ? quantity : -quantity,
-      price: currentPrice,
-      orderId: order.order.id,
-      status: order.order.status,
-      reasoning: reason
-    });
-
-    console.log(`   ✅ Trailing stop exit executed: ${symbol} at $${currentPrice.toFixed(2)}`);
-
-    return {
-      symbol,
-      action: 'trailing_stop_exit',
-      success: true,
-      quantity,
-      price: currentPrice,
-      stopPrice,
-      reason,
-      orderId: order.order.id
-    };
-  }
-
   /**
    * Send email notification for pathway exits
    */

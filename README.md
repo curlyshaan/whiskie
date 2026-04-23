@@ -227,6 +227,28 @@ Current important variables:
 - `NODE_ENV`
 - portfolio/risk limit variables
 
+Current short-risk implementation notes:
+
+- `risk-manager.js` is the authoritative source for portfolio-level short limits
+- `short-manager.js` enforces symbol-level short eligibility and references risk-manager limits for exposure caps
+- VIX regimes now use:
+  - `CALM` `<15`
+  - `NORMAL` `15-20`
+  - `ELEVATED` `20-25` with conviction-only shorts
+  - `CAUTION` `25-28` with exceptional/defensive shorts only
+  - `FEAR` `28-35` with no single-name shorts
+  - `PANIC` `35+` with no new positions
+- conviction short tracking is persisted in `conviction_override_log`
+
+Recent reliability/performance updates:
+
+- adhoc analysis now degrades gracefully when profile building fails and can reuse cached Opus responses
+- pathway exit actions that reduce or close positions now route into `trade_approvals` instead of bypassing approval flow
+- circuit breaker now checks both weekly loss and daily drawdown
+- options analyzer keeps low-conviction options ideas as warnings instead of force-converting them to `no_trade`
+- earnings trim lot changes now execute inside a DB transaction
+- shared services now provide reusable profile-build coordination, Tavily/news caching, quote caching, and Opus-response caching
+
 Paper/sandbox deployments should always set:
 
 - `TRADING_MODE=paper`
@@ -239,6 +261,8 @@ Current Adhoc Analyzer behavior:
 - missing stock profiles auto-build before analysis continues
 - stale stock profiles auto-refresh before analysis continues
 - duplicate `Analyze` / `Build Profile` clicks are blocked while a request is in flight
+- if a profile build/refresh fails, adhoc analysis can still continue with reduced context and surfaces warnings in the UI
+- BUY-oriented adhoc results can surface an embedded options alternative and deep-link into the Options Analyzer
 - `/adhoc-analyzer/debug-build-profile` exists for profile-build diagnostics
 
 ## Earnings prediction workflow
@@ -276,6 +300,19 @@ Whiskie now uses `earnings_calendar` as the source of truth for upcoming earning
 ## Dashboard behavior
 
 The main dashboard now prefers live portfolio totals from the Tradier-backed analysis engine when available, so cash/invested values reflect the actual synced account state instead of only the most recent saved snapshot row.
+
+Trade approval UI behavior:
+
+- pending approvals can now include standard entries and pathway-exit-generated actions
+- approval cards surface `source_phase` so operators can distinguish pathway exits from normal portfolio construction flow
+- approval stats now include expired approvals
+
+Portfolio Hub UI behavior:
+
+- holdings rows now include direct links into Adhoc Analyzer and Options Analyzer
+- running Portfolio Hub Opus review can return either:
+  - refreshed recommendations for only the holdings that currently need review
+  - or a no-op message if no holdings are stale / materially changed / near earnings
 
 Note: `MAX_DAILY_TRADES` is no longer part of the active configuration model.
 

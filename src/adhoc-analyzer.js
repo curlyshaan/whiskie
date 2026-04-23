@@ -3,34 +3,25 @@ import * as db from './db.js';
 import claude, { MODELS } from './claude.js';
 import fmp from './fmp.js';
 import tradier from './tradier.js';
-import tavily from './tavily.js';
 import { researchCatalysts } from './catalyst-research.js';
 import stockProfiles, { cancelProfileBuild, getProfileFreshness, isProfileBuildCancelled } from './stock-profiles.js';
+import newsCacheService from './services/news-cache-service.js';
+import quoteService from './services/quote-service.js';
+import profileBuildService from './services/profile-build-service.js';
+import opusCacheService from './services/opus-cache-service.js';
 
 const router = express.Router();
-const activeProfileBuilds = new Map();
-
 /**
  * AdhocAnalyzer - Manual stock analysis tool
  * Analyzes any stock with Opus extended thinking
  */
 
-function ensureSingleProfileBuild(symbol, logLabel, buildFn) {
-  if (activeProfileBuilds.has(symbol)) {
-    console.log(`   ⏳ Reusing in-progress stock profile build for ${symbol} (${logLabel})`);
-    return activeProfileBuilds.get(symbol);
+function sanitizeTicker(input) {
+  const cleaned = String(input || '').trim().replace(/[^A-Z.]/gi, '').toUpperCase();
+  if (!cleaned || cleaned.length > 10) {
+    throw new Error('Invalid ticker format');
   }
-
-  const buildPromise = (async () => {
-    try {
-      return await buildFn();
-    } finally {
-      activeProfileBuilds.delete(symbol);
-    }
-  })();
-
-  activeProfileBuilds.set(symbol, buildPromise);
-  return buildPromise;
+  return cleaned;
 }
 
 /**
@@ -526,10 +517,27 @@ router.get('/', async (req, res) => {
       html += \`<div class="check-icon \${data.checks.hasProfile ? 'yes' : 'no'}">\${data.checks.hasProfile ? '✓' : '✗'}</div>\`;
       html += '<div>';
       html += \`Has Stock Profile: \${data.checks.hasProfile ? 'Yes' : 'No'}\`;
+      if (data.checks.profileWasAutoBuilt) {
+        html += '<br><span style="color: #9ca3af; font-size: 0.9rem;">Profile was auto-built for this analysis</span>';
+      } else if (data.checks.profileWasAutoRefreshed) {
+        html += '<br><span style="color: #9ca3af; font-size: 0.9rem;">Profile was auto-refreshed before analysis</span>';
+      }
       html += '</div>';
       html += '</div>';
 
       html += '</div>';
+
+      if (Array.isArray(data.warnings) && data.warnings.length) {
+        html += '<div class="result-section">';
+        html += '<h2>Warnings</h2>';
+        html += '<div class="profile-content">';
+        data.warnings.forEach(warning => {
+          html += '<div class="profile-section">';
+          html += '<p>' + warning + '</p>';
+          html += '</div>';
+        });
+        html += '</div></div>';
+      }
 
       // Stock profile display
       if (data.profile) {
@@ -602,6 +610,21 @@ router.get('/', async (req, res) => {
         html += '</div>';
       }
 
+      if (data.optionsAlternative?.recommendation) {
+        const recommendation = data.optionsAlternative.recommendation;
+        html += '<div class="result-section">';
+        html += '<h2>Options Alternative</h2>';
+        html += '<div class="summary-grid">';
+        html += renderSummaryCard('Type', recommendation.type);
+        html += renderSummaryCard('Strategy', recommendation.strategyType || 'n/a');
+        html += renderSummaryCard('Reason', recommendation.reason || 'n/a');
+        html += '</div>';
+        html += '<div style="margin-top:12px;">';
+        html += '<a class="submit-btn" href="/options-analyzer?symbol=' + encodeURIComponent(data.symbol) + '&intentHorizon=medium_term">Open full options analysis</a>';
+        html += '</div>';
+        html += '</div>';
+      }
+
       // Opus recommendation
       html += '<div class="result-section">';
       html += '<div class="opus-recommendation">';
@@ -643,8 +666,9 @@ router.post('/analyze', async (req, res) => {
       return res.status(400).json({ error: 'Ticker and intent are required' });
     }
 
-    const symbol = ticker.toUpperCase();
+    const symbol = sanitizeTicker(ticker);
     console.log(`\n🔍 Adhoc analysis requested: ${symbol} (${intent})`);
+    const warnings = [];
 
     // Step 1: Check if stock is in universe
     const universeCheck = await db.query(
@@ -703,20 +727,25 @@ router.post('/analyze', async (req, res) => {
           ? `   🔬 No stock profile found for ${symbol}; building before adhoc analysis...`
           : `   🔄 Stock profile for ${symbol} is stale (${profileFreshness.daysOld} days); refreshing before adhoc analysis...`
       );
-      await ensureSingleProfileBuild(symbol, 'adhoc-analysis', () => stockProfiles.ensureFreshStockProfile(symbol, { staleAfterDays: 14 }));
-      profileCheck = await db.query(
-        'SELECT * FROM stock_profiles WHERE symbol = $1',
-        [symbol]
-      );
-      hasProfile = profileCheck.rows.length > 0;
-      profile = hasProfile ? profileCheck.rows[0] : null;
-      profileWasAutoBuilt = !profileFreshness.hasProfile && hasProfile;
-      profileWasAutoRefreshed = profileFreshness.isStale && hasProfile;
+      try {
+        const buildResult = await profileBuildService.ensureFreshProfile(symbol, { staleAfterDays: 14 });
+        profileCheck = await db.query(
+          'SELECT * FROM stock_profiles WHERE symbol = $1',
+          [symbol]
+        );
+        hasProfile = profileCheck.rows.length > 0;
+        profile = hasProfile ? profileCheck.rows[0] : null;
+        profileWasAutoBuilt = buildResult?.action === 'built' || (!profileFreshness.hasProfile && hasProfile);
+        profileWasAutoRefreshed = buildResult?.action === 'refreshed' || (profileFreshness.isStale && hasProfile);
+      } catch (error) {
+        console.warn(`   ⚠️ Profile build failed for ${symbol}, proceeding without profile: ${error.message}`);
+        warnings.push('Stock profile unavailable - analysis proceeded with fundamentals/news context only');
+      }
     }
 
     // Step 4: Get current market data
     const [quote, ratios, keyMetrics, deepBundle] = await Promise.all([
-      fmp.getQuote(symbol),
+      quoteService.getQuote(symbol),
       fmp.getRatiosTTM(symbol),
       fmp.getKeyMetricsTTM(symbol),
       fmp.getDeepAnalysisBundle(symbol)
@@ -738,7 +767,7 @@ router.post('/analyze', async (req, res) => {
     // Step 6: Get recent news
     let news = [];
     try {
-      news = await tavily.searchStructuredStockContext(symbol, { maxResults: 5 });
+      news = await newsCacheService.getStructuredStockContext(symbol, { maxResults: 5 });
     } catch (error) {
       console.warn(`   ⚠️ Tavily structured search failed for ${symbol}: ${error.message}`);
       news = [];
@@ -763,7 +792,7 @@ router.post('/analyze', async (req, res) => {
     }
 
     // Step 9: Build Opus prompt
-    const prompt = buildOpusPrompt({
+    const promptContext = {
       symbol,
       intent,
       costBasis,
@@ -790,18 +819,33 @@ router.post('/analyze', async (req, res) => {
       watchlistReviewPriority,
       watchlistSecondaryPathways,
       positionDetails
+    };
+    const prompt = buildOpusPrompt(promptContext);
+    const analysisCacheKey = opusCacheService.buildKey({
+      feature: 'adhoc',
+      symbol,
+      intent,
+      costBasis: costBasis || null,
+      stopLoss: stopLoss || null,
+      takeProfit: takeProfit || null,
+      profileVersion: profile?.profile_version || null
     });
 
-    // Step 10: Call Opus with extended thinking
-    console.log(`   🧠 Calling Opus with 30k token extended thinking...`);
-    const messages = [{ role: 'user', content: prompt }];
-    const response = await claude.sendMessage(
-      messages,
-      MODELS.OPUS,
-      null,
-      true, // enableThinking
-      30000 // 30k token budget
-    );
+    let response = opusCacheService.get(analysisCacheKey);
+    if (!response) {
+      console.log(`   🧠 Calling Opus with 30k token extended thinking...`);
+      const messages = [{ role: 'user', content: prompt }];
+      response = await claude.sendMessage(
+        messages,
+        MODELS.OPUS,
+        null,
+        true,
+        30000
+      );
+      opusCacheService.set(analysisCacheKey, response);
+    } else {
+      console.log(`   ⚡ Reusing cached Opus analysis for ${symbol}`);
+    }
 
     // Extract text from response
     let opusRecommendation = '';
@@ -814,6 +858,18 @@ router.post('/analyze', async (req, res) => {
 
     const parsedRecommendation = parseStructuredRecommendation(opusRecommendation);
     opusRecommendation = formatOpusResponse(opusRecommendation);
+    let optionsAlternative = null;
+    if (parsedRecommendation?.decision === 'BUY') {
+      try {
+        const optionsAnalyzer = (await import('./options-analyzer.js')).default;
+        optionsAlternative = await optionsAnalyzer.analyzeSymbol({
+          symbol,
+          intentHorizon: 'medium_term'
+        });
+      } catch (error) {
+        console.warn(`   ⚠️ Could not build options alternative for ${symbol}: ${error.message}`);
+      }
+    }
 
     // Return results
     res.json({
@@ -832,6 +888,8 @@ router.post('/analyze', async (req, res) => {
         profileWasAutoBuilt,
         profileWasAutoRefreshed
       },
+      warnings,
+      optionsAlternative,
       profile: profile ? {
         business_model: profile.business_model,
         moats: profile.moats,
@@ -856,8 +914,9 @@ router.post('/build-profile', async (req, res) => {
     }
 
     console.log(`\n🔬 Manual stock profile build requested: ${symbol}`);
-    const reusedExistingBuild = activeProfileBuilds.has(symbol);
-    const profile = await ensureSingleProfileBuild(symbol, 'manual-build', () => stockProfiles.buildStockProfile(symbol));
+    const reusedExistingBuild = profileBuildService.hasActiveBuild(symbol);
+    const buildResult = await profileBuildService.ensureFreshProfile(symbol, { staleAfterDays: 0 });
+    const profile = buildResult?.profile || await db.getLatestStockProfile(symbol);
     res.json({ success: true, symbol, profile, reusedExistingBuild });
   } catch (error) {
     console.error('❌ Error building adhoc stock profile:', error);
@@ -886,7 +945,7 @@ router.post('/cancel-profile-build', async (req, res) => {
 
 router.get('/profile-build-status/:symbol', async (req, res) => {
   const symbol = String(req.params?.symbol || '').trim().toUpperCase();
-  const active = activeProfileBuilds.has(symbol);
+  const active = profileBuildService.hasActiveBuild(symbol);
   res.json({
     symbol,
     active,
@@ -907,8 +966,9 @@ router.get('/debug-build-profile', async (req, res) => {
     }
 
     console.log(`\n🔬 Debug stock profile build requested: ${symbol}`);
-    const reusedExistingBuild = activeProfileBuilds.has(symbol);
-    const profile = await ensureSingleProfileBuild(symbol, 'debug-build', () => stockProfiles.buildStockProfile(symbol));
+    const reusedExistingBuild = profileBuildService.hasActiveBuild(symbol);
+    const buildResult = await profileBuildService.ensureFreshProfile(symbol, { staleAfterDays: 0 });
+    const profile = buildResult?.profile || await db.getLatestStockProfile(symbol);
     res.json({ success: true, symbol, profile, reusedExistingBuild });
   } catch (error) {
     console.error('❌ Error in adhoc debug stock profile build:', error);

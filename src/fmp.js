@@ -581,6 +581,21 @@ class FMPClient {
     return data || [];
   }
 
+  async getHistoricalEarnings(symbol, limit = 8) {
+    const data = await this.request(`/earnings`, { symbol });
+    return Array.isArray(data) ? data.slice(0, limit) : [];
+  }
+
+  async getStockSplits(symbol) {
+    const data = await this.request(`/splits`, { symbol });
+    return data || [];
+  }
+
+  async getDividends(symbol) {
+    const data = await this.request(`/dividends`, { symbol });
+    return data || [];
+  }
+
   /**
    * Get insider trading activity for a symbol
    * Returns corporate insider trades (executives, directors, 10% owners)

@@ -180,6 +180,98 @@ export async function initDatabase() {
 
     await client.query(`
       ALTER TABLE portfolio_hub_advice_history
+      ADD COLUMN IF NOT EXISTS executed_shares DECIMAL(14, 4) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS execution_date TIMESTAMP;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_baseline (
+        id SERIAL PRIMARY KEY,
+        account_group VARCHAR(50) NOT NULL,
+        baseline_date DATE NOT NULL,
+        total_value DECIMAL(14, 2) NOT NULL,
+        positions_snapshot JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(account_group, baseline_date)
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS exit_audit_log (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        action_type VARCHAR(50) NOT NULL,
+        trigger_source VARCHAR(50),
+        trigger_reason TEXT,
+        trigger_price DECIMAL(14, 4),
+        quantity DECIMAL(14, 4),
+        status VARCHAR(20) DEFAULT 'pending',
+        approval_id INTEGER,
+        executed_price DECIMAL(14, 4),
+        one_week_price DECIMAL(14, 4),
+        one_week_return_pct DECIMAL(10, 4),
+        benchmark_symbol VARCHAR(10),
+        benchmark_one_week_return_pct DECIMAL(10, 4),
+        relative_one_week_return_pct DECIMAL(10, 4),
+        follow_through_updated_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wash_sale_log (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        sale_transaction_id INTEGER,
+        replacement_transaction_id INTEGER,
+        sale_date DATE NOT NULL,
+        replacement_date DATE,
+        disallowed_loss DECIMAL(14, 4) NOT NULL,
+        replacement_shares DECIMAL(14, 4) NOT NULL,
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS closed_position_lots (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        position_type VARCHAR(10) DEFAULT 'long',
+        open_lot_id INTEGER,
+        close_transaction_id INTEGER,
+        quantity DECIMAL(14, 4) NOT NULL,
+        entry_date DATE,
+        exit_date DATE NOT NULL,
+        cost_basis DECIMAL(14, 4) NOT NULL,
+        exit_price DECIMAL(14, 4) NOT NULL,
+        realized_pnl DECIMAL(14, 4) NOT NULL,
+        proceeds DECIMAL(14, 4),
+        holding_days INTEGER,
+        wash_sale_deferred_loss DECIMAL(14, 4) DEFAULT 0,
+        metadata JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS weekly_review_history (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        thesis_state VARCHAR(20),
+        position_action VARCHAR(20),
+        stop_loss DECIMAL(14, 4),
+        take_profit DECIMAL(14, 4),
+        analysis_text TEXT,
+        catalyst_summary TEXT,
+        source VARCHAR(50) DEFAULT 'weekly_review',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      ALTER TABLE portfolio_hub_advice_history
       ADD COLUMN IF NOT EXISTS long_return_pct DECIMAL(8, 4),
       ADD COLUMN IF NOT EXISTS short_return_pct DECIMAL(8, 4),
       ADD COLUMN IF NOT EXISTS sector_snapshot JSONB,
@@ -192,7 +284,14 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS short_performance_value DECIMAL(14, 2),
       ADD COLUMN IF NOT EXISTS source_label VARCHAR(100),
       ADD COLUMN IF NOT EXISTS opus_review JSONB,
-      ADD COLUMN IF NOT EXISTS opus_review_created_at TIMESTAMP;
+      ADD COLUMN IF NOT EXISTS opus_review_created_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS benchmark_symbol VARCHAR(10),
+      ADD COLUMN IF NOT EXISTS benchmark_return_pct DECIMAL(10, 4),
+      ADD COLUMN IF NOT EXISTS benchmark_return_value DECIMAL(14, 2),
+      ADD COLUMN IF NOT EXISTS active_return_pct DECIMAL(10, 4),
+      ADD COLUMN IF NOT EXISTS active_return_value DECIMAL(14, 2),
+      ADD COLUMN IF NOT EXISTS risk_metrics JSONB,
+      ADD COLUMN IF NOT EXISTS etf_rotation_context JSONB;
     `);
 
     // AI decisions - log all AI analysis and reasoning
@@ -556,7 +655,12 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS max_holding_days INTEGER,
       ADD COLUMN IF NOT EXISTS fundamental_stop_conditions JSONB,
       ADD COLUMN IF NOT EXISTS catalysts JSONB,
-      ADD COLUMN IF NOT EXISTS news_links JSONB;
+      ADD COLUMN IF NOT EXISTS news_links JSONB,
+      ADD COLUMN IF NOT EXISTS remaining_quantity DECIMAL(14, 4),
+      ADD COLUMN IF NOT EXISTS realized_pnl DECIMAL(14, 4) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS wash_sale_adjustment DECIMAL(14, 4) DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS replacement_for_loss BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP;
     `);
 
     // Stock universe table - all stocks Whiskie analyzes (FMP-aligned)
@@ -1452,6 +1556,36 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS conviction_override_log (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        regime VARCHAR(20) NOT NULL,
+        vix_level DECIMAL(5,2),
+        market_cap BIGINT,
+        iv DECIMAL(5,4),
+        conviction_thesis TEXT,
+        technical_confirmation BOOLEAN,
+        position_size DECIMAL(5,4),
+        outcome VARCHAR(20),
+        exit_date TIMESTAMP,
+        exit_pnl DECIMAL(10,2),
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_conviction_override_symbol ON conviction_override_log(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_conviction_override_regime ON conviction_override_log(regime);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_conviction_override_created ON conviction_override_log(created_at);
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS learning_insights (
         id SERIAL PRIMARY KEY,
         insight_date DATE NOT NULL,
@@ -1566,6 +1700,24 @@ export async function initDatabase() {
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_options_analysis_runs_created_at ON options_analysis_runs(created_at);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS earnings_analysis_log (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        analysis_phase VARCHAR(20) NOT NULL,
+        recommendation VARCHAR(30),
+        reasoning TEXT,
+        position_snapshot JSONB,
+        earnings_snapshot JSONB,
+        options_snapshot JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_earnings_analysis_log_symbol ON earnings_analysis_log(symbol);
     `);
 
     // Error logging table
@@ -1897,6 +2049,7 @@ export async function createPortfolioHubTransaction(transaction) {
   const normalizedShares = transaction.shares == null || transaction.shares === '' ? null : Number(transaction.shares);
   const normalizedPrice = transaction.price == null || transaction.price === '' ? null : Number(transaction.price);
   const normalizedCash = transaction.cash_amount == null || transaction.cash_amount === '' ? null : Number(transaction.cash_amount);
+  const normalizedTradeDate = transaction.trade_date || new Date().toISOString().split('T')[0];
 
   const validTypes = new Set(['buy', 'sell', 'short', 'cover', 'deposit', 'withdraw']);
   if (!validTypes.has(normalizedType)) {
@@ -1962,6 +2115,59 @@ export async function createPortfolioHubTransaction(transaction) {
       throw new Error(`Transaction would make account cash negative (${nextCashBalance.toFixed(2)}). Update the account cash balance first if the broker balance already changed.`);
     }
 
+    if (normalizedType === 'sell' || normalizedType === 'cover') {
+      const priorRows = await client.query(
+        `SELECT transaction_type, shares
+         FROM portfolio_hub_transactions
+         WHERE account_id = $1 AND symbol = $2
+         ORDER BY trade_date ASC, id ASC`,
+        [transaction.account_id, normalizedSymbol]
+      );
+
+      let runningShares = 0;
+      for (const row of priorRows.rows) {
+        const type = String(row.transaction_type || '').toLowerCase();
+        const shares = Number(row.shares || 0);
+        if (normalizedType === 'sell') {
+          if (type === 'buy') runningShares += shares;
+          if (type === 'sell') runningShares -= shares;
+        } else {
+          if (type === 'short') runningShares += shares;
+          if (type === 'cover') runningShares -= shares;
+        }
+      }
+
+      if (normalizedShares > runningShares + 0.0001) {
+        throw new Error(`${normalizedType} exceeds tracked shares for ${normalizedSymbol} in this account`);
+      }
+    }
+
+    const duplicateCheck = await client.query(
+      `SELECT id
+       FROM portfolio_hub_transactions
+       WHERE account_id = $1
+         AND COALESCE(symbol, '') = COALESCE($2, '')
+         AND transaction_type = $3
+         AND COALESCE(shares, 0) = COALESCE($4, 0)
+         AND COALESCE(price, 0) = COALESCE($5, 0)
+         AND COALESCE(cash_amount, 0) = COALESCE($6, 0)
+         AND trade_date = $7
+       LIMIT 1`,
+      [
+        transaction.account_id,
+        normalizedSymbol,
+        normalizedType,
+        normalizedShares,
+        normalizedPrice,
+        tradeCashValue,
+        normalizedTradeDate
+      ]
+    );
+
+    if (duplicateCheck.rows.length > 0) {
+      throw new Error(`Duplicate Portfolio Hub transaction detected for ${normalizedSymbol || normalizedType} on ${normalizedTradeDate}`);
+    }
+
     const result = await client.query(
       `INSERT INTO portfolio_hub_transactions (
          account_id, symbol, transaction_type, shares, price, cash_amount,
@@ -1974,11 +2180,11 @@ export async function createPortfolioHubTransaction(transaction) {
         normalizedType,
         normalizedShares,
         normalizedPrice,
-        normalizedCash,
+        tradeCashValue,
         transaction.stop_loss == null || transaction.stop_loss === '' ? null : Number(transaction.stop_loss),
         transaction.take_profit == null || transaction.take_profit === '' ? null : Number(transaction.take_profit),
         transaction.notes || null,
-        transaction.trade_date || null
+        normalizedTradeDate
       ]
     );
 
@@ -2001,6 +2207,309 @@ export async function createPortfolioHubTransaction(transaction) {
   } finally {
     client.release();
   }
+}
+
+
+function normalizeLotQuantity(value) {
+  const quantity = Number(value);
+  return Number.isFinite(quantity) ? Number(quantity.toFixed(4)) : 0;
+}
+
+function computeRealizedPnL(positionType, exitPrice, costBasis, quantity) {
+  const normalizedQty = Math.abs(Number(quantity || 0));
+  if (!normalizedQty) return 0;
+  if (String(positionType || 'long').toLowerCase() === 'short') {
+    return Number(((Number(costBasis || 0) - Number(exitPrice || 0)) * normalizedQty).toFixed(4));
+  }
+  return Number(((Number(exitPrice || 0) - Number(costBasis || 0)) * normalizedQty).toFixed(4));
+}
+
+export async function getOpenPositionLots(symbol, positionType = null) {
+  const params = [symbol];
+  let where = `symbol = $1 AND COALESCE(remaining_quantity, quantity) > 0`;
+  if (positionType) {
+    params.push(positionType);
+    where += ` AND COALESCE(position_type, 'long') = $2`;
+  }
+
+  const result = await pool.query(
+    `SELECT *, COALESCE(remaining_quantity, quantity) AS open_quantity
+     FROM position_lots
+     WHERE ${where}
+     ORDER BY entry_date ASC, id ASC`,
+    params
+  );
+  return result.rows || [];
+}
+
+export async function recordClosedPositionLot(entry) {
+  const result = await pool.query(
+    `INSERT INTO closed_position_lots (
+      symbol, position_type, open_lot_id, close_transaction_id, quantity,
+      entry_date, exit_date, cost_basis, exit_price, realized_pnl, proceeds,
+      holding_days, wash_sale_deferred_loss, metadata
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    RETURNING *`,
+    [
+      entry.symbol,
+      entry.positionType || 'long',
+      entry.openLotId || null,
+      entry.closeTransactionId || null,
+      entry.quantity,
+      entry.entryDate || null,
+      entry.exitDate,
+      entry.costBasis,
+      entry.exitPrice,
+      entry.realizedPnL,
+      entry.proceeds ?? null,
+      entry.holdingDays ?? null,
+      entry.washSaleDeferredLoss ?? 0,
+      entry.metadata ? JSON.stringify(entry.metadata) : null
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+export async function applyLotClosure(symbol, positionType, closeQuantity, exitPrice, exitDate, closeTransactionId = null, metadata = {}) {
+  const normalizedQuantity = normalizeLotQuantity(closeQuantity);
+  if (!(normalizedQuantity > 0)) return [];
+
+  const openLots = await getOpenPositionLots(symbol, positionType);
+  let remaining = normalizedQuantity;
+  const closedLots = [];
+
+  for (const lot of openLots) {
+    if (remaining <= 0) break;
+    const lotOpenQuantity = normalizeLotQuantity(lot.open_quantity ?? lot.remaining_quantity ?? lot.quantity);
+    if (lotOpenQuantity <= 0) continue;
+
+    const closeFromLot = Math.min(remaining, lotOpenQuantity);
+    const realizedPnL = computeRealizedPnL(positionType, exitPrice, lot.cost_basis, closeFromLot);
+    const nextRemaining = normalizeLotQuantity(lotOpenQuantity - closeFromLot);
+    const nextRealized = Number((Number(lot.realized_pnl || 0) + realizedPnL).toFixed(4));
+
+    await pool.query(
+      `UPDATE position_lots
+       SET remaining_quantity = $2,
+           realized_pnl = $3,
+           closed_at = CASE WHEN $2 <= 0 THEN NOW() ELSE closed_at END,
+           last_reviewed = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [lot.id, nextRemaining, nextRealized]
+    );
+
+    const exitDateObj = exitDate ? new Date(exitDate) : new Date();
+    const entryDateObj = lot.entry_date ? new Date(lot.entry_date) : null;
+    const holdingDays = entryDateObj && !Number.isNaN(entryDateObj.getTime())
+      ? Math.max(0, Math.round((exitDateObj.getTime() - entryDateObj.getTime()) / 86400000))
+      : null;
+
+    const closedLot = await recordClosedPositionLot({
+      symbol,
+      positionType,
+      openLotId: lot.id,
+      closeTransactionId,
+      quantity: closeFromLot,
+      entryDate: lot.entry_date || null,
+      exitDate: exitDate ? String(exitDate).split('T')[0] : new Date().toISOString().split('T')[0],
+      costBasis: Number(lot.cost_basis || 0),
+      exitPrice: Number(exitPrice || 0),
+      realizedPnL,
+      proceeds: Number((Number(exitPrice || 0) * closeFromLot).toFixed(4)),
+      holdingDays,
+      metadata: {
+        ...metadata,
+        lotType: lot.lot_type,
+        originalLotQuantity: normalizeLotQuantity(lot.quantity)
+      }
+    });
+
+    closedLots.push(closedLot);
+    remaining = normalizeLotQuantity(remaining - closeFromLot);
+  }
+
+  return closedLots;
+}
+
+export async function detectWashSaleCandidates(symbol, replacementDate, positionType = 'long') {
+  const result = await pool.query(
+    `SELECT *
+     FROM closed_position_lots
+     WHERE symbol = $1
+       AND COALESCE(position_type, 'long') = $2
+       AND realized_pnl < 0
+       AND exit_date >= ($3::date - INTERVAL '30 days')
+       AND exit_date <= $3::date
+     ORDER BY exit_date DESC, id DESC`,
+    [symbol, positionType, replacementDate]
+  );
+  return result.rows || [];
+}
+
+export async function recordWashSaleAdjustment(entry) {
+  const result = await pool.query(
+    `INSERT INTO wash_sale_log (
+      symbol, sale_transaction_id, replacement_transaction_id, sale_date,
+      replacement_date, disallowed_loss, replacement_shares, notes
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING *`,
+    [
+      entry.symbol,
+      entry.saleTransactionId ?? null,
+      entry.replacementTransactionId ?? null,
+      entry.saleDate,
+      entry.replacementDate ?? null,
+      entry.disallowedLoss,
+      entry.replacementShares,
+      entry.notes || null
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+export async function applyWashSaleAdjustments(symbol, positionType, replacementQuantity, replacementLotId, replacementDate, replacementTransactionId = null) {
+  const candidates = await detectWashSaleCandidates(symbol, replacementDate, positionType);
+  if (!candidates.length) return [];
+
+  let remainingShares = normalizeLotQuantity(replacementQuantity);
+  const adjustments = [];
+
+  for (const candidate of candidates) {
+    if (remainingShares <= 0) break;
+
+    const lossShares = normalizeLotQuantity(candidate.quantity);
+    const matchedShares = Math.min(remainingShares, lossShares);
+    if (!(matchedShares > 0)) continue;
+
+    const totalLoss = Math.abs(Number(candidate.realized_pnl || 0));
+    if (!(totalLoss > 0)) continue;
+
+    const disallowedLoss = Number(((totalLoss / Math.max(lossShares, 0.0001)) * matchedShares).toFixed(4));
+
+    await pool.query(
+      `UPDATE position_lots
+       SET cost_basis = cost_basis + ($2 / NULLIF(COALESCE(remaining_quantity, quantity), 0)),
+           wash_sale_adjustment = COALESCE(wash_sale_adjustment, 0) + $2,
+           replacement_for_loss = TRUE,
+           last_reviewed = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [replacementLotId, disallowedLoss]
+    );
+
+    await pool.query(
+      `UPDATE closed_position_lots
+       SET wash_sale_deferred_loss = COALESCE(wash_sale_deferred_loss, 0) + $2
+       WHERE id = $1`,
+      [candidate.id, disallowedLoss]
+    );
+
+    const log = await recordWashSaleAdjustment({
+      symbol,
+      saleTransactionId: candidate.close_transaction_id,
+      replacementTransactionId,
+      saleDate: candidate.exit_date,
+      replacementDate,
+      disallowedLoss,
+      replacementShares: matchedShares,
+      notes: `Deferred loss applied to replacement lot ${replacementLotId}`
+    });
+
+    adjustments.push(log);
+    remainingShares = normalizeLotQuantity(remainingShares - matchedShares);
+  }
+
+  return adjustments;
+}
+
+export async function getWashSaleSummary(symbol = null) {
+  const params = [];
+  let where = '';
+  if (symbol) {
+    params.push(symbol);
+    where = 'WHERE symbol = $1';
+  }
+
+  const result = await pool.query(
+    `SELECT symbol,
+            COUNT(*) AS events,
+            COALESCE(SUM(disallowed_loss), 0) AS deferred_loss,
+            MAX(created_at) AS last_event_at
+     FROM wash_sale_log
+     ${where}
+     GROUP BY symbol
+     ORDER BY deferred_loss DESC, symbol ASC`,
+    params
+  );
+  return result.rows || [];
+}
+
+export async function getWeeklyReviewHistory(symbol, limit = 4) {
+  const result = await pool.query(
+    `SELECT *
+     FROM weekly_review_history
+     WHERE symbol = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [symbol, limit]
+  );
+  return result.rows || [];
+}
+
+export async function saveWeeklyReviewHistory(entry) {
+  const result = await pool.query(
+    `INSERT INTO weekly_review_history (
+      symbol, thesis_state, position_action, stop_loss, take_profit,
+      analysis_text, catalyst_summary, source
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING *`,
+    [
+      entry.symbol,
+      entry.thesisState || null,
+      entry.positionAction || null,
+      entry.stopLoss ?? null,
+      entry.takeProfit ?? null,
+      entry.analysisText || '',
+      entry.catalystSummary || null,
+      entry.source || 'weekly_review'
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+export async function updateExitAuditFollowThrough(exitAuditId, updates = {}) {
+  const result = await pool.query(
+    `UPDATE exit_audit_log
+     SET one_week_price = COALESCE($2, one_week_price),
+         one_week_return_pct = COALESCE($3, one_week_return_pct),
+         benchmark_symbol = COALESCE($4, benchmark_symbol),
+         benchmark_one_week_return_pct = COALESCE($5, benchmark_one_week_return_pct),
+         relative_one_week_return_pct = COALESCE($6, relative_one_week_return_pct),
+         follow_through_updated_at = NOW(),
+         updated_at = NOW()
+     WHERE id = $1
+     RETURNING *`,
+    [
+      exitAuditId,
+      updates.oneWeekPrice ?? null,
+      updates.oneWeekReturnPct ?? null,
+      updates.benchmarkSymbol ?? null,
+      updates.benchmarkOneWeekReturnPct ?? null,
+      updates.relativeOneWeekReturnPct ?? null
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getPendingExitFollowThrough(referenceDate = new Date()) {
+  const result = await pool.query(
+    `SELECT *
+     FROM exit_audit_log
+     WHERE created_at <= ($1::timestamp - INTERVAL '7 days')
+       AND (follow_through_updated_at IS NULL OR one_week_price IS NULL)
+     ORDER BY created_at ASC`,
+    [referenceDate]
+  );
+  return result.rows || [];
 }
 
 export async function recordPortfolioHubAdviceHistory(entries = []) {
@@ -2042,6 +2551,84 @@ export async function recordPortfolioHubAdviceHistory(entries = []) {
       ]
     );
   }
+}
+
+export async function upsertPortfolioHubBaseline(accountGroup, baselineDate, totalValue, positionsSnapshot) {
+  const result = await pool.query(
+    `INSERT INTO portfolio_hub_baseline (
+      account_group, baseline_date, total_value, positions_snapshot
+    ) VALUES ($1, $2, $3, $4)
+    ON CONFLICT (account_group, baseline_date)
+    DO NOTHING
+    RETURNING *`,
+    [
+      accountGroup,
+      baselineDate,
+      totalValue,
+      positionsSnapshot ? JSON.stringify(positionsSnapshot) : null
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
+export async function getPortfolioHubBaseline(accountGroup, baselineDate) {
+  const result = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_baseline
+     WHERE account_group = $1
+       AND baseline_date <= $2
+     ORDER BY baseline_date DESC
+     LIMIT 1`,
+    [accountGroup, baselineDate]
+  );
+
+  return result.rows[0] || null;
+}
+
+export async function recordPortfolioHubExecution(symbol, positionType, shares, actionLabel) {
+  const result = await pool.query(
+    `UPDATE portfolio_hub_advice_history
+     SET executed_shares = COALESCE(executed_shares, 0) + $1,
+         execution_date = NOW()
+     WHERE id = (
+       SELECT id
+       FROM portfolio_hub_advice_history
+       WHERE symbol = $2
+         AND COALESCE(position_type, 'unknown') = COALESCE($3, 'unknown')
+         AND COALESCE(opus_review->>'actionLabel', '') = COALESCE($4, '')
+       ORDER BY created_at DESC
+       LIMIT 1
+     )
+     RETURNING *`,
+    [shares, symbol, positionType, actionLabel]
+  );
+
+  return result.rows[0] || null;
+}
+
+export async function insertExitAuditLog(entry) {
+  const result = await pool.query(
+    `INSERT INTO exit_audit_log (
+      symbol, action_type, trigger_source, trigger_reason, trigger_price,
+      quantity, status, approval_id, executed_price, one_week_price, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+    RETURNING *`,
+    [
+      entry.symbol,
+      entry.actionType,
+      entry.triggerSource || null,
+      entry.triggerReason || null,
+      entry.triggerPrice ?? null,
+      entry.quantity ?? null,
+      entry.status || 'pending',
+      entry.approvalId ?? null,
+      entry.executedPrice ?? null,
+      entry.oneWeekPrice ?? null
+    ]
+  );
+
+  return result.rows[0];
 }
 
 export async function getPortfolioHubAdviceHistorySince(date) {
@@ -3116,6 +3703,15 @@ export async function createPositionLot(lot) {
         lot.news_links ? JSON.stringify(lot.news_links) : null
       ]
     );
+    await pool.query(
+      `UPDATE position_lots
+       SET remaining_quantity = COALESCE(remaining_quantity, quantity),
+           realized_pnl = COALESCE(realized_pnl, 0),
+           wash_sale_adjustment = COALESCE(wash_sale_adjustment, 0),
+           replacement_for_loss = COALESCE(replacement_for_loss, FALSE)
+       WHERE id = $1`,
+      [result.rows[0].id]
+    );
     return result.rows[0];
   } catch (error) {
     console.error('Error creating position lot:', error);
@@ -3178,7 +3774,7 @@ export async function updatePositionLot(lotId, updates) {
       `UPDATE position_lots
        SET ${fields.join(', ')}, last_reviewed = CURRENT_TIMESTAMP
        WHERE id = $${paramCount}
-       RETURNING *`,
+       RETURNING *, COALESCE(remaining_quantity, quantity) AS open_quantity`,
       values
     );
 
@@ -3208,8 +3804,9 @@ export async function deletePositionLot(lotId) {
 export async function getAllPositionLots() {
   try {
     const result = await pool.query(
-      `SELECT * FROM position_lots
-       WHERE quantity > 0
+      `SELECT *, COALESCE(remaining_quantity, quantity) AS open_quantity
+       FROM position_lots
+       WHERE COALESCE(remaining_quantity, quantity) > 0
        ORDER BY symbol, lot_type`
     );
     return result.rows;
@@ -3513,6 +4110,27 @@ export async function saveOptionsAnalysisRun(run) {
       JSON.stringify(run.guardrails || []),
       run.profile_version ?? null,
       JSON.stringify(run.result_payload || {})
+    ]
+  );
+
+  return result.rows[0];
+}
+
+export async function logEarningsAnalysis(entry) {
+  const result = await pool.query(
+    `INSERT INTO earnings_analysis_log (
+      symbol, analysis_phase, recommendation, reasoning,
+      position_snapshot, earnings_snapshot, options_snapshot
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING *`,
+    [
+      entry.symbol,
+      entry.analysisPhase,
+      entry.recommendation || null,
+      entry.reasoning || null,
+      entry.positionSnapshot ? JSON.stringify(entry.positionSnapshot) : null,
+      entry.earningsSnapshot ? JSON.stringify(entry.earningsSnapshot) : null,
+      entry.optionsSnapshot ? JSON.stringify(entry.optionsSnapshot) : null
     ]
   );
 

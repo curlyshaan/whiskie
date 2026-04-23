@@ -1,5 +1,6 @@
 import * as db from './db.js';
 import fmp from './fmp.js';
+import quoteService from './services/quote-service.js';
 
 function normalizePathway(value) {
   const text = String(value || '').trim();
@@ -78,7 +79,7 @@ export async function buildPortfolioHubSymbolContext(symbols = []) {
        WHERE symbol = ANY($1)`,
       [normalizedSymbols]
     ).then(result => result.rows).catch(() => []),
-    Promise.all(normalizedSymbols.map(symbol => fmp.getQuote(symbol).catch(() => null)))
+    Promise.all(normalizedSymbols.map(symbol => quoteService.getQuote(symbol).catch(() => null)))
   ]);
 
   const earningsMap = new Map(earningsRows.map(row => [row.symbol, row.earnings_date]));

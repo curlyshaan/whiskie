@@ -1,9 +1,11 @@
 import tradier from './tradier.js';
 import fmp from './fmp.js';
-import tavily from './tavily.js';
 import claude, { MODELS } from './claude.js';
 import * as db from './db.js';
 import earningsGuard from './earnings-guard.js';
+import newsCacheService from './services/news-cache-service.js';
+import quoteService from './services/quote-service.js';
+import opusCacheService from './services/opus-cache-service.js';
 
 const HORIZON_CONFIG = {
   short_term: {
@@ -99,9 +101,8 @@ class OptionsAnalyzer {
     };
 
     if (updatedThesis.conviction === 'low' && updatedThesis.equity_preference === 'use_options') {
-      updatedThesis.equity_preference = 'no_trade';
       updatedThesis.risks.unshift('Low conviction — options premium at risk with no strong directional edge.');
-      updatedThesis.why_options_or_not = updatedThesis.why_options_or_not || 'Low-conviction options setups default to no-trade.';
+      updatedThesis.why_options_or_not = updatedThesis.why_options_or_not || 'Low-conviction options setup requires strict defined risk and careful sizing.';
     }
 
     return updatedThesis;
@@ -132,6 +133,29 @@ class OptionsAnalyzer {
         raw: option
       };
     });
+  }
+
+  isValidOptionData(option) {
+    if (!option || !option.optionType || !Number.isFinite(option.strike) || option.strike <= 0) return false;
+    if (!(option.bid > 0 && option.ask > 0 && option.bid < option.ask)) return false;
+    if (!Number.isFinite(option.delta) || Math.abs(option.delta) < 0.01) return false;
+    if (!Number.isFinite(option.iv) || option.iv < 0.01) return false;
+    if (option.optionType === 'call' && option.delta < 0) return false;
+    if (option.optionType === 'put' && option.delta > 0) return false;
+    return true;
+  }
+
+  calculateDaysToExpiration(expiration) {
+    const expirationDate = new Date(expiration);
+    if (Number.isNaN(expirationDate.getTime())) return null;
+    return Math.max(1, Math.round((expirationDate - new Date()) / (1000 * 60 * 60 * 24)));
+  }
+
+  calculateExpectedMove(currentPrice, ivDecimal, daysToExpiration) {
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0 || !Number.isFinite(ivDecimal) || ivDecimal <= 0 || !Number.isFinite(daysToExpiration)) {
+      return null;
+    }
+    return currentPrice * ivDecimal * Math.sqrt(daysToExpiration / 365);
   }
 
   getStockContextSummary(profile, watchlistEntry, approval, positions) {
@@ -204,10 +228,10 @@ class OptionsAnalyzer {
     const [minStrike, maxStrike] = strategy.strikeRange;
 
     return chain
+      .filter(option => this.isValidOptionData(option))
       .filter(option => option.optionType === strategy.optionType)
       .filter(option => option.strike >= currentPrice * minStrike && option.strike <= currentPrice * maxStrike)
       .filter(option => option.openInterest >= 50 || option.volume >= 10)
-      .filter(option => option.bid > 0 && option.ask > 0)
       .filter(option => ((option.ask - option.bid) / option.ask) <= 0.18)
       .filter(option => option.delta >= minDelta && option.delta <= maxDelta)
       .filter(option => {
@@ -222,6 +246,74 @@ class OptionsAnalyzer {
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 6);
+  }
+
+  buildSpreadCandidate(strategyType, candidates, currentPrice) {
+    if (!Array.isArray(candidates) || candidates.length < 2) return null;
+
+    const sorted = [...candidates].sort((a, b) => a.strike - b.strike);
+    if (strategyType === 'bull_call_spread') {
+      for (const longLeg of sorted) {
+        const shortLeg = sorted.find(candidate => candidate.strike > longLeg.strike);
+        if (!shortLeg) continue;
+        const netDebit = Number(((longLeg.mark - shortLeg.mark) * 100).toFixed(2));
+        if (!(netDebit > 0)) continue;
+        const width = shortLeg.strike - longLeg.strike;
+        return {
+          longLeg,
+          shortLeg,
+          netDebit,
+          maxProfit: Number(((width * 100) - netDebit).toFixed(2)),
+          maxLoss: netDebit,
+          breakEven: Number((longLeg.strike + (netDebit / 100)).toFixed(2))
+        };
+      }
+    }
+
+    if (strategyType === 'bear_put_spread') {
+      const descending = [...candidates].sort((a, b) => b.strike - a.strike);
+      for (const longLeg of descending) {
+        const shortLeg = descending.find(candidate => candidate.strike < longLeg.strike);
+        if (!shortLeg) continue;
+        const netDebit = Number(((longLeg.mark - shortLeg.mark) * 100).toFixed(2));
+        if (!(netDebit > 0)) continue;
+        const width = longLeg.strike - shortLeg.strike;
+        return {
+          longLeg,
+          shortLeg,
+          netDebit,
+          maxProfit: Number(((width * 100) - netDebit).toFixed(2)),
+          maxLoss: netDebit,
+          breakEven: Number((longLeg.strike - (netDebit / 100)).toFixed(2))
+        };
+      }
+    }
+
+    return null;
+  }
+
+  calculatePositionSizing(capital, recommendation, strategyResult) {
+    if (!Number.isFinite(Number(capital)) || Number(capital) <= 0) return null;
+    const riskBudget = Number(capital) * 0.02;
+
+    let perTradeRisk = null;
+    if (recommendation.strategyType === 'long_call' || recommendation.strategyType === 'long_put' || recommendation.strategyType === 'covered_call' || recommendation.strategyType === 'cash_secured_put' || recommendation.strategyType === 'protective_put') {
+      const contract = strategyResult?.candidates?.[0];
+      if (contract) perTradeRisk = Number((contract.mark * 100).toFixed(2));
+    } else if (strategyResult?.spreadDetails?.maxLoss) {
+      perTradeRisk = Number(strategyResult.spreadDetails.maxLoss);
+    }
+
+    if (!Number.isFinite(perTradeRisk) || perTradeRisk <= 0) return null;
+    const recommendedContracts = Math.max(1, Math.floor(riskBudget / perTradeRisk));
+
+    return {
+      riskBudget: Number(riskBudget.toFixed(2)),
+      costPerContract: perTradeRisk,
+      recommendedContracts,
+      totalRisk: Number((recommendedContracts * perTradeRisk).toFixed(2)),
+      portfolioAllocationPct: Number((((recommendedContracts * perTradeRisk) / Number(capital)) * 100).toFixed(2))
+    };
   }
 
   getStrikeToleranceWindow(currentPrice, strategy) {
@@ -361,20 +453,31 @@ class OptionsAnalyzer {
     const normalizedEventMode = String(eventMode || '').trim().toLowerCase();
 
     const [quote, fundamentals, profile, watchlistEntry, approval, positions, news, expirations] = await Promise.all([
-      fmp.getQuote(normalizedSymbol),
+      quoteService.getQuote(normalizedSymbol),
       fmp.getFundamentals(normalizedSymbol),
       db.getLatestStockProfile(normalizedSymbol),
       db.getLatestSaturdayWatchlistEntry(normalizedSymbol),
       db.getLatestPendingApprovalForSymbol(normalizedSymbol),
       db.getPositions(),
-      tavily.searchStructuredStockContext(normalizedSymbol, { maxResults: 5, depth: 'advanced', topic: 'news', timeRange: 'month' }).catch(() => []),
+      newsCacheService.getStructuredStockContext(normalizedSymbol, { maxResults: 5, depth: 'advanced', topic: 'news', timeRange: 'month' }).catch(() => []),
       tradier.getOptionsExpirations(normalizedSymbol)
     ]);
 
     const currentPrice = Number(quote?.price || fundamentals?.price || 0);
     if (!currentPrice) throw new Error(`No current price available for ${normalizedSymbol}`);
 
-    const rawThesis = await this.buildThesis(normalizedSymbol, intentHorizon, profile, fundamentals, quote, news, watchlistEntry, approval, positions);
+    const thesisCacheKey = opusCacheService.buildKey({
+      feature: 'options-thesis',
+      symbol: normalizedSymbol,
+      intentHorizon,
+      eventMode: normalizedEventMode || null,
+      profileVersion: profile?.profile_version || null
+    });
+    let rawThesis = opusCacheService.get(thesisCacheKey);
+    if (!rawThesis) {
+      rawThesis = await this.buildThesis(normalizedSymbol, intentHorizon, profile, fundamentals, quote, news, watchlistEntry, approval, positions);
+      opusCacheService.set(thesisCacheKey, rawThesis);
+    }
     const thesis = this.applyThesisRiskOverrides(rawThesis);
     const expirationWindow = this.getExpirationWindow(expirations, HORIZON_CONFIG[intentHorizon].minDays, HORIZON_CONFIG[intentHorizon].maxDays).slice(0, 6);
     if (!expirationWindow.length) {
@@ -410,10 +513,12 @@ class OptionsAnalyzer {
       const strategy = STRATEGY_LIBRARY[key];
       const strikeTolerance = this.getStrikeToleranceWindow(currentPrice, strategy);
       const candidates = this.filterContracts(normalizedChain, currentPrice, strategy, Boolean(heldPosition));
+      const spreadDetails = this.buildSpreadCandidate(strategy.strategyType, candidates, currentPrice);
       return {
         strategy,
         strikeTolerance,
         candidates,
+        spreadDetails,
         bestScore: candidates[0]?.score || 0
       };
     }).filter(result => result.candidates.length > 0);
@@ -430,6 +535,30 @@ class OptionsAnalyzer {
       sentimentSummary.atmImpliedVolatility >= 60 ? 'High IV environment — outright premium buys excluded, preferring defined-risk spreads.' : null,
       capital && capital < 100 ? 'Capital input is below preferred minimum for practical options sizing.' : null
     ].filter(Boolean);
+
+    const enrichedStrategyResults = strategyResults.map(result => {
+      const primaryExpiration = result.candidates[0]?.expiration || null;
+      const daysToExpiration = primaryExpiration ? this.calculateDaysToExpiration(primaryExpiration) : null;
+      const expectedMove = this.calculateExpectedMove(currentPrice, sentimentSummary.atmImpliedVolatility / 100, daysToExpiration);
+      const primaryContract = result.candidates[0] || null;
+      let breakEven = null;
+
+      if (result.spreadDetails?.breakEven) {
+        breakEven = result.spreadDetails.breakEven;
+      } else if (primaryContract && (result.strategy.strategyType === 'long_call' || result.strategy.strategyType === 'long_put')) {
+        breakEven = Number((primaryContract.strike + (result.strategy.optionType === 'call' ? primaryContract.mark : -primaryContract.mark)).toFixed(2));
+      }
+
+      return {
+        ...result,
+        daysToExpiration,
+        expectedMove: expectedMove != null ? Number(expectedMove.toFixed(2)) : null,
+        breakEven
+      };
+    });
+
+    const selectedStrategyResult = enrichedStrategyResults.find(result => result.strategy.strategyType === recommendation.strategyType) || null;
+    const positionSizing = this.calculatePositionSizing(capital, recommendation, selectedStrategyResult);
 
     const result = {
       symbol: normalizedSymbol,
@@ -458,13 +587,21 @@ class OptionsAnalyzer {
         strategyType: recommendation.strategyType,
         reason: recommendation.reason
       },
+      tradeMetrics: {
+        expectedMove: selectedStrategyResult?.expectedMove ?? null,
+        breakEven: selectedStrategyResult?.breakEven ?? null,
+        positionSizing
+      },
       mode: normalizedEventMode === 'earnings' ? 'earnings' : 'standard',
       optionsSentiment: sentimentSummary,
       expirationWindow,
-      candidateStrategies: strategyResults.map(result => ({
+      candidateStrategies: enrichedStrategyResults.map(result => ({
         strategyType: result.strategy.strategyType,
         rationale: result.strategy.rationale,
         strikeTolerance: result.strikeTolerance,
+        expectedMove: result.expectedMove,
+        breakEven: result.breakEven,
+        spreadDetails: result.spreadDetails,
         candidates: result.candidates
       })),
       warnings,

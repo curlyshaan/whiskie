@@ -217,15 +217,44 @@ class TradeApprovalManager {
     const approvalIds = [];
 
     for (const trade of trades) {
-      const id = await this.submitForApproval(trade);
+      const id = await this.submitForApproval(trade, true);
       approvalIds.push(id);
     }
 
-    // Send batch email notification
     await this.sendBatchApprovalEmail(approvalIds, trades);
 
     console.log(`📧 Batch of ${trades.length} trades submitted for approval`);
     return approvalIds;
+  }
+
+  async approveBatch(approvalIds = [], userId = 'user') {
+    const ids = [...new Set((approvalIds || []).map(id => Number(id)).filter(Number.isFinite))];
+    if (!ids.length) {
+      return { success: true, approvals: [] };
+    }
+
+    const approved = [];
+    for (const approvalId of ids) {
+      const result = await this.approveTrade(approvalId, userId);
+      approved.push(result);
+    }
+
+    return { success: true, approvals: approved };
+  }
+
+  async rejectBatch(approvalIds = [], reason = 'User rejected batch', userId = 'user') {
+    const ids = [...new Set((approvalIds || []).map(id => Number(id)).filter(Number.isFinite))];
+    if (!ids.length) {
+      return { success: true, approvals: [] };
+    }
+
+    const rejected = [];
+    for (const approvalId of ids) {
+      const result = await this.rejectTrade(approvalId, reason, userId);
+      rejected.push(result);
+    }
+
+    return { success: true, approvals: rejected };
   }
 
   /**
@@ -355,7 +384,11 @@ class TradeApprovalManager {
     // Check if expired
     if (new Date(approval.expires_at) < new Date()) {
       await db.query(
-        `UPDATE trade_approvals SET status = 'expired' WHERE id = $1`,
+        `UPDATE trade_approvals
+         SET status = 'expired',
+             rejected_at = NOW(),
+             rejection_reason = COALESCE(rejection_reason, 'Approval expired')
+         WHERE id = $1`,
         [approvalId]
       );
       throw new Error(`Approval ${approvalId} has expired`);
@@ -430,7 +463,9 @@ class TradeApprovalManager {
   async expirePendingApprovals() {
     const result = await db.query(
       `UPDATE trade_approvals
-       SET status = 'expired'
+       SET status = 'expired',
+           rejected_at = NOW(),
+           rejection_reason = COALESCE(rejection_reason, 'Approval expired')
        WHERE status = 'pending' AND expires_at < NOW()
        RETURNING id, symbol`
     );
@@ -497,6 +532,22 @@ class TradeApprovalManager {
     });
 
     return stats;
+  }
+
+  async getApprovalAnalytics() {
+    const result = await db.query(`
+      SELECT
+        COALESCE(source_phase, 'unknown') AS source_phase,
+        status,
+        COUNT(*) AS count,
+        AVG(EXTRACT(EPOCH FROM (COALESCE(approved_at, rejected_at, executed_at, NOW()) - created_at))) AS avg_decision_seconds
+      FROM trade_approvals
+      WHERE created_at > NOW() - INTERVAL '30 days'
+      GROUP BY COALESCE(source_phase, 'unknown'), status
+      ORDER BY source_phase ASC, status ASC
+    `);
+
+    return result.rows || [];
   }
 }
 

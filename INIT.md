@@ -39,6 +39,12 @@ Use this file as a quick-start memory reset for future sessions.
 - Phase 1 ranking is a hard prior; Phase 4 must justify overrides and emit 1:1 execution lines
 - there is no active daily trade-count cap in execution; weekly loss guard remains in the circuit breaker
 - Railway paper trading should use `TRADING_MODE=paper` even if `NODE_ENV=production`
+- short-risk limits now come from `risk-manager.js`; `short-manager.js` should not maintain separate portfolio short caps
+- VIX regime logic now includes `ELEVATED` conviction-short handling and `CAUTION` exceptional-short handling, plus conviction override logging
+- adhoc analyzer now supports graceful degraded analysis when profile refresh/build fails and can surface an options alternative for BUY setups
+- Portfolio Hub now links directly into adhoc/options analysis and Opus review only refreshes holdings that are stale, moving sharply, or near earnings
+- earnings pre-analysis now includes options earnings context and Portfolio Hub transaction saves reject oversells/overcovers at the account level
+- approvals page now shows pathway-exit origin via `source_phase` and includes expired approval stats
 
 ## Current provider docs
 

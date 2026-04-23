@@ -161,6 +161,7 @@ class TradeExecutor {
 
         // Mark as executed
         await tradeApproval.markExecuted(approval.id, result.order.id);
+        await this.syncExitAuditExecution(approval, approval.entry_price).catch(() => null);
 
         console.log(`   ✅ Short executed successfully`);
 
@@ -189,6 +190,7 @@ class TradeExecutor {
 
         // Mark as executed
         await tradeApproval.markExecuted(approval.id, order.id);
+        await this.syncExitAuditExecution(approval, order.entryPrice).catch(() => null);
 
         console.log(`   ✅ Trade executed successfully`);
       }
@@ -213,6 +215,18 @@ class TradeExecutor {
       console.error(`   ❌ Execution failed:`, error.message);
       throw error;
     }
+  }
+
+
+  async syncExitAuditExecution(approval, executedPrice) {
+    await db.query(
+      `UPDATE exit_audit_log
+       SET status = 'executed',
+           executed_price = COALESCE($2, executed_price),
+           updated_at = NOW()
+       WHERE approval_id = $1`,
+      [approval.id, executedPrice ?? null]
+    ).catch(() => null);
   }
 
   buildManagementPlan(approval) {

@@ -100,9 +100,28 @@ class RiskManager {
     try {
       const regime = await vixRegime.getRegime();
 
-      // Warn if attempting new shorts in elevated volatility
-      if (trade.action === 'buy' && trade.position_type === 'short' && !regime.newShortsAllowed) {
-        warnings.push(`VIX regime (${regime.name}) does not allow new short positions - volatility too high`);
+      if (trade.action === 'buy' && trade.position_type === 'short') {
+        if (!regime.newShortsAllowed && !regime.convictionShortsAllowed) {
+          warnings.push(`VIX regime (${regime.name}) does not allow new short positions - volatility too high`);
+        } else if (regime.convictionShortsAllowed && !regime.newShortsAllowed) {
+          const convictionValidation = await vixRegime.validateConvictionShort(
+            trade.symbol,
+            trade.marketCap || 0,
+            trade.iv || 0,
+            trade.convictionThesis || '',
+            trade.technicalConfirmation || false,
+            trade.nextEarningsDate || null
+          );
+
+          if (!convictionValidation.allowed) {
+            warnings.push(`${regime.name} regime conviction short criteria not met: ${convictionValidation.errors.join(', ')}`);
+          } else {
+            warnings.push(`${regime.name} regime: Conviction short allowed with ${(convictionValidation.sizeMultiplier * 100).toFixed(0)}% size reduction`);
+            if (convictionValidation.warnings.length > 0) {
+              warnings.push(...convictionValidation.warnings);
+            }
+          }
+        }
       }
 
       // Warn if attempting any new positions in panic mode

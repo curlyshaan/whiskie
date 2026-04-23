@@ -6,6 +6,43 @@ import email from './email.js';
 import tradier from './tradier.js';
 import thesisManager from './thesis-manager.js';
 import { resolveMarketPrice } from './utils.js';
+import optionsAnalyzer from './options-analyzer.js';
+
+async function getEarningsSurpriseHistory(symbol) {
+  const [surprises, earningsHistory] = await Promise.all([
+    fmp.getEarningsSurprises(symbol, 8).catch(() => []),
+    fmp.getHistoricalEarnings(symbol, 8).catch(() => [])
+  ]);
+
+  const avgSurprisePct = surprises.length
+    ? surprises.reduce((sum, row) => sum + Number(row.epsSurprisePercent || row.epssurprisepct || 0), 0) / surprises.length
+    : 0;
+
+  const beatRate = surprises.length
+    ? surprises.filter(row => Number(row.epsActual ?? row.epsactual ?? 0) > Number(row.epsEstimated ?? row.epsestimate ?? 0)).length / surprises.length
+    : null;
+
+  return {
+    recentSurprises: surprises.slice(0, 4),
+    recentEarnings: earningsHistory.slice(0, 4),
+    avgSurprisePct: Number(avgSurprisePct.toFixed(2)),
+    beatRate: beatRate == null ? null : Number((beatRate * 100).toFixed(0))
+  };
+}
+
+async function getPostEarningsContext(symbol) {
+  const [news, quote, surpriseHistory] = await Promise.all([
+    tavily.searchStructuredEarningsContext(symbol, { maxResults: 3 }).catch(() => []),
+    fmp.getQuote(symbol).catch(() => null),
+    getEarningsSurpriseHistory(symbol).catch(() => null)
+  ]);
+
+  return {
+    news,
+    quote,
+    surpriseHistory
+  };
+}
 
 /**
  * Earnings Day Analysis Module
@@ -93,6 +130,28 @@ export async function analyzeBeforeEarnings(position) {
 
     // Get thesis from first lot
     const thesis = position.lots[0]?.thesis || 'No thesis available';
+    let optionsContext = 'Options earnings context unavailable';
+    let optionsReview = null;
+    try {
+      optionsReview = await optionsAnalyzer.analyzeSymbol({
+        symbol: position.symbol,
+        intentHorizon: 'short_term',
+        eventMode: 'earnings'
+      });
+      optionsContext = JSON.stringify({
+        recommendation: optionsReview.recommendation,
+        optionsSentiment: optionsReview.optionsSentiment,
+        warnings: optionsReview.warnings?.slice(0, 3) || []
+      }, null, 2);
+    } catch (error) {
+      console.warn(`⚠️ Could not load options earnings context for ${position.symbol}:`, error.message);
+    }
+
+    const surpriseHistory = await getEarningsSurpriseHistory(position.symbol).catch(() => null);
+    const portfolio = await db.getPortfolioSnapshot?.().catch(() => null);
+    const portfolioValue = Number(portfolio?.total_value || 0);
+    const positionValue = currentPrice * totalQuantity;
+    const positionPct = portfolioValue > 0 ? (positionValue / portfolioValue) * 100 : null;
 
     // Ask Claude Opus for analysis
     const prompt = `
@@ -104,10 +163,17 @@ POSITION DETAILS:
 - Current: $${currentPrice.toFixed(2)}
 - ${position.isShort ? 'Profit' : 'Gain'}: ${gainPercent}%
 - Quantity: ${totalQuantity} shares
+- Position size: ${positionPct == null ? 'unknown' : `${positionPct.toFixed(1)}% of portfolio`}
 - Investment thesis: ${thesis}
 
 RECENT NEWS:
 ${newsText}
+
+OPTIONS EARNINGS CONTEXT:
+${optionsContext}
+
+EARNINGS SURPRISE HISTORY:
+${JSON.stringify(surpriseHistory || {}, null, 2)}
 
 QUESTION: Should we ${position.isShort ? 'cover (close short)' : 'hold through earnings'}, trim 50%, or ${position.isShort ? 'cover completely' : 'sell completely'}?
 
@@ -165,7 +231,10 @@ Include your reasoning in 2-3 sentences.
       gainPercent,
       totalQuantity,
       earningsDate: position.earningsDate,
-      earningsTime: position.earningsTime
+      earningsTime: position.earningsTime,
+      optionsReview,
+      surpriseHistory,
+      positionPct
     };
 
   } catch (error) {
@@ -243,14 +312,24 @@ export async function executeEarningsDecision(analysis) {
           reasoning: `Earnings trim: ${analysis.reasoning}`
         });
 
-        // Update lots (trim proportionally)
-        for (const lot of lots) {
-          if (lot.quantity > 0) {
-            const lotTrimQty = Math.floor(lot.quantity * 0.5);
-            await db.updatePositionLot(lot.id, {
-              quantity: lot.quantity - lotTrimQty
-            });
+        await db.query('BEGIN');
+        try {
+          for (const lot of lots) {
+            if (lot.quantity > 0) {
+              const lotTrimQty = Math.floor(lot.quantity * 0.5);
+              await db.query(
+                `UPDATE position_lots
+                 SET quantity = quantity - $1,
+                     last_reviewed = CURRENT_TIMESTAMP
+                 WHERE id = $2`,
+                [lotTrimQty, lot.id]
+              );
+            }
           }
+          await db.query('COMMIT');
+        } catch (lotError) {
+          await db.query('ROLLBACK');
+          throw lotError;
         }
 
         // Send notification
@@ -321,6 +400,64 @@ export async function executeEarningsDecision(analysis) {
   }
 }
 
+export async function analyzeAfterEarnings(symbol) {
+  const normalizedSymbol = String(symbol || '').trim().toUpperCase();
+  if (!normalizedSymbol) throw new Error('Symbol is required');
+
+  const [positionLots, context, nextEarning] = await Promise.all([
+    db.getPositionLots(normalizedSymbol).catch(() => []),
+    getPostEarningsContext(normalizedSymbol),
+    db.getNextEarning(normalizedSymbol).catch(() => null)
+  ]);
+
+  const currentPrice = Number(resolveMarketPrice(context.quote, { marketOpen: false, fallback: 0 }));
+  const newsText = tavily.formatResults(context.news || []);
+  const prompt = `
+You are reviewing ${normalizedSymbol} immediately after an earnings event.
+
+Current price: $${currentPrice.toFixed(2)}
+Upcoming/last earnings calendar record:
+${JSON.stringify(nextEarning || {}, null, 2)}
+
+Current lots:
+${JSON.stringify(positionLots, null, 2)}
+
+Recent post-earnings news:
+${newsText}
+
+Historical earnings context:
+${JSON.stringify(context.surpriseHistory || {}, null, 2)}
+
+Return ONLY one of: RE_ENTER, ADD_TO_WATCHLIST, HOLD, PASS
+Then give 2-3 short sentences of reasoning.
+`;
+
+  const response = await claude.analyze(prompt, { model: 'opus', maxTokens: 400 });
+  const text = String(response?.analysis || '').trim();
+  let recommendation = 'HOLD';
+  if (text.includes('RE_ENTER')) recommendation = 'RE_ENTER';
+  else if (text.includes('ADD_TO_WATCHLIST')) recommendation = 'ADD_TO_WATCHLIST';
+  else if (text.includes('PASS')) recommendation = 'PASS';
+
+  await db.logEarningsAnalysis({
+    symbol: normalizedSymbol,
+    analysisPhase: 'post_earnings',
+    recommendation,
+    reasoning: text,
+    positionSnapshot: positionLots,
+    earningsSnapshot: nextEarning,
+    optionsSnapshot: context.surpriseHistory
+  });
+
+  return {
+    symbol: normalizedSymbol,
+    recommendation,
+    reasoning: text,
+    currentPrice,
+    surpriseHistory: context.surpriseHistory
+  };
+}
+
 /**
  * Run earnings day analysis (called during daily analysis)
  */
@@ -344,10 +481,31 @@ export async function runEarningsDayAnalysis(daysAhead = 5) {
     const decisions = [];
 
     for (const position of positions) {
-      // Only analyze if earnings are tomorrow (give 1 day notice)
-      if (position.daysUntil === 1) {
+      // Analyze 2 days ahead for post-market earnings, 1 day ahead otherwise
+      const shouldAnalyze = position.daysUntil === 1 || (position.daysUntil === 2 && (position.earningsTime === 'amc' || position.earningsTime === 'post_market'));
+      if (shouldAnalyze) {
         const analysis = await analyzeBeforeEarnings(position);
         decisions.push(analysis);
+
+        await db.logEarningsAnalysis({
+          symbol: analysis.symbol,
+          analysisPhase: 'pre_earnings',
+          recommendation: analysis.recommendation,
+          reasoning: analysis.reasoning,
+          positionSnapshot: {
+            totalQuantity: analysis.totalQuantity,
+            gainPercent: analysis.gainPercent,
+            positionPct: analysis.positionPct
+          },
+          earningsSnapshot: {
+            earningsDate: analysis.earningsDate,
+            earningsTime: analysis.earningsTime
+          },
+          optionsSnapshot: {
+            optionsReview: analysis.optionsReview,
+            surpriseHistory: analysis.surpriseHistory
+          }
+        });
 
         // If recommendation is not HOLD, execute it
         if (analysis.recommendation !== 'HOLD') {
@@ -400,6 +558,7 @@ export async function getWeeklyEarningsReport() {
 export default {
   getPositionsWithUpcomingEarnings,
   analyzeBeforeEarnings,
+  analyzeAfterEarnings,
   executeEarningsDecision,
   runEarningsDayAnalysis,
   getWeeklyEarningsReport

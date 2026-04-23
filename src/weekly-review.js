@@ -11,6 +11,8 @@ import { getWeeklyEarningsReport } from './earnings-analysis.js';
 import tradier from './tradier.js';
 import thesisManager from './thesis-manager.js';
 import { resolveMarketPrice } from './utils.js';
+import portfolioRiskMetrics from './portfolio-risk-metrics.js';
+import etfManager from './etf-manager.js';
 
 /**
  * Weekly Review Module
@@ -116,6 +118,8 @@ export async function reviewPosition(symbol, lots) {
 
     // Get thesis
     const thesis = lots[0]?.thesis || 'No thesis available';
+    const priorReviews = await db.getWeeklyReviewHistory(symbol, 2).catch(() => []);
+    const previousReview = priorReviews[0] || null;
 
     // Get next earnings
     const earning = await db.getNextEarning(symbol);
@@ -167,6 +171,9 @@ ${lotDetails}
 
 RECENT NEWS (structured search):
 ${newsText}
+
+LAST WEEK REVIEW COMPARISON:
+${previousReview ? JSON.stringify({ thesisState: previousReview.thesis_state, positionAction: previousReview.position_action, stopLoss: previousReview.stop_loss, takeProfit: previousReview.take_profit, catalystSummary: previousReview.catalyst_summary, createdAt: previousReview.created_at }, null, 2) : 'No prior weekly review saved'}
 
 QUESTIONS FOR WEEKLY STRATEGIC REVIEW:
 1. Is this position still the best use of this capital vs all available alternatives in the current market?
@@ -478,6 +485,16 @@ export async function executeReviewRecommendations(review) {
       }
     }
 
+    await db.saveWeeklyReviewHistory({
+      symbol,
+      thesisState: recommendations.thesisState,
+      positionAction: recommendations.trim ? 'Trim' : (recommendations.thesisValid ? 'Hold' : 'Exit'),
+      stopLoss: managementUpdate.stopLoss,
+      takeProfit: managementUpdate.takeProfit,
+      analysisText: review.analysis,
+      catalystSummary: review.analysis.match(/FORWARD CATALYSTS:\s*([^\n]+)/i)?.[1] || null
+    }).catch(() => null);
+
     console.log(`✅ Recommendations executed for ${symbol}`);
     return { success: true };
 
@@ -540,6 +557,7 @@ QUESTIONS FOR STRATEGIC REVIEW:
 6. Should any parameters change (stop-loss %, position sizing, cash target) based on what we learned this week?
 7. What worked well this week that we should do more of?
 8. What didn't work — and what should we stop doing or adjust?
+9. Compare this week's thesis changes vs last week's saved reviews. What concretely improved, deteriorated, or stayed unchanged?
 
 Provide strategic recommendations for the coming week with specific actionable items.
 `;
@@ -579,6 +597,9 @@ export async function runWeeklyReview() {
     // Run performance analysis
     console.log('📊 Analyzing weekly performance...');
     const weeklyPerf = await performanceAnalyzer.analyzePerformance();
+    const portfolioState = await (await import('./analysis.js')).default.getPortfolioState().catch(() => null);
+    const riskMetrics = portfolioState ? await portfolioRiskMetrics.calculateRiskMetrics(portfolioState.totalValue, { positions: portfolioState.positions || [] }) : await portfolioRiskMetrics.calculateRiskMetrics();
+    const etfRotationSummary = await etfManager.getRotationAwareSummary().catch(() => ({ leading: [], lagging: [] }));
 
     // Run sector rotation analysis
     console.log('📊 Running sector rotation analysis...');
@@ -643,10 +664,10 @@ export async function runWeeklyReview() {
     const portfolio = await checkPortfolioBalance();
 
     // Send weekly summary email
-    await sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthesis, weeklyPerf, watchlistAudit);
+    await sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthesis, weeklyPerf, watchlistAudit, riskMetrics, etfRotationSummary);
 
     console.log(`\n✅ Weekly review complete: ${reviews.length} positions reviewed`);
-    return { reviewed: reviews.length, reviews, synthesis };
+    return { reviewed: reviews.length, reviews, synthesis, riskMetrics, etfRotationSummary };
 
   } catch (error) {
     console.error('Error running weekly review:', error);
@@ -706,7 +727,7 @@ async function checkPortfolioBalance() {
 /**
  * Send weekly summary email
  */
-async function sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthesis, weeklyPerf, watchlistAudit) {
+async function sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthesis, weeklyPerf, watchlistAudit, riskMetrics = {}, etfRotationSummary = {}) {
   try {
     const latestPhaseDecisions = await db.query(
       `SELECT phase, input_tokens, output_tokens, duration_seconds, symbol_count, created_at
@@ -756,6 +777,16 @@ async function sendWeeklySummaryEmail(reviews, earningsReport, portfolio, synthe
       <p><strong>Total Value:</strong> $${portfolio.totalValue?.toLocaleString() || 'N/A'}</p>
       <p><strong>Cash:</strong> $${portfolio.cash?.toLocaleString() || 'N/A'} (${portfolio.cashPercent}%)</p>
       <p><strong>Positions:</strong> ${portfolio.positionCount}</p>
+
+      <h3>Risk & Benchmark</h3>
+      <p><strong>Benchmark:</strong> ${riskMetrics.benchmarkSymbol || 'SPY'} | <strong>Portfolio Return:</strong> ${riskMetrics.portfolioReturnPct || 'N/A'} | <strong>Benchmark Return:</strong> ${riskMetrics.benchmarkReturnPct || 'N/A'} | <strong>Active Return:</strong> ${riskMetrics.activeReturnPct || 'N/A'}</p>
+      <p><strong>Volatility:</strong> ${riskMetrics.volatility || 'N/A'} | <strong>Sharpe:</strong> ${riskMetrics.sharpeRatio || 'N/A'} | <strong>Sortino:</strong> ${riskMetrics.sortinoRatio || 'N/A'} | <strong>Beta:</strong> ${riskMetrics.beta || 'N/A'}</p>
+      <p><strong>Max Drawdown:</strong> ${riskMetrics.maxDrawdown || 'N/A'} | <strong>VaR 95%:</strong> ${riskMetrics.valueAtRisk95 || 'N/A'} (${riskMetrics.valueAtRisk95Value != null ? '$' + Number(riskMetrics.valueAtRisk95Value).toLocaleString() : 'N/A'})</p>
+      <p><strong>Diversification:</strong> ${riskMetrics.diversificationScore || 'N/A'} | <strong>Concentration:</strong> ${riskMetrics.concentrationRisk || 'N/A'}</p>
+
+      <h3>ETF Rotation Overlay</h3>
+      <p><strong>Leading:</strong> ${(etfRotationSummary.leading || []).slice(0, 4).map(item => `${item.sector} (${item.etf})`).join(', ') || 'None'}</p>
+      <p><strong>Lagging:</strong> ${(etfRotationSummary.lagging || []).slice(0, 4).map(item => `${item.sector} (${item.etf})`).join(', ') || 'None'}</p>
     `;
 
     if (portfolio.issues && portfolio.issues.length > 0) {

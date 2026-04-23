@@ -1,6 +1,7 @@
 import fmp from './fmp.js';
 import tradier from './tradier.js';
 import * as db from './db.js';
+import riskManager from './risk-manager.js';
 
 /**
  * Short Position Manager
@@ -8,8 +9,8 @@ import * as db from './db.js';
  *
  * RULES:
  * - Mid/large-cap only (market cap > $2B)
- * - 12% max per short position (8% if DTC ≥4)
- * - 25% max total short exposure
+ * - Risk-manager max per short position limit
+ * - Risk-manager max total short exposure
  * - ETB (Easy-to-Borrow) verification required
  * - Stop-loss REQUIRED and modifiable
  * - Inverse stop-loss logic (stop triggers on price RISE)
@@ -22,9 +23,6 @@ import * as db from './db.js';
  */
 class ShortManager {
   constructor() {
-    this.MAX_SHORT_POSITION_PCT = 0.12;  // 12% per position (when DTC <4)
-    this.REDUCED_SHORT_POSITION_PCT = 0.08; // 8% when DTC 4-5
-    this.MAX_TOTAL_SHORT_PCT = 0.25;     // 25% total shorts
     this.MIN_MARKET_CAP = 2_000_000_000; // $2B minimum
     this.MAX_IV_THRESHOLD = 0.80;        // 80% IV hard block
     this.MAX_IV_PERCENTILE = 0.90;       // 90th percentile IV (relative to 1-year history)
@@ -107,13 +105,10 @@ class ShortManager {
    */
   async canShort(symbol, quantity, price, portfolioValue) {
     const errors = [];
-
-    // Calculate position value
     const positionValue = quantity * price;
     const positionPct = positionValue / portfolioValue;
 
-    // Check single position limit (DTC-based)
-    const maxPositionPct = await this.getMaxPositionSize(symbol);
+    const maxPositionPct = riskManager.MAX_SHORT_POSITION_SIZE;
     if (positionPct > maxPositionPct) {
       errors.push(`Position size ${(positionPct * 100).toFixed(1)}% exceeds ${(maxPositionPct * 100).toFixed(0)}% limit`);
     }
@@ -127,8 +122,8 @@ class ShortManager {
     const newTotalShortExposure = currentShortExposure + positionValue;
     const newShortPct = newTotalShortExposure / portfolioValue;
 
-    if (newShortPct > this.MAX_TOTAL_SHORT_PCT) {
-      errors.push(`Total short exposure would be ${(newShortPct * 100).toFixed(1)}%, exceeds 30% limit`);
+    if (newShortPct > riskManager.MAX_TOTAL_SHORT_EXPOSURE) {
+      errors.push(`Total short exposure would be ${(newShortPct * 100).toFixed(1)}%, exceeds ${(riskManager.MAX_TOTAL_SHORT_EXPOSURE * 100).toFixed(0)}% limit`);
     }
 
     return {
@@ -317,7 +312,7 @@ class ShortManager {
       shortPositions: shorts.length,
       totalShortValue,
       shortPct: shortPct.toFixed(1) + '%',
-      remainingCapacity: Math.max(0, (this.MAX_TOTAL_SHORT_PCT * portfolioValue) - totalShortValue),
+      remainingCapacity: Math.max(0, (riskManager.MAX_TOTAL_SHORT_EXPOSURE * portfolioValue) - totalShortValue),
       shorts: shorts.map(p => ({
         symbol: p.symbol,
         quantity: Math.abs(p.quantity),
@@ -421,8 +416,7 @@ class ShortManager {
    * Note: This used to adjust based on Days to Cover, but that data is no longer available
    */
   async getMaxPositionSize(symbol) {
-    // Without short interest data, use standard short position limit
-    return this.MAX_SHORT_POSITION_PCT; // 12%
+    return riskManager.MAX_SHORT_POSITION_SIZE;
   }
 
   /**
