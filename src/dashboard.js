@@ -392,7 +392,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                         <div><strong>Thesis summary:</strong> ${escapeHtml(row.whiskieNotes || '-')}</div>
                         <div><strong>Catalyst summary:</strong> ${escapeHtml(row.whiskieCatalysts || '-')}</div>
                         <div><strong>Source reasons:</strong> ${escapeHtml((row.whiskieSourceReasons || []).join(' | ') || '-')}</div>
-                        <div><strong>Stops / targets:</strong> Portfolio Hub-specific personalized Opus recommendations are not wired yet, so these remain blank unless explicitly generated for Portfolio Hub.</div>
                       </div>
                     </details>
                   </td>
@@ -403,112 +402,124 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         `}
       </div>
 
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Position Mix</div>
-        <table>
-          <thead><tr><th>Bucket</th><th>Value</th><th>Weight</th></tr></thead>
-          <tbody>
-            <tr>
-              <td>Long Exposure</td>
-              <td>${formatMoney(summary.longExposure || 0)}</td>
-              <td>${formatPercent(summary.longExposurePct || 0)}</td>
-            </tr>
-            <tr>
-              <td>Short Exposure</td>
-              <td>${formatMoney(summary.shortExposure || 0)}</td>
-              <td>${formatPercent(summary.shortExposurePct || 0)}</td>
-            </tr>
-            <tr>
-              <td>Net Exposure</td>
-              <td>${formatMoney(summary.netExposure || 0)}</td>
-              <td>${formatPercent(summary.netExposurePct || 0)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Recent Transactions</div>
-        ${transactions.length === 0 ? '<div class="no-data">No Portfolio Hub transactions yet.</div>' : `
+      <details style="margin-top:18px;">
+        <summary>Position Mix</summary>
+        <div style="margin-top:12px;">
           <table>
-            <thead><tr><th>Date</th><th>Account</th><th>Type</th><th>Symbol</th><th>Shares</th><th>Price</th><th>Cash</th><th>Notes</th></tr></thead>
+            <thead><tr><th>Bucket</th><th>Value</th><th>Weight</th></tr></thead>
             <tbody>
-              ${transactions.slice(0, 25).map(tx => `
-                <tr>
-                  <td>${formatShortDate(tx.trade_date)}</td>
-                  <td>${escapeHtml(tx.account_name)}</td>
-                  <td><span class="badge ${escapeHtml(String(tx.transaction_type || '').toLowerCase())}">${escapeHtml(formatPortfolioHubTransactionType(tx.transaction_type))}</span></td>
-                  <td>${escapeHtml(tx.symbol || '-')}</td>
-                  <td>${tx.shares == null ? '-' : Math.abs(Number(tx.shares)).toFixed(2)}</td>
-                  <td>${tx.price == null ? '-' : formatMoney(tx.price)}</td>
-                  <td>${tx.cash_amount == null ? '-' : formatMoney(tx.cash_amount)}</td>
-                  <td>${escapeHtml(tx.notes || '-')}</td>
-                </tr>
-              `).join('')}
+              <tr>
+                <td>Long Exposure</td>
+                <td>${formatMoney(summary.longExposure || 0)}</td>
+                <td>${formatPercent(summary.longExposurePct || 0)}</td>
+              </tr>
+              <tr>
+                <td>Short Exposure</td>
+                <td>${formatMoney(summary.shortExposure || 0)}</td>
+                <td>${formatPercent(summary.shortExposurePct || 0)}</td>
+              </tr>
+              <tr>
+                <td>Net Exposure</td>
+                <td>${formatMoney(summary.netExposure || 0)}</td>
+                <td>${formatPercent(summary.netExposurePct || 0)}</td>
+              </tr>
             </tbody>
           </table>
-        `}
-      </div>
+        </div>
+      </details>
 
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Sector Allocation</div>
-        ${sectorRows.length === 0 ? '<div class="no-data">No sector allocation yet.</div>' : `
-          <table>
-            <thead><tr><th>Sector</th><th>Long Value</th><th>Weight</th></tr></thead>
-            <tbody>
-              ${sectorRows.map(row => `
-                <tr>
-                  <td>${escapeHtml(row.sector || 'Unknown')}</td>
-                  <td>${formatMoney(row.value)}</td>
-                  <td>${formatPercent(row.weightPct)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `}
-      </div>
+      <details style="margin-top:18px;">
+        <summary>Recent Transactions</summary>
+        <div style="margin-top:12px;">
+          ${transactions.length === 0 ? '<div class="no-data">No Portfolio Hub transactions yet.</div>' : `
+            <table>
+              <thead><tr><th>Date</th><th>Account</th><th>Type</th><th>Symbol</th><th>Shares</th><th>Price</th><th>Cash</th><th>Notes</th></tr></thead>
+              <tbody>
+                ${transactions.slice(0, 25).map(tx => `
+                  <tr>
+                    <td>${formatShortDate(tx.trade_date)}</td>
+                    <td>${escapeHtml(tx.account_name)}</td>
+                    <td><span class="badge ${escapeHtml(String(tx.transaction_type || '').toLowerCase())}">${escapeHtml(formatPortfolioHubTransactionType(tx.transaction_type))}</span></td>
+                    <td>${escapeHtml(tx.symbol || '-')}</td>
+                    <td>${tx.shares == null ? '-' : Math.abs(Number(tx.shares)).toFixed(2)}</td>
+                    <td>${tx.price == null ? '-' : formatMoney(tx.price)}</td>
+                    <td>${tx.cash_amount == null ? '-' : formatMoney(tx.cash_amount)}</td>
+                    <td>${escapeHtml(tx.notes || '-')}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `}
+        </div>
+      </details>
 
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Short Exposure by Sector</div>
-        ${shortSectorRows.length === 0 ? '<div class="no-data">No short sector exposure right now.</div>' : `
-          <table>
-            <thead><tr><th>Sector</th><th>Short Value</th><th>Weight</th></tr></thead>
-            <tbody>
-              ${shortSectorRows.map(row => `
-                <tr>
-                  <td>${escapeHtml(row.sector || 'Unknown')}</td>
-                  <td>${formatMoney(row.value)}</td>
-                  <td>${formatPercent(row.weightPct)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `}
-      </div>
+      <details style="margin-top:18px;">
+        <summary>Sector Allocation</summary>
+        <div style="margin-top:12px;">
+          ${sectorRows.length === 0 ? '<div class="no-data">No sector allocation yet.</div>' : `
+            <table>
+              <thead><tr><th>Sector</th><th>Long Value</th><th>Weight</th></tr></thead>
+              <tbody>
+                ${sectorRows.map(row => `
+                  <tr>
+                    <td>${escapeHtml(row.sector || 'Unknown')}</td>
+                    <td>${formatMoney(row.value)}</td>
+                    <td>${formatPercent(row.weightPct)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `}
+        </div>
+      </details>
 
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Sector Reduction Plan</div>
-        ${sectorTrimCandidates.length === 0 ? '<div class="no-data">No sector concentration currently exceeds the reduction threshold.</div>' : `
-          <table>
-            <thead><tr><th>Sector</th><th>Weight</th><th>Preferred names to reduce</th></tr></thead>
-            <tbody>
-              ${sectorTrimCandidates.map(item => `
-                <tr>
-                  <td>${escapeHtml(item.sector)}</td>
-                  <td>${formatPercent(item.sectorWeightPct)}</td>
-                  <td><div class="detail-chips">${item.candidates.map(candidate => `<span class="detail-chip">${escapeHtml(`${candidate.symbol}: ${candidate.action} (${candidate.rationale})`)}</span>`).join('')}</div></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `}
-      </div>
+      <details style="margin-top:18px;">
+        <summary>Short Exposure by Sector</summary>
+        <div style="margin-top:12px;">
+          ${shortSectorRows.length === 0 ? '<div class="no-data">No short sector exposure right now.</div>' : `
+            <table>
+              <thead><tr><th>Sector</th><th>Short Value</th><th>Weight</th></tr></thead>
+              <tbody>
+                ${shortSectorRows.map(row => `
+                  <tr>
+                    <td>${escapeHtml(row.sector || 'Unknown')}</td>
+                    <td>${formatMoney(row.value)}</td>
+                    <td>${formatPercent(row.weightPct)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `}
+        </div>
+      </details>
 
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Portfolio Insights</div>
-        ${insights.length === 0 ? '<div class="no-data">No portfolio insights yet.</div>' : `<ul>${insights.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`}
-        <div class="position-summary-note" style="margin-top:12px;">Portfolio Hub guidance is advisory only. It uses Whiskie research context, earnings timing, and recent news, but does not place trades or alter live Whiskie positions.</div>
-      </div>
+      <details style="margin-top:18px;">
+        <summary>Sector Reduction Plan</summary>
+        <div style="margin-top:12px;">
+          ${sectorTrimCandidates.length === 0 ? '<div class="no-data">No sector concentration currently exceeds the reduction threshold.</div>' : `
+            <table>
+              <thead><tr><th>Sector</th><th>Weight</th><th>Preferred names to reduce</th></tr></thead>
+              <tbody>
+                ${sectorTrimCandidates.map(item => `
+                  <tr>
+                    <td>${escapeHtml(item.sector)}</td>
+                    <td>${formatPercent(item.sectorWeightPct)}</td>
+                    <td><div class="detail-chips">${item.candidates.map(candidate => `<span class="detail-chip">${escapeHtml(`${candidate.symbol}: ${candidate.action} (${candidate.rationale})`)}</span>`).join('')}</div></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `}
+        </div>
+      </details>
+
+      <details style="margin-top:18px;">
+        <summary>Portfolio Insights</summary>
+        <div style="margin-top:12px;">
+          ${insights.length === 0 ? '<div class="no-data">No portfolio insights yet.</div>' : `<ul>${insights.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`}
+          <div class="position-summary-note" style="margin-top:12px;">Portfolio Hub guidance is advisory only. It uses Whiskie research context, earnings timing, and recent news, but does not place trades or alter live Whiskie positions.</div>
+        </div>
+      </details>
 
       <div style="margin-top:18px;">
         <div class="detail-section-title">How to use Portfolio Hub</div>
