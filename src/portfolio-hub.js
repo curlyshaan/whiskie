@@ -139,6 +139,58 @@ async function buildPortfolioHubMarketContext(portfolioHub) {
   };
 }
 
+async function buildPortfolioHubStockNewsContext(holdings = [], sectorTrimCandidates = []) {
+  const overloadedSymbols = new Set(
+    (sectorTrimCandidates || [])
+      .flatMap(item => item.candidates || [])
+      .map(candidate => String(candidate.symbol || '').toUpperCase())
+      .filter(Boolean)
+  );
+
+  const ranked = [...(holdings || [])]
+    .map(row => {
+      let priority = 0;
+      if (overloadedSymbols.has(row.symbol)) priority += 100;
+      priority += Math.min(50, Number(row.weightPct || 0));
+      if (row.positionType === 'short') priority += 15;
+      if (row.whiskieActionLabel && row.whiskieActionLabel !== 'Hold') priority += 20;
+      if (row.nextEarningsDate) priority += 10;
+      return { ...row, _priority: priority };
+    })
+    .sort((a, b) => b._priority - a._priority)
+    .slice(0, 6);
+
+  const stockNewsRows = await Promise.all(
+    ranked.map(async row => {
+      const results = await tavily.searchStructuredStockContext(row.symbol, {
+        maxResults: 4,
+        timeRange: 'month',
+        context: {
+          holdingPosture: row.whiskieHoldingPosture,
+          pathway: row.whiskiePathway,
+          actionLabel: row.whiskieActionLabel
+        }
+      }).catch(() => []);
+
+      return {
+        symbol: row.symbol,
+        positionType: row.positionType,
+        actionLabel: row.whiskieActionLabel,
+        weightPct: row.weightPct,
+        formattedNews: tavily.formatResults(results),
+        items: results.map(item => ({
+          title: item.title,
+          url: item.url,
+          content: item.content,
+          published_date: item.published_date || null
+        }))
+      };
+    })
+  );
+
+  return stockNewsRows;
+}
+
 export async function buildPortfolioHubView(options = {}) {
   const performanceRange = ['week', 'month'].includes(String(options.performanceRange || 'week'))
     ? String(options.performanceRange || 'week')
@@ -439,6 +491,7 @@ export async function runPortfolioHubOpusReview() {
     return { reviewedAt: new Date().toISOString(), holdings: [] };
   }
   const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
+  const stockNewsContext = await buildPortfolioHubStockNewsContext(holdings, portfolioHub.sectorTrimCandidates || []);
 
   const prompt = `You are reviewing a household portfolio dashboard called Portfolio Hub. Return JSON only.
 
@@ -474,6 +527,9 @@ ${JSON.stringify(marketContext.summary, null, 2)}
 
 Structured Tavily macro context:
 ${marketContext.formattedMacroNews}
+
+Structured Tavily stock context for highest-priority holdings only:
+${JSON.stringify(stockNewsContext, null, 2)}
 
 Holdings:
 ${JSON.stringify(holdings.map(row => ({
