@@ -41,10 +41,9 @@ function normalizeDirectionalLevels(positionType, currentPrice, stopLoss, takePr
 export async function buildPortfolioHubView() {
   await db.seedPortfolioHubAccounts(DEFAULT_PORTFOLIO_HUB_ACCOUNTS).catch(() => {});
 
-  const [accounts, transactions, whiskiePositions] = await Promise.all([
+  const [accounts, transactions] = await Promise.all([
     db.getPortfolioHubAccounts().catch(() => []),
-    db.listPortfolioHubTransactions().catch(() => []),
-    db.getPositions().catch(() => [])
+    db.listPortfolioHubTransactions().catch(() => [])
   ]);
 
   if (!transactions.length && !accounts.length) {
@@ -62,7 +61,6 @@ export async function buildPortfolioHubView() {
   const grouped = new Map();
   const groupedByAccountSymbol = new Map();
   const cashByAccount = new Map(accounts.map(account => [account.id, Number(account.cash_balance || 0)]));
-  const whiskiePositionsMap = new Map((whiskiePositions || []).map(position => [String(position.symbol || '').toUpperCase(), position]));
 
   for (const tx of [...transactions].reverse()) {
     const type = String(tx.transaction_type || '').toLowerCase();
@@ -97,7 +95,7 @@ export async function buildPortfolioHubView() {
   }
 
   const symbols = [...grouped.keys()];
-  const { earningsMap, stockInfoMap, profileMap, quoteMap } = await buildPortfolioHubSymbolContext(symbols, whiskiePositionsMap);
+  const { earningsMap, stockInfoMap, quoteMap, whiskieContextMap } = await buildPortfolioHubSymbolContext(symbols);
 
   let investedValue = 0;
   let totalCost = 0;
@@ -112,21 +110,20 @@ export async function buildPortfolioHubView() {
   for (const symbol of symbols) {
     const row = grouped.get(symbol);
     const quote = quoteMap.get(symbol) || null;
-    const whiskiePosition = whiskiePositionsMap.get(symbol) || null;
+    const whiskieContext = whiskieContextMap.get(symbol) || null;
     const stockInfo = stockInfoMap.get(symbol) || null;
-    const profile = profileMap?.[symbol] || null;
     const currentPrice = Number(quote?.price || quote?.previousClose || quote?.close || 0);
     const absShares = Math.abs(row.shares);
     const avgCost = absShares > 0 ? row.totalCost / absShares : 0;
     const marketValue = currentPrice * absShares;
     const unrealizedPnL = row.positionType === 'short' ? (avgCost - currentPrice) * absShares : (currentPrice - avgCost) * absShares;
     const unrealizedPnLPct = row.totalCost > 0 ? (unrealizedPnL / row.totalCost) * 100 : 0;
-    const sector = whiskiePosition?.sector || stockInfo?.sector || profile?.industry_sector || quote?.sector || stockInfo?.industry || quote?.industry || 'Unknown';
+    const sector = stockInfo?.sector || quote?.sector || 'Unknown';
     const directionalLevels = normalizeDirectionalLevels(
       row.positionType,
       currentPrice,
-      whiskiePosition?.stop_loss ?? null,
-      whiskiePosition?.take_profit ?? null
+      null,
+      null
     );
 
     investedValue += marketValue;
@@ -152,10 +149,17 @@ export async function buildPortfolioHubView() {
       unrealizedPnLPct,
       sector,
       nextEarningsDate: earningsMap.get(symbol) || null,
-      whiskiePathway: whiskiePosition?.pathway || whiskiePosition?.strategy_type || null,
+      whiskiePathway: whiskieContext?.pathway || null,
+      whiskieNotes: whiskieContext?.thesisSummary || null,
+      whiskieCatalysts: whiskieContext?.catalystSummary || null,
+      whiskieSourceReasons: whiskieContext?.sourceReasons || [],
+      whiskieLastAction: whiskieContext?.lastAction || null,
+      whiskieHoldingPosture: whiskieContext?.holdingPosture || null,
+      sectorSource: stockInfo?.sectorSource || (stockInfo?.sector ? 'stock_universe' : quote?.sector ? 'quote' : 'unknown'),
       stopLoss: directionalLevels.stopLoss,
       takeProfit: directionalLevels.takeProfit,
-      whiskieView: ''
+      whiskieView: '',
+      whiskieActionLabel: 'Hold'
     });
   }
 
@@ -180,10 +184,13 @@ export async function buildPortfolioHubView() {
     const sectorWeightPct = row.positionType === 'short'
       ? (shortSectorWeightMap.get(row.sector) || 0)
       : (longSectorWeightMap.get(row.sector) || 0);
-    row.whiskieView = buildPortfolioHubRecommendation(row, {
+    const recommendation = buildPortfolioHubRecommendation(row, {
       sectorWeightPct,
-      hasWhiskiePosition: Boolean(whiskiePositionsMap.get(row.symbol))
+      whiskiePathway: row.whiskiePathway
     });
+    row.whiskieActionLabel = recommendation.actionLabel;
+    row.whiskieView = recommendation.summary;
+    row.whiskieDetail = recommendation.detail;
     row.sectorWeightPct = sectorWeightPct;
   });
 

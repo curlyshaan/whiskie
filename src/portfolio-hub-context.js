@@ -1,19 +1,70 @@
 import * as db from './db.js';
 import fmp from './fmp.js';
 
-export async function buildPortfolioHubSymbolContext(symbols = [], whiskiePositionsMap = new Map()) {
+function normalizePathway(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function normalizeReasonList(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map(item => String(item || '').trim()).filter(Boolean);
+  return String(value)
+    .split(/\s*[;\n]\s*/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function pickFirstDefined(...values) {
+  for (const value of values) {
+    if (value == null) continue;
+    if (typeof value === 'string' && !value.trim()) continue;
+    return value;
+  }
+  return null;
+}
+
+function buildWhiskieContextForSymbol(symbol, dailyStateMap, saturdayWatchlistMap) {
+  const dailyState = dailyStateMap.get(symbol) || null;
+  const saturdayRow = saturdayWatchlistMap.get(symbol) || null;
+  const pathway = normalizePathway(
+    pickFirstDefined(
+      dailyState?.primary_pathway,
+      saturdayRow?.primary_pathway,
+      saturdayRow?.pathway
+    )
+  );
+
+  return {
+    symbol,
+    pathway,
+    secondaryPathways: Array.isArray(saturdayRow?.secondary_pathways)
+      ? saturdayRow.secondary_pathways
+      : [],
+    thesisSummary: pickFirstDefined(dailyState?.thesis_summary, saturdayRow?.opus_reasoning, saturdayRow?.reasons),
+    catalystSummary: pickFirstDefined(dailyState?.catalyst_summary, saturdayRow?.reasons),
+    lastAction: pickFirstDefined(dailyState?.last_action, saturdayRow?.intent),
+    holdingPosture: dailyState?.holding_posture || null,
+    sourceReasons: normalizeReasonList(dailyState?.source_reasons || saturdayRow?.reasons),
+    watchlistIntent: saturdayRow?.intent || null,
+    watchlistPrice: Number(saturdayRow?.price || 0) || null
+  };
+}
+
+export async function buildPortfolioHubSymbolContext(symbols = []) {
   const normalizedSymbols = [...new Set((symbols || []).map(symbol => String(symbol || '').trim().toUpperCase()).filter(Boolean))];
   if (!normalizedSymbols.length) {
     return {
       earningsMap: new Map(),
       stockInfoMap: new Map(),
-      profileMap: {},
-      quoteMap: new Map()
+      quoteMap: new Map(),
+      whiskieContextMap: new Map()
     };
   }
 
-  const [profiles, earningsRows, stockInfoRows, quotes] = await Promise.all([
-    db.getLatestStockProfilesForSymbols ? db.getLatestStockProfilesForSymbols(normalizedSymbols).catch(() => ({})) : Promise.resolve({}),
+  const [dailyStates, saturdayRows, earningsRows, stockInfoRows, quotes] = await Promise.all([
+    db.getLatestDailySymbolStates ? db.getLatestDailySymbolStates(normalizedSymbols).catch(() => []) : Promise.resolve([]),
+    db.getCanonicalSaturdayWatchlistRows ? db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => []) : Promise.resolve([]),
     db.query(
       `SELECT DISTINCT ON (symbol) symbol, earnings_date
        FROM earnings_calendar
@@ -31,14 +82,44 @@ export async function buildPortfolioHubSymbolContext(symbols = [], whiskiePositi
   ]);
 
   const earningsMap = new Map(earningsRows.map(row => [row.symbol, row.earnings_date]));
-  const stockInfoMap = new Map(stockInfoRows.map(row => [row.symbol, row]));
+  const stockInfoMap = new Map(stockInfoRows.map(row => [row.symbol, {
+    ...row,
+    sectorSource: 'stock_universe'
+  }]));
   const quoteMap = new Map(normalizedSymbols.map((symbol, index) => [symbol, quotes[index] || null]));
+  const dailyStateMap = new Map((dailyStates || []).map(row => [row.symbol, row]));
+  const saturdayWatchlistMap = new Map(
+    (saturdayRows || [])
+      .filter(row => normalizedSymbols.includes(String(row.symbol || '').toUpperCase()))
+      .map(row => [String(row.symbol || '').toUpperCase(), row])
+  );
+
+  for (const symbol of normalizedSymbols) {
+    if (stockInfoMap.has(symbol)) continue;
+    const profile = quotes.find?.(() => false);
+    const fmpProfile = await fmp.getProfile(symbol).catch(() => null);
+    if (fmpProfile?.sector || fmpProfile?.industry) {
+      stockInfoMap.set(symbol, {
+        symbol,
+        company_name: fmpProfile.companyName || fmpProfile.company_name || symbol,
+        sector: fmpProfile.sector || null,
+        industry: fmpProfile.industry || null,
+        sectorSource: 'fmp'
+      });
+    }
+  }
+
+  const whiskieContextMap = new Map(
+    normalizedSymbols.map(symbol => [
+      symbol,
+      buildWhiskieContextForSymbol(symbol, dailyStateMap, saturdayWatchlistMap)
+    ])
+  );
 
   return {
     earningsMap,
     stockInfoMap,
-    profileMap: profiles,
     quoteMap,
-    whiskiePositionsMap
+    whiskieContextMap
   };
 }

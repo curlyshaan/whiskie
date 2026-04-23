@@ -375,7 +375,28 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <td>${escapeHtml(row.whiskiePathway || '-')}</td>
                   <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
                   <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
-                  <td>${escapeHtml(row.whiskieView || '-')}</td>
+                  <td><strong>${escapeHtml(row.whiskieActionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(row.whiskieView || '-')}</span></td>
+                </tr>
+                <tr>
+                  <td colspan="14" style="background:#131a30;">
+                    <details>
+                      <summary>Whiskie details for ${escapeHtml(row.symbol)}</summary>
+                      <div style="margin-top:10px; display:grid; gap:10px;">
+                        <div class="detail-chips">
+                          <span class="detail-chip">Pathway: ${escapeHtml(row.whiskiePathway || '-')}</span>
+                          <span class="detail-chip">Sector source: ${escapeHtml(row.sectorSource || '-')}</span>
+                          <span class="detail-chip">Last action: ${escapeHtml(row.whiskieLastAction || '-')}</span>
+                          <span class="detail-chip">Holding posture: ${escapeHtml(row.whiskieHoldingPosture || '-')}</span>
+                        </div>
+                        <div><strong>Portfolio Hub guidance:</strong> ${escapeHtml(row.whiskieView || '-')}</div>
+                        <div><strong>Detail:</strong> ${escapeHtml(row.whiskieDetail || '-')}</div>
+                        <div><strong>Thesis summary:</strong> ${escapeHtml(row.whiskieNotes || '-')}</div>
+                        <div><strong>Catalyst summary:</strong> ${escapeHtml(row.whiskieCatalysts || '-')}</div>
+                        <div><strong>Source reasons:</strong> ${escapeHtml((row.whiskieSourceReasons || []).join(' | ') || '-')}</div>
+                        <div><strong>Stops / targets:</strong> Portfolio Hub-specific personalized Opus recommendations are not wired yet, so these remain blank unless explicitly generated for Portfolio Hub.</div>
+                      </div>
+                    </details>
+                  </td>
                 </tr>
               `).join('')}
             </tbody>
