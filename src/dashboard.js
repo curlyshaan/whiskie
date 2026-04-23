@@ -215,7 +215,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   const transactions = portfolioHub.transactions || [];
   const sectorRows = portfolioHub.sectorAllocation || [];
   const shortSectorRows = portfolioHub.shortSectorExposure || [];
-  const accountRows = portfolioHub.accountAllocation || [];
   const insights = portfolioHub.insights || [];
   const sectorTrimCandidates = portfolioHub.sectorTrimCandidates || [];
   const performanceSeries = portfolioHub.performanceSeries || [];
@@ -426,26 +425,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
             </tr>
           </tbody>
         </table>
-      </div>
-
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Account Allocation</div>
-        ${accountRows.length === 0 ? '<div class="no-data">No account allocation yet.</div>' : `
-          <table>
-            <thead><tr><th>Account</th><th>Cash</th><th>Market Value</th><th>Total</th><th>Weight</th></tr></thead>
-            <tbody>
-              ${accountRows.map(row => `
-                <tr>
-                  <td>${escapeHtml(row.account_name)}</td>
-                  <td>${formatMoney(row.cash)}</td>
-                  <td>${formatMoney(row.marketValue)}</td>
-                  <td>${formatMoney(row.totalValue)}</td>
-                  <td>${formatPercent(row.weightPct)}</td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `}
       </div>
 
       <div style="margin-top:18px;">

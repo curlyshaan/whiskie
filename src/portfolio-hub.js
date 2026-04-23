@@ -52,7 +52,6 @@ export async function buildPortfolioHubView() {
       holdings: [],
       transactions: [],
       sectorAllocation: [],
-      accountAllocation: [],
       summary: { totalValue: 0, investedValue: 0, cash: 0, cashPct: 0, unrealizedPnL: 0, unrealizedPnLPct: 0 },
       insights: []
     };
@@ -194,24 +193,6 @@ export async function buildPortfolioHubView() {
     row.sectorWeightPct = sectorWeightPct;
   });
 
-  const accountAllocation = accounts.map(account => {
-    const marketValue = [...groupedByAccountSymbol.values()]
-      .filter(row => row.accountId === account.id && Math.abs(row.shares) > 0.0001)
-      .reduce((sum, row) => {
-        const holding = holdings.find(item => item.symbol === row.symbol);
-        return sum + (Math.abs(row.shares) * Number(holding?.currentPrice || 0));
-      }, 0);
-    const accountCash = Number(cashByAccount.get(account.id) || 0);
-    const accountTotal = marketValue + accountCash;
-    return {
-      account_name: account.account_name,
-      cash: accountCash,
-      marketValue,
-      totalValue: accountTotal,
-      weightPct: totalValue > 0 ? (accountTotal / totalValue) * 100 : 0
-    };
-  }).sort((a, b) => b.totalValue - a.totalValue);
-
   const summary = {
     totalValue,
     investedValue,
@@ -310,7 +291,6 @@ export async function buildPortfolioHubView() {
     transactions,
     sectorAllocation,
     shortSectorExposure,
-    accountAllocation,
     summary: {
       ...summary,
       performancePct,
