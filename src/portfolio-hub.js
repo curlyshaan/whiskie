@@ -91,6 +91,7 @@ function buildPersistedOpusReview(raw) {
     detail: raw.detail || '',
     shareCountText: raw.shareCountText || null,
     plannedTotalShares: Number.isFinite(Number(raw.plannedTotalShares)) ? Number(raw.plannedTotalShares) : null,
+    targetPositionShares: Number.isFinite(Number(raw.targetPositionShares)) ? Number(raw.targetPositionShares) : null,
     executedShares: Number.isFinite(Number(raw.executedShares)) ? Number(raw.executedShares) : 0,
     remainingShares: Number.isFinite(Number(raw.remainingShares)) ? Number(raw.remainingShares) : null,
     stageLabel: raw.stageLabel || null,
@@ -122,6 +123,31 @@ function computeExecutedPlanShares(row, opusReview, transactions = []) {
     if (positionType === 'short' && type === 'cover') return sum + Math.abs(Number(tx.shares || 0));
     return sum;
   }, 0);
+}
+
+function inferTargetPositionShares(row, opusReview) {
+  const explicitTarget = Number(opusReview?.targetPositionShares);
+  if (Number.isFinite(explicitTarget) && explicitTarget >= 0) {
+    return explicitTarget;
+  }
+
+  const plannedTotalShares = Number(opusReview?.plannedTotalShares);
+  const currentShares = Math.abs(Number(row?.shares || 0));
+  const action = String(opusReview?.actionLabel || '').toLowerCase();
+
+  if (!Number.isFinite(plannedTotalShares) || plannedTotalShares < 0 || !Number.isFinite(currentShares)) {
+    return null;
+  }
+
+  if ((action === 'trim' || action === 'reduce' || action === 'cover') && plannedTotalShares <= currentShares) {
+    const summary = String(opusReview?.summary || '').toLowerCase();
+    const detail = String(opusReview?.detail || '').toLowerCase();
+    if (summary.includes('position') || detail.includes('position') || summary.includes('oversized')) {
+      return plannedTotalShares;
+    }
+  }
+
+  return null;
 }
 
 function buildAdviceKey(symbol, positionType) {
@@ -344,7 +370,14 @@ export async function buildPortfolioHubView(options = {}) {
     if (persistedOpusReview) {
       persistedOpusReview.createdAt = latestAdvice?.opus_review_created_at || latestAdvice?.created_at || null;
       persistedOpusReview.executedShares = computeExecutedPlanShares(row, persistedOpusReview, transactions);
-      if (Number.isFinite(Number(persistedOpusReview.plannedTotalShares))) {
+      const inferredTargetPositionShares = inferTargetPositionShares(row, persistedOpusReview);
+      if (Number.isFinite(Number(inferredTargetPositionShares))) {
+        persistedOpusReview.targetPositionShares = inferredTargetPositionShares;
+        persistedOpusReview.remainingShares = Math.max(
+          0,
+          Math.round(Math.abs(Number(row.shares || 0)) - Number(inferredTargetPositionShares))
+        );
+      } else if (Number.isFinite(Number(persistedOpusReview.plannedTotalShares))) {
         persistedOpusReview.remainingShares = Math.max(
           0,
           Math.round(Number(persistedOpusReview.plannedTotalShares) - Number(persistedOpusReview.executedShares || 0))
@@ -578,7 +611,8 @@ For each holding, provide:
 - summary: one short sentence with exact-share guidance when action is not Hold
 - detail: one short sentence explaining why
 - shareCountText: exact share guidance like "Add 3 shares" or "Trim 2 shares"
-- plannedTotalShares: total shares planned for the full staged adjustment
+- plannedTotalShares: total shares planned to execute across the full staged adjustment, not the final share count
+- targetPositionShares: optional final target share count after the adjustment is complete
 - stageLabel: short label like "Stage 1 of 2" or "Initial trim"
 - targetWeightPct: optional end-state target weight percent if useful
 - confidence: low, medium, or high
@@ -598,7 +632,9 @@ Rules:
   2. Tactical / swing / short holdings: more responsive to VIX, SPY regime, and macro/news conditions
 - In weak or volatile conditions, reduce new-add aggressiveness, prefer higher cash buffers, and be stricter on tactical positions than on core holdings.
 - In strong conditions, you may allow somewhat more tactical adds, but do not churn core long-term holdings.
-- Use staged execution memory: if a position needs a 4-share trim overall, say that clearly in plannedTotalShares and let the immediate shareCountText reflect only the next step.
+- Use staged execution memory: if a position needs a 4-share trim overall, set plannedTotalShares to 4 and let the immediate shareCountText reflect only the next step.
+- If the recommendation is really about ending share count, also provide targetPositionShares explicitly.
+- Never use plannedTotalShares to mean the final number of shares to hold.
 - Assume future runs may compare plannedTotalShares with executed shares logged after the review, so avoid repeating the same full trim as if nothing was done.
 
 Portfolio summary:
