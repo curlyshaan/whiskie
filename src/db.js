@@ -1862,7 +1862,7 @@ export async function upsertPosition(position) {
          trailing_stop_pct, rebalance_threshold_pct, max_holding_days,
          fundamental_stop_conditions, catalysts, news_links
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::numeric, $9::numeric, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
        ON CONFLICT (symbol)
        DO UPDATE SET
          quantity = $2,
@@ -1871,8 +1871,8 @@ export async function upsertPosition(position) {
          sector = $5,
          industry = $6,
          stock_type = $7,
-         stop_loss = $8,
-         take_profit = $9,
+         stop_loss = $8::numeric,
+         take_profit = $9::numeric,
          pathway = $10,
          intent = $11,
          peak_price = $12,
