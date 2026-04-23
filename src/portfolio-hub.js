@@ -3,6 +3,9 @@ import { buildPortfolioHubRecommendation } from './portfolio-hub-advisor.js';
 import { buildPortfolioHubSymbolContext } from './portfolio-hub-context.js';
 import { PORTFOLIO_HUB_POLICY } from './portfolio-hub-policy.js';
 import claude from './claude.js';
+import tavily from './tavily.js';
+import vixRegime from './vix-regime.js';
+import riskManager from './risk-manager.js';
 
 export const DEFAULT_PORTFOLIO_HUB_ACCOUNTS = [
   'Sai-Webull-Cash',
@@ -91,6 +94,48 @@ function buildPersistedOpusReview(raw) {
     confidence: raw.confidence || null,
     reasoning: raw.reasoning || '',
     source: 'opus'
+  };
+}
+
+async function buildPortfolioHubMarketContext(portfolioHub) {
+  const [regime, spyRegime, macroNews] = await Promise.all([
+    vixRegime.getRegime().catch(() => null),
+    riskManager.getMarketRegime().catch(() => 'unknown'),
+    tavily.searchStructuredMacroContext({ maxResults: 5, timeRange: 'week' }).catch(() => [])
+  ]);
+
+  const allocationGuide = riskManager.getTargetAllocation(spyRegime || 'unknown');
+  const summary = {
+    vixRegime: regime ? {
+      name: regime.name,
+      vix: regime.vix,
+      positionSizeMultiplier: regime.positionSizeMultiplier,
+      minCashReserve: regime.minCashReserve,
+      maxLongAllocation: regime.maxLongAllocation,
+      maxShortAllocation: regime.maxShortAllocation,
+      newPositionsAllowed: regime.newPositionsAllowed,
+      newShortsAllowed: regime.newShortsAllowed,
+      description: regime.description
+    } : null,
+    spyTrendRegime: spyRegime,
+    targetAllocation: allocationGuide,
+    currentExposure: {
+      cashPct: portfolioHub.summary.cashPct,
+      longExposurePct: portfolioHub.summary.longExposurePct,
+      shortExposurePct: portfolioHub.summary.shortExposurePct,
+      netExposurePct: portfolioHub.summary.netExposurePct
+    },
+    macroNews: macroNews.map(item => ({
+      title: item.title,
+      url: item.url,
+      content: item.content,
+      published_date: item.published_date || null
+    }))
+  };
+
+  return {
+    summary,
+    formattedMacroNews: tavily.formatResults(macroNews)
   };
 }
 
@@ -393,6 +438,7 @@ export async function runPortfolioHubOpusReview() {
   if (!holdings.length) {
     return { reviewedAt: new Date().toISOString(), holdings: [] };
   }
+  const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
 
   const prompt = `You are reviewing a household portfolio dashboard called Portfolio Hub. Return JSON only.
 
@@ -413,9 +459,21 @@ Rules:
 - Keep guidance conservative and integer-share based.
 - Respect long vs short direction.
 - If no action is needed, use Hold and shareCountText null.
+- This is not the Whiskie live bot. Treat the portfolio as mostly long-term/future-oriented and use market conditions as a softer overlay rather than a trading mandate.
+- Split your thinking into two buckets:
+  1. Core long-term holdings: slower changes, tolerate volatility, lower turnover
+  2. Tactical / swing / short holdings: more responsive to VIX, SPY regime, and macro/news conditions
+- In weak or volatile conditions, reduce new-add aggressiveness, prefer higher cash buffers, and be stricter on tactical positions than on core holdings.
+- In strong conditions, you may allow somewhat more tactical adds, but do not churn core long-term holdings.
 
 Portfolio summary:
 ${JSON.stringify(portfolioHub.summary, null, 2)}
+
+Market regime context:
+${JSON.stringify(marketContext.summary, null, 2)}
+
+Structured Tavily macro context:
+${marketContext.formattedMacroNews}
 
 Holdings:
 ${JSON.stringify(holdings.map(row => ({
@@ -433,7 +491,8 @@ ${JSON.stringify(holdings.map(row => ({
     whiskieNotes: row.whiskieNotes,
     whiskieCatalysts: row.whiskieCatalysts,
     whiskieHoldingPosture: row.whiskieHoldingPosture,
-    existingPolicyView: row.whiskieView
+    existingPolicyView: row.whiskieView,
+    allocationBucketHint: row.whiskieHoldingPosture && /core|long/i.test(String(row.whiskieHoldingPosture)) ? 'core_long_term' : row.positionType === 'short' ? 'tactical_short' : 'tactical_or_unclear'
   })), null, 2)}`;
 
   const response = await claude.analyze(prompt, { model: 'opus' });
