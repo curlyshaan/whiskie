@@ -26,7 +26,7 @@ export async function runPreMarketScan() {
 
     // Fetch true off-hours quotes plus prior closes
     const [aftermarketQuotes, regularQuotes] = await Promise.all([
-      fmp.getBatchAftermarketQuotes(allSymbols),
+      fmp.getAftermarketQuotes(allSymbols),
       fmp.getQuotes(allSymbols.join(','))
     ]);
     const afterMarketMap = new Map(

@@ -196,18 +196,37 @@ class FMPClient {
     return results;
   }
 
-  async getBatchAftermarketQuotes(symbols) {
+  async getAftermarketQuote(symbol) {
+    const data = await this.request('/aftermarket-quote', { symbol });
+    return data[0] || null;
+  }
+
+  async getAftermarketQuotes(symbols, options = {}) {
     const symbolList = Array.isArray(symbols)
       ? symbols
       : String(symbols || '').split(',').map(s => s.trim()).filter(Boolean);
 
     if (!symbolList.length) return [];
 
-    const data = await this.request('/batch-aftermarket-quote', {
-      symbols: symbolList.join(',')
-    });
+    const concurrency = Math.max(1, Math.min(options.concurrency || this.DEFAULT_QUOTE_CONCURRENCY, 8));
+    const results = [];
 
-    return Array.isArray(data) ? data : [data].filter(Boolean);
+    for (let i = 0; i < symbolList.length; i += concurrency) {
+      const chunk = symbolList.slice(i, i + concurrency);
+      const chunkResults = await Promise.all(
+        chunk.map(async (symbol) => {
+          try {
+            return await this.getAftermarketQuote(symbol);
+          } catch (error) {
+            console.warn(`⚠️ Aftermarket quote fetch failed for ${symbol}: ${error.message}`);
+            return null;
+          }
+        })
+      );
+      results.push(...chunkResults.filter(Boolean));
+    }
+
+    return results;
   }
 
   /**
