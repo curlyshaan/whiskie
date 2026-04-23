@@ -12,11 +12,19 @@ class OrderReconciliation {
   async ensurePositionMetadataColumns() {
     await db.query(`
       ALTER TABLE positions
+      ADD COLUMN IF NOT EXISTS pathway VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS intent VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS thesis_state VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS holding_posture VARCHAR(30),
+      ADD COLUMN IF NOT EXISTS holding_period VARCHAR(50),
       ADD COLUMN IF NOT EXISTS secondary_pathways JSONB,
       ADD COLUMN IF NOT EXISTS pathway_selection_rule TEXT,
       ADD COLUMN IF NOT EXISTS confidence VARCHAR(20),
       ADD COLUMN IF NOT EXISTS growth_potential VARCHAR(50),
       ADD COLUMN IF NOT EXISTS stop_type VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS stop_loss DECIMAL(10, 2),
+      ADD COLUMN IF NOT EXISTS take_profit DECIMAL(10, 2),
       ADD COLUMN IF NOT EXISTS target_type VARCHAR(20),
       ADD COLUMN IF NOT EXISTS has_fixed_target BOOLEAN,
       ADD COLUMN IF NOT EXISTS trailing_stop_pct DECIMAL(5, 2),

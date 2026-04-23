@@ -273,6 +273,10 @@ export async function buildPortfolioHubView(options = {}) {
   const { earningsMap, stockInfoMap, quoteMap, whiskieContextMap } = await buildPortfolioHubSymbolContext(symbols);
   const latestAdviceRows = await db.getLatestPortfolioHubAdviceHistory(symbols).catch(() => []);
   const latestAdviceMap = new Map((latestAdviceRows || []).map(row => [String(row.symbol || '').toUpperCase(), row]));
+  const latestFullReviewAt = latestAdviceRows
+    .map(row => row.opus_review_created_at)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b) - new Date(a))[0] || null;
 
   let investedValue = 0;
   let totalCost = 0;
@@ -505,7 +509,8 @@ export async function buildPortfolioHubView(options = {}) {
     sectorTrimCandidates,
     performanceSeries,
     performanceRange,
-    performanceMetric
+    performanceMetric,
+    latestFullReviewAt
   };
 }
 

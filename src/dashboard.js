@@ -196,6 +196,19 @@ function formatShortDate(value) {
   });
 }
 
+function formatDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return escapeHtml(value);
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/New_York'
+  });
+}
+
 function formatPortfolioHubTransactionType(value) {
   const normalized = String(value || '').trim().toLowerCase();
   const labels = {
@@ -226,6 +239,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   const performanceSeries = portfolioHub.performanceSeries || [];
   const performanceRange = portfolioHub.performanceRange || 'week';
   const performanceMetric = portfolioHub.performanceMetric || 'pct';
+  const latestFullReviewAt = portfolioHub.latestFullReviewAt || null;
   const accountOptions = DEFAULT_PORTFOLIO_HUB_ACCOUNTS;
   const nextSortDirection = column => (
     holdingsSort.sortBy === column && holdingsSort.sortDirection === 'desc' ? 'asc' : 'desc'
@@ -242,6 +256,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Recalculate Portfolio Hub</button>
         <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Run Opus Portfolio Review</button>
       </div>
+      <div class="position-summary-note" style="margin-bottom:14px;">Last full Opus review: ${latestFullReviewAt ? escapeHtml(formatDateTime(latestFullReviewAt)) : 'Not run yet'}</div>
 
       <div class="stats" style="margin-top:16px;">
         <div class="stat-card"><div class="stat-label">Total Value</div><div class="stat-value">${formatMoney(summary.totalValue || 0)}</div></div>
@@ -348,7 +363,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         </div>
       </details>
 
-      <details style="margin-top:18px;" open>
+      <details style="margin-top:18px;">
         <summary>Cash Available by Account</summary>
         <div style="margin-top:12px;">
           ${accounts.length === 0 ? '<div class="no-data">No Portfolio Hub accounts yet.</div>' : `
