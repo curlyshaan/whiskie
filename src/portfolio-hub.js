@@ -2,6 +2,7 @@ import * as db from './db.js';
 import { buildPortfolioHubRecommendation } from './portfolio-hub-advisor.js';
 import { buildPortfolioHubSymbolContext } from './portfolio-hub-context.js';
 import { PORTFOLIO_HUB_POLICY } from './portfolio-hub-policy.js';
+import claude from './claude.js';
 
 export const DEFAULT_PORTFOLIO_HUB_ACCOUNTS = [
   'Sai-Webull-Cash',
@@ -38,7 +39,67 @@ function normalizeDirectionalLevels(positionType, currentPrice, stopLoss, takePr
   return result;
 }
 
-export async function buildPortfolioHubView() {
+function normalizePerformancePointValue(row, metricMode = 'pct') {
+  if (metricMode === 'value') {
+    return {
+      combined: Number(row.performance_value ?? 0),
+      long: Number(row.long_performance_value ?? 0),
+      short: Number(row.short_performance_value ?? 0)
+    };
+  }
+
+  return {
+    combined: Number(row.snapshot_payload?.portfolioReturnPct ?? row.snapshot_payload?.performancePct ?? 0),
+    long: Number(row.long_return_pct ?? 0),
+    short: Number(row.short_return_pct ?? 0)
+  };
+}
+
+function formatPerformancePointLabel(date, range = 'day') {
+  const value = new Date(date);
+  if (Number.isNaN(value.getTime())) return '';
+  if (range === 'day') {
+    return value.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' });
+  }
+  if (range === 'week') {
+    return value.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+  }
+  return value.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+}
+
+function selectHistoryWindow(range = 'day') {
+  const start = new Date();
+  if (range === 'week') {
+    start.setDate(start.getDate() - 7);
+  } else if (range === 'month') {
+    start.setDate(start.getDate() - 30);
+  } else {
+    start.setHours(0, 0, 0, 0);
+  }
+  return start;
+}
+
+function buildPersistedOpusReview(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    actionLabel: raw.actionLabel || 'Hold',
+    summary: raw.summary || '',
+    detail: raw.detail || '',
+    shareCountText: raw.shareCountText || null,
+    stopLoss: raw.stopLoss ?? null,
+    takeProfit: raw.takeProfit ?? null,
+    confidence: raw.confidence || null,
+    reasoning: raw.reasoning || '',
+    source: 'opus'
+  };
+}
+
+export async function buildPortfolioHubView(options = {}) {
+  const performanceRange = ['day', 'week', 'month'].includes(String(options.performanceRange || 'day'))
+    ? String(options.performanceRange || 'day')
+    : 'day';
+  const performanceMetric = String(options.performanceMetric || 'pct') === 'value' ? 'value' : 'pct';
+
   await db.seedPortfolioHubAccounts(DEFAULT_PORTFOLIO_HUB_ACCOUNTS).catch(() => {});
 
   const [accounts, transactions] = await Promise.all([
@@ -95,6 +156,8 @@ export async function buildPortfolioHubView() {
 
   const symbols = [...grouped.keys()];
   const { earningsMap, stockInfoMap, quoteMap, whiskieContextMap } = await buildPortfolioHubSymbolContext(symbols);
+  const latestAdviceRows = await db.getLatestPortfolioHubAdviceHistory(symbols).catch(() => []);
+  const latestAdviceMap = new Map((latestAdviceRows || []).map(row => [String(row.symbol || '').toUpperCase(), row]));
 
   let investedValue = 0;
   let totalCost = 0;
@@ -124,6 +187,8 @@ export async function buildPortfolioHubView() {
       null,
       null
     );
+    const latestAdvice = latestAdviceMap.get(symbol) || null;
+    const persistedOpusReview = buildPersistedOpusReview(latestAdvice?.opus_review);
 
     investedValue += marketValue;
     totalCost += row.totalCost;
@@ -155,10 +220,12 @@ export async function buildPortfolioHubView() {
       whiskieLastAction: whiskieContext?.lastAction || null,
       whiskieHoldingPosture: whiskieContext?.holdingPosture || null,
       sectorSource: stockInfo?.sectorSource || (stockInfo?.sector ? 'stock_universe' : quote?.sector ? 'quote' : 'unknown'),
-      stopLoss: directionalLevels.stopLoss,
-      takeProfit: directionalLevels.takeProfit,
+      stopLoss: persistedOpusReview?.stopLoss ?? directionalLevels.stopLoss,
+      takeProfit: persistedOpusReview?.takeProfit ?? directionalLevels.takeProfit,
       whiskieView: '',
-      whiskieActionLabel: 'Hold'
+      whiskieActionLabel: 'Hold',
+      opusReview: persistedOpusReview,
+      opusReviewCreatedAt: latestAdvice?.opus_review_created_at || null
     });
   }
 
@@ -185,12 +252,19 @@ export async function buildPortfolioHubView() {
       : (longSectorWeightMap.get(row.sector) || 0);
     const recommendation = buildPortfolioHubRecommendation(row, {
       sectorWeightPct,
-      whiskiePathway: row.whiskiePathway
+      whiskiePathway: row.whiskiePathway,
+      totalPortfolioValue: totalValue,
+      opusReview: row.opusReview
     });
     row.whiskieActionLabel = recommendation.actionLabel;
     row.whiskieView = recommendation.summary;
     row.whiskieDetail = recommendation.detail;
+    row.whiskieShareCountText = recommendation.shareCountText || null;
     row.sectorWeightPct = sectorWeightPct;
+    row.stopLoss = recommendation.stopLoss ?? row.stopLoss;
+    row.takeProfit = recommendation.takeProfit ?? row.takeProfit;
+    row.whiskieSource = recommendation.source || (row.opusReview ? 'opus' : 'policy');
+    row.whiskieConfidence = recommendation.confidence || row.opusReview?.confidence || null;
   });
 
   const summary = {
@@ -232,20 +306,21 @@ export async function buildPortfolioHubView() {
       };
     });
 
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const adviceHistory = await db.getPortfolioHubAdviceHistorySince(startOfToday).catch(() => []);
-  const dayStartSnapshot = adviceHistory[0] || null;
-  const baselineTotalValue = Number(dayStartSnapshot?.snapshot_payload?.totalPortfolioValue || totalValue);
+  const historyStart = selectHistoryWindow(performanceRange);
+  const adviceHistory = await db.getPortfolioHubAdviceHistorySince(historyStart).catch(() => []);
+  const historyRows = adviceHistory.filter(row => String(row.view_scope || 'day') === performanceRange);
+  const baselineRow = historyRows[0] || adviceHistory[0] || null;
+  const baselineTotalValue = Number(baselineRow?.total_portfolio_value || baselineRow?.baseline_total_value || baselineRow?.snapshot_payload?.totalPortfolioValue || totalValue);
   const performancePct = baselineTotalValue > 0 ? ((totalValue - baselineTotalValue) / baselineTotalValue) * 100 : 0;
   const longPerformancePct = longCost > 0 ? ((longExposure - longCost) / longCost) * 100 : 0;
   const shortPerformancePct = shortCost > 0 ? ((shortExposure - shortCost) / shortCost) * 100 : 0;
-  const performanceSeries = adviceHistory
+  const performanceValue = totalValue - baselineTotalValue;
+  const longPerformanceValue = longExposure - longCost;
+  const shortPerformanceValue = shortExposure - shortCost;
+  const performanceSeries = historyRows
     .map(row => ({
-      label: new Date(row.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' }),
-      combined: Number(row.snapshot_payload?.portfolioReturnPct ?? 0),
-      long: Number(row.long_return_pct ?? 0),
-      short: Number(row.short_return_pct ?? 0),
+      label: formatPerformancePointLabel(row.created_at, performanceRange),
+      ...normalizePerformancePointValue(row, performanceMetric),
       sectors: row.sector_snapshot || []
     }))
     .filter(point => Number.isFinite(point.combined));
@@ -281,7 +356,17 @@ export async function buildPortfolioHubView() {
       },
       longReturnPct: longPerformancePct,
       shortReturnPct: shortPerformancePct,
-      sectorSnapshot: sectorAllocation
+      sectorSnapshot: sectorAllocation,
+      viewScope: performanceRange,
+      metricMode: performanceMetric,
+      totalPortfolioValue: totalValue,
+      baselineTotalValue,
+      performanceValue,
+      longPerformanceValue,
+      shortPerformanceValue,
+      sourceLabel: row.whiskieSource,
+      opusReview: row.opusReview,
+      opusReviewCreatedAt: row.opusReviewCreatedAt
     }))
   ).catch(() => {});
 
@@ -294,12 +379,122 @@ export async function buildPortfolioHubView() {
     summary: {
       ...summary,
       performancePct,
+      performanceValue,
       baselineTotalValue,
       longPerformancePct,
-      shortPerformancePct
+      shortPerformancePct,
+      longPerformanceValue,
+      shortPerformanceValue
     },
     insights,
     sectorTrimCandidates,
-    performanceSeries
+    performanceSeries,
+    performanceRange,
+    performanceMetric
+  };
+}
+
+export async function runPortfolioHubOpusReview() {
+  const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct' });
+  const holdings = Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings : [];
+  if (!holdings.length) {
+    return { reviewedAt: new Date().toISOString(), holdings: [] };
+  }
+
+  const prompt = `You are reviewing a household portfolio dashboard called Portfolio Hub. Return JSON only.
+
+For each holding, provide:
+- symbol
+- actionLabel: one of Add, Trim, Reduce, Hold, Cover
+- summary: one short sentence with exact-share guidance when action is not Hold
+- detail: one short sentence explaining why
+- shareCountText: exact share guidance like "Add 3 shares" or "Trim 2 shares"
+- confidence: low, medium, or high
+- stopLoss: number or null
+- takeProfit: number or null
+- reasoning: short internal explanation
+
+Rules:
+- Use exact-share guidance, not percentages.
+- Only include stopLoss or takeProfit when confidence is medium or high.
+- Keep guidance conservative and integer-share based.
+- Respect long vs short direction.
+- If no action is needed, use Hold and shareCountText null.
+
+Portfolio summary:
+${JSON.stringify(portfolioHub.summary, null, 2)}
+
+Holdings:
+${JSON.stringify(holdings.map(row => ({
+    symbol: row.symbol,
+    positionType: row.positionType,
+    shares: row.shares,
+    avgCost: row.avgCost,
+    currentPrice: row.currentPrice,
+    marketValue: row.marketValue,
+    weightPct: row.weightPct,
+    unrealizedPnLPct: row.unrealizedPnLPct,
+    sector: row.sector,
+    nextEarningsDate: row.nextEarningsDate,
+    whiskiePathway: row.whiskiePathway,
+    whiskieNotes: row.whiskieNotes,
+    whiskieCatalysts: row.whiskieCatalysts,
+    whiskieHoldingPosture: row.whiskieHoldingPosture,
+    existingPolicyView: row.whiskieView
+  })), null, 2)}`;
+
+  const response = await claude.analyze(prompt, { model: 'opus' });
+  const rawText = String(response?.analysis || '').trim();
+  const startIndex = rawText.search(/[\[{]/);
+  const endIndex = Math.max(rawText.lastIndexOf('}'), rawText.lastIndexOf(']'));
+  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+    throw new Error('Opus portfolio review did not return JSON');
+  }
+
+  const parsed = JSON.parse(rawText.slice(startIndex, endIndex + 1));
+  const entries = Array.isArray(parsed) ? parsed : Array.isArray(parsed.holdings) ? parsed.holdings : [];
+  const bySymbol = new Map(entries.map(item => [String(item.symbol || '').toUpperCase(), item]));
+  const reviewedAt = new Date().toISOString();
+
+  await db.recordPortfolioHubAdviceHistory(
+    holdings.map(row => {
+      const opusReview = bySymbol.get(row.symbol) || null;
+      return {
+        symbol: row.symbol,
+        positionType: row.positionType,
+        weightPct: row.weightPct,
+        sector: row.sector,
+        sectorWeightPct: row.sectorWeightPct,
+        unrealizedPnLPct: row.unrealizedPnLPct,
+        whiskiePathway: row.whiskiePathway,
+        recommendation: opusReview?.summary || row.whiskieView || '',
+        snapshotPayload: {
+          ...row,
+          totalPortfolioValue: portfolioHub.summary.totalValue,
+          portfolioReturnPct: portfolioHub.summary.performancePct
+        },
+        longReturnPct: portfolioHub.summary.longPerformancePct,
+        shortReturnPct: portfolioHub.summary.shortPerformancePct,
+        sectorSnapshot: portfolioHub.sectorAllocation,
+        viewScope: 'day',
+        metricMode: 'pct',
+        totalPortfolioValue: portfolioHub.summary.totalValue,
+        baselineTotalValue: portfolioHub.summary.baselineTotalValue,
+        performanceValue: portfolioHub.summary.performanceValue,
+        longPerformanceValue: portfolioHub.summary.longPerformanceValue,
+        shortPerformanceValue: portfolioHub.summary.shortPerformanceValue,
+        sourceLabel: 'opus',
+        opusReview,
+        opusReviewCreatedAt: reviewedAt
+      };
+    })
+  );
+
+  return {
+    reviewedAt,
+    holdings: holdings.map(row => ({
+      symbol: row.symbol,
+      opusReview: bySymbol.get(row.symbol) || null
+    }))
   };
 }

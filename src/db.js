@@ -182,7 +182,17 @@ export async function initDatabase() {
       ALTER TABLE portfolio_hub_advice_history
       ADD COLUMN IF NOT EXISTS long_return_pct DECIMAL(8, 4),
       ADD COLUMN IF NOT EXISTS short_return_pct DECIMAL(8, 4),
-      ADD COLUMN IF NOT EXISTS sector_snapshot JSONB;
+      ADD COLUMN IF NOT EXISTS sector_snapshot JSONB,
+      ADD COLUMN IF NOT EXISTS view_scope VARCHAR(20) DEFAULT 'day',
+      ADD COLUMN IF NOT EXISTS metric_mode VARCHAR(20) DEFAULT 'pct',
+      ADD COLUMN IF NOT EXISTS total_portfolio_value DECIMAL(14, 2),
+      ADD COLUMN IF NOT EXISTS baseline_total_value DECIMAL(14, 2),
+      ADD COLUMN IF NOT EXISTS performance_value DECIMAL(14, 2),
+      ADD COLUMN IF NOT EXISTS long_performance_value DECIMAL(14, 2),
+      ADD COLUMN IF NOT EXISTS short_performance_value DECIMAL(14, 2),
+      ADD COLUMN IF NOT EXISTS source_label VARCHAR(100),
+      ADD COLUMN IF NOT EXISTS opus_review JSONB,
+      ADD COLUMN IF NOT EXISTS opus_review_created_at TIMESTAMP;
     `);
 
     // AI decisions - log all AI analysis and reasoning
@@ -2001,8 +2011,11 @@ export async function recordPortfolioHubAdviceHistory(entries = []) {
       `INSERT INTO portfolio_hub_advice_history (
          symbol, position_type, weight_pct, sector, sector_weight_pct,
          unrealized_pnl_pct, whiskie_pathway, recommendation, snapshot_payload,
-         long_return_pct, short_return_pct, sector_snapshot
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+         long_return_pct, short_return_pct, sector_snapshot, view_scope,
+         metric_mode, total_portfolio_value, baseline_total_value, performance_value,
+         long_performance_value, short_performance_value, source_label, opus_review,
+         opus_review_created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
       [
         entry.symbol,
         entry.positionType || null,
@@ -2015,7 +2028,17 @@ export async function recordPortfolioHubAdviceHistory(entries = []) {
         entry.snapshotPayload ? JSON.stringify(entry.snapshotPayload) : null,
         entry.longReturnPct ?? null,
         entry.shortReturnPct ?? null,
-        entry.sectorSnapshot ? JSON.stringify(entry.sectorSnapshot) : null
+        entry.sectorSnapshot ? JSON.stringify(entry.sectorSnapshot) : null,
+        entry.viewScope || 'day',
+        entry.metricMode || 'pct',
+        entry.totalPortfolioValue ?? null,
+        entry.baselineTotalValue ?? null,
+        entry.performanceValue ?? null,
+        entry.longPerformanceValue ?? null,
+        entry.shortPerformanceValue ?? null,
+        entry.sourceLabel || null,
+        entry.opusReview ? JSON.stringify(entry.opusReview) : null,
+        entry.opusReviewCreatedAt || null
       ]
     );
   }
@@ -2028,6 +2051,18 @@ export async function getPortfolioHubAdviceHistorySince(date) {
      WHERE created_at >= $1
      ORDER BY created_at ASC, symbol ASC`,
     [date]
+  );
+  return result.rows || [];
+}
+
+export async function getLatestPortfolioHubAdviceHistory(symbols = []) {
+  if (!Array.isArray(symbols) || !symbols.length) return [];
+  const result = await pool.query(
+    `SELECT DISTINCT ON (symbol) *
+     FROM portfolio_hub_advice_history
+     WHERE symbol = ANY($1)
+     ORDER BY symbol, created_at DESC, id DESC`,
+    [symbols]
   );
   return result.rows || [];
 }

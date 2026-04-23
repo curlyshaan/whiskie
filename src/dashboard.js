@@ -3,7 +3,7 @@ import * as db from './db.js';
 import { stripThinkingBlocks } from './utils.js';
 import earningsReminders from './earnings-reminders.js';
 import analysisEngine from './analysis.js';
-import { buildPortfolioHubView, DEFAULT_PORTFOLIO_HUB_ACCOUNTS } from './portfolio-hub.js';
+import { buildPortfolioHubView, DEFAULT_PORTFOLIO_HUB_ACCOUNTS, runPortfolioHubOpusReview } from './portfolio-hub.js';
 
 const router = express.Router();
 
@@ -132,6 +132,12 @@ function formatMoney(value) {
   return `$${numeric.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function formatSignedMoney(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '$0.00';
+  return `${numeric >= 0 ? '+' : '-'}$${Math.abs(numeric).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function sortPortfolioHubHoldings(holdings = [], sortBy = 'marketValue', sortDirection = 'desc') {
   const rows = Array.isArray(holdings) ? [...holdings] : [];
   const directionMultiplier = sortDirection === 'asc' ? 1 : -1;
@@ -218,6 +224,8 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   const insights = portfolioHub.insights || [];
   const sectorTrimCandidates = portfolioHub.sectorTrimCandidates || [];
   const performanceSeries = portfolioHub.performanceSeries || [];
+  const performanceRange = portfolioHub.performanceRange || 'day';
+  const performanceMetric = portfolioHub.performanceMetric || 'pct';
   const accountOptions = DEFAULT_PORTFOLIO_HUB_ACCOUNTS;
   const nextSortDirection = column => (
     holdingsSort.sortBy === column && holdingsSort.sortDirection === 'desc' ? 'asc' : 'desc'
@@ -231,7 +239,8 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <div class="section-title">🧭 Portfolio Hub</div>
       <p class="subtitle" style="margin-top:0;">Separate from Whiskie live trading. Manual multi-account holdings with portfolio-wide analytics.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
-        <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Refresh Holdings + Whiskie Guidance</button>
+        <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Recalculate Portfolio Hub</button>
+        <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Run Opus Portfolio Review</button>
       </div>
 
       <div class="stats" style="margin-top:16px;">
@@ -241,21 +250,30 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         <div class="stat-card"><div class="stat-label">Cash %</div><div class="stat-value">${formatPercent(summary.cashPct || 0)}</div></div>
         <div class="stat-card"><div class="stat-label">Unrealized P/L</div><div class="stat-value ${Number(summary.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(summary.unrealizedPnL || 0)}<br>${formatPercent(summary.unrealizedPnLPct || 0)}</div></div>
         <div class="stat-card"><div class="stat-label">Accounts / Holdings</div><div class="stat-value">${accounts.length} / ${holdings.length}</div></div>
-        <div class="stat-card"><div class="stat-label">Today Performance</div><div class="stat-value ${Number(summary.performancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.performancePct || 0)}</div></div>
-        <div class="stat-card"><div class="stat-label">Long / Short Today</div><div class="stat-value"><span class="${Number(summary.longPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.longPerformancePct || 0)}</span><br><span class="${Number(summary.shortPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.shortPerformancePct || 0)}</span></div></div>
+        <div class="stat-card"><div class="stat-label">Today Performance</div><div class="stat-value ${Number(summary.performancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.performancePct || 0)}<br><span style="font-size:1rem;">${formatSignedMoney(summary.performanceValue || 0)}</span></div></div>
+        <div class="stat-card"><div class="stat-label">Long / Short Today</div><div class="stat-value"><span class="${Number(summary.longPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.longPerformancePct || 0)} / ${formatSignedMoney(summary.longPerformanceValue || 0)}</span><br><span class="${Number(summary.shortPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.shortPerformancePct || 0)} / ${formatSignedMoney(summary.shortPerformanceValue || 0)}</span></div></div>
       </div>
 
       <details style="margin-top:18px;">
-        <summary>📈 Today Performance Chart</summary>
+        <summary>📈 Performance Chart</summary>
         <div style="margin-top:14px;">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+            <button class="filter-btn" onclick="setPortfolioHubPerformance('day', '${performanceMetric}')" ${performanceRange === 'day' ? 'style="font-weight:700;"' : ''}>Day</button>
+            <button class="filter-btn" onclick="setPortfolioHubPerformance('week', '${performanceMetric}')" ${performanceRange === 'week' ? 'style="font-weight:700;"' : ''}>Week</button>
+            <button class="filter-btn" onclick="setPortfolioHubPerformance('month', '${performanceMetric}')" ${performanceRange === 'month' ? 'style="font-weight:700;"' : ''}>Month</button>
+            <button class="filter-btn" onclick="setPortfolioHubPerformance('${performanceRange}', 'pct')" ${performanceMetric === 'pct' ? 'style="font-weight:700;"' : ''}>P/L %</button>
+            <button class="filter-btn" onclick="setPortfolioHubPerformance('${performanceRange}', 'value')" ${performanceMetric === 'value' ? 'style="font-weight:700;"' : ''}>P/L $</button>
+          </div>
           ${performanceSeries.length < 2 ? '<div class="no-data">Chart starts building from today and needs more than one snapshot to show movement.</div>' : `
-            <div class="position-summary-note" style="margin-bottom:10px;">Combined</div>
+            <div class="position-summary-note" style="margin-bottom:10px;">Combined (${performanceMetric === 'value' ? 'P/L $' : 'P/L %'})</div>
             <div style="display:flex; align-items:flex-end; gap:8px; min-height:180px; padding:16px; background:#0f1425; border-radius:10px; border:1px solid #2a2f4a;">
               ${performanceSeries.map(point => {
-                const height = Math.max(12, Math.min(140, Math.abs(point.combined) * 12 + 12));
+                const scale = performanceMetric === 'value' ? 0.08 : 12;
+                const height = Math.max(12, Math.min(140, Math.abs(point.combined) * scale + 12));
                 const color = Number(point.combined) >= 0 ? '#10b981' : '#ef4444';
+                const label = performanceMetric === 'value' ? formatSignedMoney(point.combined) : `${point.combined >= 0 ? '+' : ''}${Number(point.combined).toFixed(2)}%`;
                 return `<div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
-                  <div style="font-size:11px; color:${color};">${point.combined >= 0 ? '+' : ''}${Number(point.combined).toFixed(2)}%</div>
+                  <div style="font-size:11px; color:${color};">${label}</div>
                   <div style="width:22px; height:${height}px; background:${color}; border-radius:8px 8px 0 0;"></div>
                   <div style="font-size:11px; color:#94a3b8;">${escapeHtml(point.label)}</div>
                 </div>`;
@@ -268,26 +286,29 @@ function renderPortfolioHubSection(portfolioHub = {}) {
             </div>
             <div style="display:flex; align-items:flex-end; gap:8px; min-height:180px; padding:16px; background:#0f1425; border-radius:10px; border:1px solid #2a2f4a;">
               ${performanceSeries.map(point => {
-                const longHeight = Math.max(12, Math.min(140, Math.abs(point.long) * 12 + 12));
-                const shortHeight = Math.max(12, Math.min(140, Math.abs(point.short) * 12 + 12));
+                const scale = performanceMetric === 'value' ? 0.08 : 12;
+                const longHeight = Math.max(12, Math.min(140, Math.abs(point.long) * scale + 12));
+                const shortHeight = Math.max(12, Math.min(140, Math.abs(point.short) * scale + 12));
                 const longColor = Number(point.long) >= 0 ? '#10b981' : '#ef4444';
                 const shortColor = Number(point.short) >= 0 ? '#60a5fa' : '#f97316';
+                const longLabel = performanceMetric === 'value' ? formatSignedMoney(point.long) : `${point.long >= 0 ? '+' : ''}${Number(point.long).toFixed(2)}%`;
+                const shortLabel = performanceMetric === 'value' ? formatSignedMoney(point.short) : `${point.short >= 0 ? '+' : ''}${Number(point.short).toFixed(2)}%`;
                 return `<div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
                   <div style="font-size:11px; color:#94a3b8;">${escapeHtml(point.label)}</div>
                   <div style="display:flex; align-items:flex-end; gap:4px;">
                     <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
-                      <div style="font-size:10px; color:${longColor};">${point.long >= 0 ? '+' : ''}${Number(point.long).toFixed(2)}%</div>
+                      <div style="font-size:10px; color:${longColor};">${longLabel}</div>
                       <div style="width:14px; height:${longHeight}px; background:${longColor}; border-radius:6px 6px 0 0;"></div>
                     </div>
                     <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
-                      <div style="font-size:10px; color:${shortColor};">${point.short >= 0 ? '+' : ''}${Number(point.short).toFixed(2)}%</div>
+                      <div style="font-size:10px; color:${shortColor};">${shortLabel}</div>
                       <div style="width:14px; height:${shortHeight}px; background:${shortColor}; border-radius:6px 6px 0 0;"></div>
                     </div>
                   </div>
                 </div>`;
               }).join('')}
             </div>
-            <div class="position-summary-note" style="margin-top:10px;">Baseline is today at 0%. This chart can be hidden by collapsing this panel.</div>
+            <div class="position-summary-note" style="margin-top:10px;">Baseline is the first captured snapshot in the selected range.</div>
           `}
         </div>
       </details>
@@ -325,6 +346,34 @@ function renderPortfolioHubSection(portfolioHub = {}) {
             <button class="analyze-btn" onclick="savePortfolioHubTransaction()">Save Transaction</button>
           </div>
           <div class="position-summary-note" style="margin-top:10px;">Transactions now auto-update account cash: buy/cover/withdraw reduce cash, sell/short/deposit increase cash. Use the cash override only to sync Portfolio Hub back to the broker's exact live cash balance.</div>
+        </div>
+      </details>
+
+      <details style="margin-top:18px;" open>
+        <summary>Cash Available by Account</summary>
+        <div style="margin-top:12px;">
+          ${accounts.length === 0 ? '<div class="no-data">No Portfolio Hub accounts yet.</div>' : `
+            <table>
+              <thead><tr><th>Account</th><th>Cash Available</th><th>% of Total Cash</th><th>% of Total Portfolio</th><th>Last Synced</th></tr></thead>
+              <tbody>
+                ${accounts.map(account => {
+                  const cashBalance = Number(account.cash_balance || 0);
+                  const cashSharePct = Number(summary.cash || 0) > 0 ? (cashBalance / Number(summary.cash || 0)) * 100 : 0;
+                  const portfolioSharePct = Number(summary.totalValue || 0) > 0 ? (cashBalance / Number(summary.totalValue || 0)) * 100 : 0;
+                  return `
+                    <tr>
+                      <td>${escapeHtml(account.account_name || '-')}</td>
+                      <td>${formatMoney(cashBalance)}</td>
+                      <td>${formatPercent(cashSharePct)}</td>
+                      <td>${formatPercent(portfolioSharePct)}</td>
+                      <td>${formatShortDate(account.updated_at)}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          `}
+          <div class="position-summary-note" style="margin-top:10px;">This section reads directly from each account's live Portfolio Hub cash balance, so buys, sells, shorts, covers, deposits, withdrawals, and cash overrides will update it automatically after each saved transaction.</div>
         </div>
       </details>
 
@@ -366,7 +415,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <td>${escapeHtml(row.whiskiePathway || '-')}</td>
                   <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
                   <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
-                  <td><strong>${escapeHtml(row.whiskieActionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(row.whiskieView || '-')}</span></td>
+                  <td><strong>${escapeHtml(row.whiskieActionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(row.whiskieView || '-')}</span>${row.whiskieShareCountText ? `<br><span class="timestamp">${escapeHtml(row.whiskieShareCountText)}</span>` : ''}</td>
                 </tr>
                 <tr>
                   <td colspan="14" style="background:#131a30;">
@@ -378,12 +427,16 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                           <span class="detail-chip">Sector source: ${escapeHtml(row.sectorSource || '-')}</span>
                           <span class="detail-chip">Last action: ${escapeHtml(row.whiskieLastAction || '-')}</span>
                           <span class="detail-chip">Holding posture: ${escapeHtml(row.whiskieHoldingPosture || '-')}</span>
+                          <span class="detail-chip">Guidance source: ${escapeHtml(row.whiskieSource || '-')}</span>
+                          <span class="detail-chip">Confidence: ${escapeHtml(row.whiskieConfidence || '-')}</span>
                         </div>
                         <div><strong>Portfolio Hub guidance:</strong> ${escapeHtml(row.whiskieView || '-')}</div>
+                        <div><strong>Share guidance:</strong> ${escapeHtml(row.whiskieShareCountText || '-')}</div>
                         <div><strong>Detail:</strong> ${escapeHtml(row.whiskieDetail || '-')}</div>
                         <div><strong>Thesis summary:</strong> ${escapeHtml(row.whiskieNotes || '-')}</div>
                         <div><strong>Catalyst summary:</strong> ${escapeHtml(row.whiskieCatalysts || '-')}</div>
                         <div><strong>Source reasons:</strong> ${escapeHtml((row.whiskieSourceReasons || []).join(' | ') || '-')}</div>
+                        <div><strong>Opus review saved:</strong> ${row.opusReviewCreatedAt ? escapeHtml(formatShortDate(row.opusReviewCreatedAt)) : '-'}</div>
                       </div>
                     </details>
                   </td>
@@ -680,20 +733,43 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       const btn = document.getElementById('portfolioHubRefreshBtn');
       if (btn) {
         btn.disabled = true;
-        btn.textContent = 'Refreshing Portfolio Hub...';
+        btn.textContent = 'Recalculating Portfolio Hub...';
       }
 
       try {
         const response = await fetch('/api/portfolio-hub/refresh', { method: 'POST' });
         const data = await response.json();
-        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to refresh Portfolio Hub');
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to recalculate Portfolio Hub');
         location.reload();
       } catch (error) {
         alert('Error refreshing Portfolio Hub: ' + error.message);
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Refresh Holdings + Whiskie Guidance';
+          btn.textContent = 'Recalculate Portfolio Hub';
+        }
+      }
+    }
+
+    async function runPortfolioHubOpusReview() {
+      const btn = document.getElementById('portfolioHubOpusBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Running Opus review...';
+      }
+
+      try {
+        const response = await fetch('/api/portfolio-hub/opus-review', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to run Opus portfolio review');
+        alert('Opus portfolio review completed and saved.');
+        location.reload();
+      } catch (error) {
+        alert('Error running Opus portfolio review: ' + error.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Run Opus Portfolio Review';
         }
       }
     }
@@ -702,6 +778,13 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       const params = new URLSearchParams(window.location.search);
       params.set('phSort', sortBy);
       params.set('phDir', sortDirection);
+      window.location.search = '?' + params.toString();
+    }
+
+    function setPortfolioHubPerformance(range, metric) {
+      const params = new URLSearchParams(window.location.search);
+      params.set('phRange', range);
+      params.set('phMetric', metric);
       window.location.search = '?' + params.toString();
     }
 
@@ -1183,7 +1266,10 @@ router.get('/', async (req, res) => {
 
 router.get('/portfolio-hub', async (req, res) => {
   try {
-    const portfolioHub = await buildPortfolioHubView();
+    const portfolioHub = await buildPortfolioHubView({
+      performanceRange: req.query.phRange,
+      performanceMetric: req.query.phMetric
+    });
     portfolioHub.holdingsSort = {
       sortBy: String(req.query.phSort || 'marketValue'),
       sortDirection: String(req.query.phDir || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc'
@@ -3415,6 +3501,15 @@ router.post('/api/portfolio-hub/refresh', async (req, res) => {
   try {
     const portfolioHub = await buildPortfolioHubView();
     res.json({ success: true, summary: portfolioHub.summary || null });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/portfolio-hub/opus-review', async (req, res) => {
+  try {
+    const result = await runPortfolioHubOpusReview();
+    res.json({ success: true, result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
