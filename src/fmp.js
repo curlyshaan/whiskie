@@ -196,6 +196,20 @@ class FMPClient {
     return results;
   }
 
+  async getBatchAftermarketQuotes(symbols) {
+    const symbolList = Array.isArray(symbols)
+      ? symbols
+      : String(symbols || '').split(',').map(s => s.trim()).filter(Boolean);
+
+    if (!symbolList.length) return [];
+
+    const data = await this.request('/batch-aftermarket-quote', {
+      symbols: symbolList.join(',')
+    });
+
+    return Array.isArray(data) ? data : [data].filter(Boolean);
+  }
+
   /**
    * Get company profile (market cap, sector, industry)
    */

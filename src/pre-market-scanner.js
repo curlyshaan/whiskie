@@ -24,24 +24,39 @@ export async function runPreMarketScan() {
       return null;
     }
 
-    // Fetch pre-market quotes
-    const quotes = await fmp.getQuotes(allSymbols.join(','));
-    const quoteArray = Array.isArray(quotes) ? quotes : [quotes];
+    // Fetch true off-hours quotes plus prior closes
+    const [aftermarketQuotes, regularQuotes] = await Promise.all([
+      fmp.getBatchAftermarketQuotes(allSymbols),
+      fmp.getQuotes(allSymbols.join(','))
+    ]);
+    const afterMarketMap = new Map(
+      (Array.isArray(aftermarketQuotes) ? aftermarketQuotes : [aftermarketQuotes])
+        .filter(Boolean)
+        .map(quote => [String(quote.symbol || '').toUpperCase(), quote])
+    );
+    const regularQuoteMap = new Map(
+      (Array.isArray(regularQuotes) ? regularQuotes : [regularQuotes])
+        .filter(Boolean)
+        .map(quote => [String(quote.symbol || '').toUpperCase(), quote])
+    );
 
     const gaps = [];
     const alerts = [];
 
-    for (const quote of quoteArray) {
-      if (!quote || !quote.symbol) continue;
+    for (const symbol of allSymbols) {
+      const normalizedSymbol = String(symbol || '').toUpperCase();
+      const afterHoursQuote = afterMarketMap.get(normalizedSymbol);
+      const regularQuote = regularQuoteMap.get(normalizedSymbol);
+      if (!afterHoursQuote || !regularQuote) continue;
 
       // Pre-market price vs prior close
-      const preMarketPrice = quote.price;
-      const priorClose = quote.previousClose;
+      const preMarketPrice = getReliablePremarketPrice(afterHoursQuote);
+      const priorClose = Number(regularQuote.previousClose);
 
       if (!preMarketPrice || !priorClose) continue;
 
       const gapPct = ((preMarketPrice - priorClose) / priorClose) * 100;
-      const isPosition = positionSymbols.includes(quote.symbol);
+      const isPosition = positionSymbols.includes(normalizedSymbol);
 
       // Only flag meaningful gaps (>2% for watchlist, >1.5% for held positions)
       const threshold = isPosition ? 1.5 : 2.0;
@@ -49,7 +64,7 @@ export async function runPreMarketScan() {
 
       const direction = gapPct > 0 ? 'UP' : 'DOWN';
       const gapInfo = {
-        symbol: quote.symbol,
+        symbol: normalizedSymbol,
         gapPct: gapPct.toFixed(2),
         direction,
         preMarketPrice: preMarketPrice.toFixed(2),
@@ -62,7 +77,7 @@ export async function runPreMarketScan() {
       // Fetch quick news for significant gaps (>3%)
       if (Math.abs(gapPct) > 3) {
         try {
-          const news = await tavily.searchStructuredPremarketContext(quote.symbol, { maxResults: 2 });
+          const news = await tavily.searchStructuredPremarketContext(normalizedSymbol, { maxResults: 2 });
           gapInfo.newsHeadlines = tavily.formatResults(news);
         } catch (e) {
           gapInfo.newsHeadlines = 'News unavailable';
@@ -71,7 +86,7 @@ export async function runPreMarketScan() {
 
       // Alert on held positions gapping significantly
       if (isPosition && Math.abs(gapPct) > 4) {
-        alerts.push(`🚨 ${quote.symbol} gapped ${direction} ${Math.abs(gapPct).toFixed(1)}% pre-market — review position`);
+        alerts.push(`🚨 ${normalizedSymbol} gapped ${direction} ${Math.abs(gapPct).toFixed(1)}% pre-market — review position`);
       }
     }
 
@@ -98,6 +113,22 @@ export async function runPreMarketScan() {
     console.error('❌ Pre-market scan failed:', error.message);
     return null;
   }
+}
+
+function getReliablePremarketPrice(quote) {
+  const candidates = [
+    quote.askPrice,
+    quote.bidPrice
+  ];
+
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric;
+    }
+  }
+
+  return null;
 }
 
 function buildGapSummary(gaps) {
