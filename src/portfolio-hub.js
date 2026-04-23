@@ -6,6 +6,7 @@ import claude from './claude.js';
 import tavily from './tavily.js';
 import vixRegime from './vix-regime.js';
 import riskManager from './risk-manager.js';
+import { ensureFreshStockProfile } from './stock-profiles.js';
 
 export const DEFAULT_PORTFOLIO_HUB_ACCOUNTS = [
   'Sai-Webull-Cash',
@@ -189,6 +190,30 @@ async function buildPortfolioHubStockNewsContext(holdings = [], sectorTrimCandid
   );
 
   return stockNewsRows;
+}
+
+async function ensurePortfolioHubProfiles(holdings = []) {
+  const symbols = [...new Set((holdings || []).map(row => String(row.symbol || '').toUpperCase()).filter(Boolean))];
+  if (!symbols.length) return [];
+
+  const existingProfiles = await db.getLatestStockProfilesForSymbols(symbols).catch(() => ({}));
+  const missingSymbols = symbols.filter(symbol => !existingProfiles[symbol]);
+
+  if (!missingSymbols.length) {
+    return [];
+  }
+
+  const built = [];
+  for (const symbol of missingSymbols) {
+    try {
+      const result = await ensureFreshStockProfile(symbol, { staleAfterDays: 14, incrementalRefreshDays: 14 });
+      built.push({ symbol, action: result?.action || 'built' });
+    } catch (error) {
+      built.push({ symbol, action: 'failed', error: error.message });
+    }
+  }
+
+  return built;
 }
 
 export async function buildPortfolioHubView(options = {}) {
@@ -490,6 +515,7 @@ export async function runPortfolioHubOpusReview() {
   if (!holdings.length) {
     return { reviewedAt: new Date().toISOString(), holdings: [] };
   }
+  const profileBuildResults = await ensurePortfolioHubProfiles(holdings);
   const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
   const stockNewsContext = await buildPortfolioHubStockNewsContext(holdings, portfolioHub.sectorTrimCandidates || []);
 
@@ -530,6 +556,9 @@ ${marketContext.formattedMacroNews}
 
 Structured Tavily stock context for highest-priority holdings only:
 ${JSON.stringify(stockNewsContext, null, 2)}
+
+Profile build results for holdings that were missing a Whiskie stock profile:
+${JSON.stringify(profileBuildResults, null, 2)}
 
 Holdings:
 ${JSON.stringify(holdings.map(row => ({

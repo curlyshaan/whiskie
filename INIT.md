@@ -30,8 +30,12 @@ Use this file as a quick-start memory reset for future sessions.
 - homepage includes a manual `Sync Portfolio` button for Tradier -> Whiskie reconciliation
 - flexible fundamental positions intentionally show `Flexible` in the Take Profit column instead of forcing a fixed numeric target
 - Portfolio Hub is now a separate transaction-ledger-based multi-account system, not part of Whiskie live trading positions
-- Portfolio Hub supports `buy`, `sell`, `short`, `cover`, and `cash_adjustment` transactions and derives holdings from ledger history
+- Portfolio Hub supports `buy`, `sell`, `short`, `cover`, `deposit`, and `withdraw` transactions and derives holdings from ledger history
 - default Portfolio Hub accounts are: Sai-Webull-Cash, Sai-Webull-Margin, Sai-Webull-IRA, Sai-Fidelity-IRA, Sai-Tradier-Cash, Sara-Webull-Cash, Sara-Webull-IRA
+- Portfolio Hub combined holdings now group by `symbol + position type`, not symbol alone
+- Portfolio Hub share guidance is whole-number based
+- Portfolio Hub Opus review now uses market context (VIX + SPY regime), structured Tavily macro context, and capped structured Tavily stock context for priority holdings
+- Portfolio Hub Opus review auto-builds missing Whiskie stock profiles for held symbols before running
 - Phase 1 ranking is a hard prior; Phase 4 must justify overrides and emit 1:1 execution lines
 - there is no active daily trade-count cap in execution; weekly loss guard remains in the circuit breaker
 - Railway paper trading should use `TRADING_MODE=paper` even if `NODE_ENV=production`

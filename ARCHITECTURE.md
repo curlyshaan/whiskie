@@ -180,13 +180,15 @@ The previous daily trade-count cap has been removed from the active execution pa
 
 ## Portfolio Hub
 
-Portfolio Hub is a separate manual household-portfolio system and is explicitly not tied to Whiskie live trading positions or Tradier sync.
+Portfolio Hub is a separate manual household-portfolio system and is explicitly not tied to Whiskie live trading positions, `positions`, `trade_approvals`, or Tradier sync.
 
 Current model:
 
 - `portfolio_hub_accounts` stores named accounts and baseline cash balances
 - `portfolio_hub_transactions` stores the transaction ledger across accounts
 - holdings are derived from transactions rather than stored as the source of truth
+- combined holdings are intentionally consolidated across accounts by symbol
+- Portfolio Hub no longer shows account-allocation analytics; the product model is combined household holdings first
 
 Supported transaction types:
 
@@ -194,16 +196,59 @@ Supported transaction types:
 - `sell`
 - `short`
 - `cover`
-- `cash_adjustment`
+- `deposit`
+- `withdraw`
 
-This allows partial sells, partial covers, adds, and manual cash movements without rewriting position rows.
+This allows partial sells, partial covers, adds, shorts, and manual cash movements without rewriting position rows.
+
+Cash behavior:
+
+- `buy` / `cover` / `withdraw` reduce account cash
+- `sell` / `short` / `deposit` increase account cash
+- the account cash override is an explicit admin-style correction path and should not be the normal workflow
+- blank cash overrides are rejected so accounts cannot be accidentally zeroed
+
+UI behavior:
+
+- Portfolio Hub has its own `/portfolio-hub` page
+- Combined Holdings supports header-click sorting
+- secondary sections like Position Mix, Recent Transactions, Sector Allocation, Short Exposure by Sector, Sector Reduction Plan, and Portfolio Insights are collapsible
+- the button labeled `Recalculate Portfolio Hub` rebuilds holdings and advisory analytics from stored Portfolio Hub data; it does not yet run a dedicated Portfolio-Hub-specific Opus review
 
 Portfolio Hub uses Whiskie context for advisory analysis only:
 
-- stock profiles
+- `stock_universe` first for sector/industry
+- FMP fallback for symbols missing from `stock_universe`
 - earnings calendar
-- recent Tavily context
-- price/sector data from FMP
+- `daily_symbol_state`
+- `saturday_watchlist`
+- stock profile / research context as supporting thesis material
+
+Portfolio Hub should not use live trading tables as its primary recommendation source. In particular:
+
+- do not source Portfolio Hub advisory behavior primarily from `positions`
+- do not treat `trade_approvals` as a Portfolio Hub state table
+
+Current advisory output:
+
+- `Whiskie View` can be overridden by a dedicated Portfolio Hub Opus review pass persisted in `portfolio_hub_advice_history`
+- `Whiskie Pathway`, thesis summary, catalyst summary, and source reasons are sourced from shared Whiskie context tables
+- stop-loss and take-profit columns are reserved for Portfolio-Hub-specific recommendations and may remain blank until explicitly generated for Portfolio Hub
+- share guidance in Portfolio Hub is whole-number based
+
+Current Portfolio Hub Opus review behavior:
+
+- Portfolio Hub holdings are grouped by `symbol + position_type` so long and short rows never merge into one P/L line
+- before Portfolio Hub Opus review runs, holdings missing a Whiskie `stock_profiles` row are auto-built through the existing profile builder
+- the Opus review prompt uses:
+  - VIX regime context
+  - SPY trend regime / allocation guidance
+  - structured Tavily macro context
+  - structured Tavily stock context for up to 6 highest-priority holdings
+- the intended framing is:
+  - `core long-term` holdings change slowly
+  - `tactical / swing / short` holdings flex more with market conditions
+- Sector Reduction Plan can remain rule-based for threshold detection, but Opus context is now rich enough to rank trim priority more intelligently in future refinements
 
 It may surface recommendations like hold, trim, add selectively, event risk elevated, hold short thesis, or wait to cover, but it does not place trades or modify Whiskie live positions.
 
