@@ -331,28 +331,20 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <div style="margin-top:18px;">
         <div class="detail-section-title">Combined Holdings</div>
         ${holdings.length === 0 ? '<div class="no-data">No Portfolio Hub holdings yet.</div>' : `
-          <div class="detail-chips" style="margin-bottom:10px;">
-            <span class="detail-chip">Sort by</span>
-            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('marketValue', '${nextSortDirection('marketValue')}')">Value${sortIndicator('marketValue')}</button>
-            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('symbol', '${nextSortDirection('symbol')}')">Symbol${sortIndicator('symbol')}</button>
-            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('weightPct', '${nextSortDirection('weightPct')}')">Weight${sortIndicator('weightPct')}</button>
-            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('unrealizedPnLPct', '${nextSortDirection('unrealizedPnLPct')}')">P/L %${sortIndicator('unrealizedPnLPct')}</button>
-            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('sector', '${nextSortDirection('sector')}')">Sector${sortIndicator('sector')}</button>
-          </div>
           <table>
             <thead>
               <tr>
-                <th>Symbol</th>
-                <th>Type</th>
-                <th>Shares</th>
-                <th>Avg Cost</th>
-                <th>Current</th>
-                <th>Value</th>
-                <th>Weight</th>
-                <th>P/L</th>
-                <th>Sector</th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('symbol', '${nextSortDirection('symbol')}')">Symbol${sortIndicator('symbol')}</button></th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('positionType', '${nextSortDirection('positionType')}')">Type${sortIndicator('positionType')}</button></th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('shares', '${nextSortDirection('shares')}')">Shares${sortIndicator('shares')}</button></th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('avgCost', '${nextSortDirection('avgCost')}')">Avg Cost${sortIndicator('avgCost')}</button></th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('currentPrice', '${nextSortDirection('currentPrice')}')">Current${sortIndicator('currentPrice')}</button></th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('marketValue', '${nextSortDirection('marketValue')}')">Value${sortIndicator('marketValue')}</button></th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('weightPct', '${nextSortDirection('weightPct')}')">Weight${sortIndicator('weightPct')}</button></th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('unrealizedPnLPct', '${nextSortDirection('unrealizedPnLPct')}')">P/L${sortIndicator('unrealizedPnLPct')}</button></th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('sector', '${nextSortDirection('sector')}')">Sector${sortIndicator('sector')}</button></th>
                 <th>Earnings</th>
-                <th>Whiskie Pathway</th>
+                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('whiskiePathway', '${nextSortDirection('whiskiePathway')}')">Whiskie Pathway${sortIndicator('whiskiePathway')}</button></th>
                 <th>Stop</th>
                 <th>Target</th>
                 <th>Whiskie View</th>
