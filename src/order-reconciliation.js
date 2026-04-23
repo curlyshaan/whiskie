@@ -216,33 +216,33 @@ class OrderReconciliation {
 
         await db.query(
           `UPDATE positions
-           SET pathway = COALESCE(pathway, $2),
-               intent = COALESCE(intent, $3),
-               strategy_type = COALESCE(strategy_type, $4),
-               thesis_state = COALESCE(thesis_state, $5),
-               holding_posture = COALESCE(holding_posture, $6),
-               holding_period = COALESCE(holding_period, $7),
+           SET pathway = COALESCE($2, pathway),
+               intent = COALESCE($3, intent),
+               strategy_type = COALESCE($4, strategy_type),
+               thesis_state = COALESCE($5, thesis_state),
+               holding_posture = COALESCE($6, holding_posture),
+               holding_period = COALESCE($7, holding_period),
                secondary_pathways = CASE
-                 WHEN secondary_pathways IS NULL OR secondary_pathways = '[]'::jsonb THEN $8::jsonb
+                 WHEN $8::jsonb IS NOT NULL AND (secondary_pathways IS NULL OR secondary_pathways = '[]'::jsonb) THEN $8::jsonb
                  ELSE secondary_pathways
                END,
                pathway_selection_rule = CASE
-                 WHEN pathway_selection_rule IS NULL OR pathway_selection_rule = 'unclassified' THEN $9
+                 WHEN $9 IS NOT NULL AND (pathway_selection_rule IS NULL OR pathway_selection_rule = 'unclassified') THEN $9
                  ELSE pathway_selection_rule
                END,
-               confidence = COALESCE(confidence, $10),
-               growth_potential = COALESCE(growth_potential, $11),
-               stop_type = COALESCE(stop_type, $12),
-               target_type = COALESCE(target_type, $13),
-               trailing_stop_pct = COALESCE(trailing_stop_pct, $14),
-               rebalance_threshold_pct = COALESCE(rebalance_threshold_pct, $15),
-               max_holding_days = COALESCE(max_holding_days, $16),
-               stop_loss = COALESCE(stop_loss, $17),
-               take_profit = COALESCE(take_profit, $18),
-               has_fixed_target = COALESCE(has_fixed_target, $19),
-               fundamental_stop_conditions = COALESCE(fundamental_stop_conditions, $20::jsonb),
-               catalysts = COALESCE(catalysts, $21::jsonb),
-               news_links = COALESCE(news_links, $22::jsonb),
+               confidence = COALESCE($10, confidence),
+               growth_potential = COALESCE($11, growth_potential),
+               stop_type = COALESCE($12, stop_type),
+               target_type = COALESCE($13, target_type),
+               trailing_stop_pct = COALESCE($14, trailing_stop_pct),
+               rebalance_threshold_pct = COALESCE($15, rebalance_threshold_pct),
+               max_holding_days = COALESCE($16, max_holding_days),
+               stop_loss = COALESCE($17, stop_loss),
+               take_profit = COALESCE($18, take_profit),
+               has_fixed_target = COALESCE($19, has_fixed_target),
+               fundamental_stop_conditions = COALESCE($20::jsonb, fundamental_stop_conditions),
+               catalysts = COALESCE($21::jsonb, catalysts),
+               news_links = COALESCE($22::jsonb, news_links),
                updated_at = CURRENT_TIMESTAMP
            WHERE symbol = $1`,
           [

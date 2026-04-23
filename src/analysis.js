@@ -15,6 +15,16 @@ class AnalysisEngine {
     this.INITIAL_CAPITAL = parseFloat(process.env.INITIAL_CAPITAL) || 100000;
   }
 
+  shouldFetchLiveBalances() {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit',
+      hour12: false
+    });
+    const hour = Number(formatter.format(new Date()));
+    return Number.isFinite(hour) && hour >= 9;
+  }
+
   /**
    * Get complete portfolio state
    */
@@ -26,8 +36,13 @@ class AnalysisEngine {
       let tradierUnavailable = false;
 
       try {
-        balances = await tradier.getBalances();
-        positions = await tradier.getPositions();
+        if (this.shouldFetchLiveBalances()) {
+          balances = await tradier.getBalances();
+          positions = await tradier.getPositions();
+        } else {
+          tradierUnavailable = true;
+          console.log('🕘 Before 9:00 AM ET - skipping live Tradier balance fetch and using DB/snapshot state');
+        }
       } catch (error) {
         tradierUnavailable = true;
         console.warn(`⚠️ Tradier portfolio fetch unavailable, falling back to DB/snapshot state: ${error.message}`);
