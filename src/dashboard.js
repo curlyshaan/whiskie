@@ -132,6 +132,52 @@ function formatMoney(value) {
   return `$${numeric.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function sortPortfolioHubHoldings(holdings = [], sortBy = 'marketValue', sortDirection = 'desc') {
+  const rows = Array.isArray(holdings) ? [...holdings] : [];
+  const directionMultiplier = sortDirection === 'asc' ? 1 : -1;
+
+  const readNumber = (row, key) => {
+    const value = Number(row?.[key]);
+    return Number.isFinite(value) ? value : 0;
+  };
+
+  const readText = (row, key) => String(row?.[key] || '').toUpperCase();
+
+  rows.sort((a, b) => {
+    let result = 0;
+    switch (sortBy) {
+      case 'symbol':
+      case 'positionType':
+      case 'sector':
+      case 'whiskiePathway':
+        result = readText(a, sortBy).localeCompare(readText(b, sortBy));
+        break;
+      case 'shares':
+        result = readNumber(a, 'shares') - readNumber(b, 'shares');
+        break;
+      case 'avgCost':
+      case 'currentPrice':
+      case 'marketValue':
+      case 'weightPct':
+      case 'unrealizedPnL':
+      case 'unrealizedPnLPct':
+        result = readNumber(a, sortBy) - readNumber(b, sortBy);
+        break;
+      default:
+        result = readNumber(a, 'marketValue') - readNumber(b, 'marketValue');
+        break;
+    }
+
+    if (result === 0) {
+      result = readText(a, 'symbol').localeCompare(readText(b, 'symbol'));
+    }
+
+    return result * directionMultiplier;
+  });
+
+  return rows;
+}
+
 function formatShortDate(value) {
   if (!value) return '-';
   const date = new Date(value);
@@ -159,7 +205,12 @@ function formatPortfolioHubTransactionType(value) {
 
 function renderPortfolioHubSection(portfolioHub = {}) {
   const summary = portfolioHub.summary || {};
-  const holdings = portfolioHub.holdings || [];
+  const holdingsSort = portfolioHub.holdingsSort || { sortBy: 'marketValue', sortDirection: 'desc' };
+  const holdings = sortPortfolioHubHoldings(
+    portfolioHub.holdings || [],
+    holdingsSort.sortBy,
+    holdingsSort.sortDirection
+  );
   const accounts = portfolioHub.accounts || [];
   const transactions = portfolioHub.transactions || [];
   const sectorRows = portfolioHub.sectorAllocation || [];
@@ -169,6 +220,12 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   const sectorTrimCandidates = portfolioHub.sectorTrimCandidates || [];
   const performanceSeries = portfolioHub.performanceSeries || [];
   const accountOptions = DEFAULT_PORTFOLIO_HUB_ACCOUNTS;
+  const nextSortDirection = column => (
+    holdingsSort.sortBy === column && holdingsSort.sortDirection === 'desc' ? 'asc' : 'desc'
+  );
+  const sortIndicator = column => (
+    holdingsSort.sortBy === column ? (holdingsSort.sortDirection === 'desc' ? ' ↓' : ' ↑') : ''
+  );
 
   return `
     <div class="section">
@@ -264,6 +321,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
             <input id="phShares" type="number" step="0.0001" placeholder="Shares" />
             <input id="phCostBasis" type="number" step="0.0001" placeholder="Price" />
             <input id="phCashAmount" type="number" step="0.01" placeholder="Cash amount" />
+            <input id="phTradeDate" type="date" value="${new Date().toISOString().split('T')[0]}" />
             <input id="phNotes" placeholder="Optional notes" />
             <button class="analyze-btn" onclick="savePortfolioHubTransaction()">Save Transaction</button>
           </div>
@@ -274,6 +332,14 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <div style="margin-top:18px;">
         <div class="detail-section-title">Combined Holdings</div>
         ${holdings.length === 0 ? '<div class="no-data">No Portfolio Hub holdings yet.</div>' : `
+          <div class="detail-chips" style="margin-bottom:10px;">
+            <span class="detail-chip">Sort by</span>
+            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('marketValue', '${nextSortDirection('marketValue')}')">Value${sortIndicator('marketValue')}</button>
+            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('symbol', '${nextSortDirection('symbol')}')">Symbol${sortIndicator('symbol')}</button>
+            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('weightPct', '${nextSortDirection('weightPct')}')">Weight${sortIndicator('weightPct')}</button>
+            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('unrealizedPnLPct', '${nextSortDirection('unrealizedPnLPct')}')">P/L %${sortIndicator('unrealizedPnLPct')}</button>
+            <button class="filter-btn" onclick="setPortfolioHubHoldingsSort('sector', '${nextSortDirection('sector')}')">Sector${sortIndicator('sector')}</button>
+          </div>
           <table>
             <thead>
               <tr>
@@ -588,6 +654,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         shares: document.getElementById('phShares').value,
         price: document.getElementById('phCostBasis').value,
         cash_amount: document.getElementById('phCashAmount').value,
+        trade_date: document.getElementById('phTradeDate').value,
         notes: document.getElementById('phNotes').value
       };
 
@@ -626,6 +693,13 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
           btn.textContent = 'Refresh Holdings + Whiskie Guidance';
         }
       }
+    }
+
+    function setPortfolioHubHoldingsSort(sortBy, sortDirection) {
+      const params = new URLSearchParams(window.location.search);
+      params.set('phSort', sortBy);
+      params.set('phDir', sortDirection);
+      window.location.search = '?' + params.toString();
     }
 
     function togglePortfolioHubTransactionFields() {
@@ -1107,6 +1181,10 @@ router.get('/', async (req, res) => {
 router.get('/portfolio-hub', async (req, res) => {
   try {
     const portfolioHub = await buildPortfolioHubView();
+    portfolioHub.holdingsSort = {
+      sortBy: String(req.query.phSort || 'marketValue'),
+      sortDirection: String(req.query.phDir || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc'
+    };
     res.send(generatePortfolioHubHTML(portfolioHub));
   } catch (error) {
     console.error('Portfolio Hub error:', error);
@@ -2151,6 +2229,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
         shares: document.getElementById('phShares').value,
         price: document.getElementById('phCostBasis').value,
         cash_amount: document.getElementById('phCashAmount').value,
+        trade_date: document.getElementById('phTradeDate').value,
         notes: document.getElementById('phNotes').value
       };
 
