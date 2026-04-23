@@ -173,10 +173,13 @@ export async function buildPortfolioHubView() {
   const shortSectorExposure = [...shortSectorTotals.entries()]
     .map(([sector, value]) => ({ sector, value, weightPct: totalValue > 0 ? (value / totalValue) * 100 : 0 }))
     .sort((a, b) => b.value - a.value);
-  const sectorWeightMap = new Map(sectorAllocation.map(row => [row.sector, row.weightPct]));
+  const longSectorWeightMap = new Map(sectorAllocation.map(row => [row.sector, row.weightPct]));
+  const shortSectorWeightMap = new Map(shortSectorExposure.map(row => [row.sector, row.weightPct]));
 
   holdings.forEach(row => {
-    const sectorWeightPct = sectorWeightMap.get(row.sector) || 0;
+    const sectorWeightPct = row.positionType === 'short'
+      ? (shortSectorWeightMap.get(row.sector) || 0)
+      : (longSectorWeightMap.get(row.sector) || 0);
     row.whiskieView = buildPortfolioHubRecommendation(row, {
       sectorWeightPct,
       hasWhiskiePosition: Boolean(whiskiePositionsMap.get(row.symbol))
