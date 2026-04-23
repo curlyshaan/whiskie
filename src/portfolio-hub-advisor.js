@@ -15,9 +15,7 @@ function pctRangeLabel(minPct, maxPct) {
 function formatShareCount(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return '0 shares';
-  if (numeric >= 10) return `${Math.round(numeric)} shares`;
-  if (numeric >= 1) return `${numeric.toFixed(1).replace(/\.0$/, '')} shares`;
-  return `${numeric.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')} shares`;
+  return `${Math.max(1, Math.round(numeric))} shares`;
 }
 
 function buildShareGuidance(row, actionLabel, context = {}) {

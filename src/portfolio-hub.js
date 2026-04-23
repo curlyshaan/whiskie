@@ -55,7 +55,7 @@ function normalizePerformancePointValue(row, metricMode = 'pct') {
   };
 }
 
-function formatPerformancePointLabel(date, range = 'day') {
+function formatPerformancePointLabel(date, range = 'week') {
   const value = new Date(date);
   if (Number.isNaN(value.getTime())) return '';
   if (range === 'day') {
@@ -67,7 +67,7 @@ function formatPerformancePointLabel(date, range = 'day') {
   return value.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
 }
 
-function selectHistoryWindow(range = 'day') {
+function selectHistoryWindow(range = 'week') {
   const start = new Date();
   if (range === 'week') {
     start.setDate(start.getDate() - 7);
@@ -95,9 +95,9 @@ function buildPersistedOpusReview(raw) {
 }
 
 export async function buildPortfolioHubView(options = {}) {
-  const performanceRange = ['day', 'week', 'month'].includes(String(options.performanceRange || 'day'))
-    ? String(options.performanceRange || 'day')
-    : 'day';
+  const performanceRange = ['week', 'month'].includes(String(options.performanceRange || 'week'))
+    ? String(options.performanceRange || 'week')
+    : 'week';
   const performanceMetric = String(options.performanceMetric || 'pct') === 'value' ? 'value' : 'pct';
 
   await db.seedPortfolioHubAccounts(DEFAULT_PORTFOLIO_HUB_ACCOUNTS).catch(() => {});
@@ -119,7 +119,6 @@ export async function buildPortfolioHubView(options = {}) {
   }
 
   const grouped = new Map();
-  const groupedByAccountSymbol = new Map();
   const cashByAccount = new Map(accounts.map(account => [account.id, Number(account.cash_balance || 0)]));
 
   for (const tx of [...transactions].reverse()) {
@@ -128,33 +127,27 @@ export async function buildPortfolioHubView(options = {}) {
 
     const symbol = String(tx.symbol || '').toUpperCase();
     if (!symbol) continue;
-    const accountSymbolKey = `${tx.account_id}:${symbol}`;
-    if (!grouped.has(symbol)) {
-      grouped.set(symbol, { symbol, shares: 0, totalCost: 0, accounts: [], positionType: 'long' });
-    }
-    if (!groupedByAccountSymbol.has(accountSymbolKey)) {
-      groupedByAccountSymbol.set(accountSymbolKey, { accountId: tx.account_id, symbol, shares: 0, totalCost: 0 });
+    const positionType = type === 'short' || type === 'cover' ? 'short' : 'long';
+    const groupKey = `${symbol}:${positionType}`;
+    if (!grouped.has(groupKey)) {
+      grouped.set(groupKey, { symbol, shares: 0, totalCost: 0, accounts: [], positionType });
     }
 
-    const row = grouped.get(symbol);
-    const accountRow = groupedByAccountSymbol.get(accountSymbolKey);
+    const row = grouped.get(groupKey);
     const shares = Number(tx.shares || 0);
     const price = Number(tx.price || 0);
-    const signedShares = ['buy', 'cover'].includes(type) ? shares : ['sell', 'short'].includes(type) ? -shares : shares;
+    const signedShares = ['buy', 'short'].includes(type) ? shares : ['sell', 'cover'].includes(type) ? -shares : shares;
 
     row.shares += signedShares;
     row.totalCost += Math.abs(signedShares) * price;
     row.accounts.push(tx.account_name);
-    row.positionType = row.shares < 0 ? 'short' : 'long';
-    accountRow.shares += signedShares;
-    accountRow.totalCost += Math.abs(signedShares) * price;
   }
 
-  for (const [symbol, row] of grouped.entries()) {
-    if (Math.abs(row.shares) < 0.0001) grouped.delete(symbol);
+  for (const [groupKey, row] of grouped.entries()) {
+    if (Math.abs(row.shares) < 0.0001) grouped.delete(groupKey);
   }
 
-  const symbols = [...grouped.keys()];
+  const symbols = [...new Set([...grouped.values()].map(row => row.symbol))];
   const { earningsMap, stockInfoMap, quoteMap, whiskieContextMap } = await buildPortfolioHubSymbolContext(symbols);
   const latestAdviceRows = await db.getLatestPortfolioHubAdviceHistory(symbols).catch(() => []);
   const latestAdviceMap = new Map((latestAdviceRows || []).map(row => [String(row.symbol || '').toUpperCase(), row]));
@@ -169,8 +162,8 @@ export async function buildPortfolioHubView(options = {}) {
   const shortSectorTotals = new Map();
   const holdings = [];
 
-  for (const symbol of symbols) {
-    const row = grouped.get(symbol);
+  for (const row of grouped.values()) {
+    const symbol = row.symbol;
     const quote = quoteMap.get(symbol) || null;
     const whiskieContext = whiskieContextMap.get(symbol) || null;
     const stockInfo = stockInfoMap.get(symbol) || null;
@@ -494,6 +487,7 @@ ${JSON.stringify(holdings.map(row => ({
     reviewedAt,
     holdings: holdings.map(row => ({
       symbol: row.symbol,
+      positionType: row.positionType,
       opusReview: bySymbol.get(row.symbol) || null
     }))
   };

@@ -224,7 +224,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   const insights = portfolioHub.insights || [];
   const sectorTrimCandidates = portfolioHub.sectorTrimCandidates || [];
   const performanceSeries = portfolioHub.performanceSeries || [];
-  const performanceRange = portfolioHub.performanceRange || 'day';
+  const performanceRange = portfolioHub.performanceRange || 'week';
   const performanceMetric = portfolioHub.performanceMetric || 'pct';
   const accountOptions = DEFAULT_PORTFOLIO_HUB_ACCOUNTS;
   const nextSortDirection = column => (
@@ -258,7 +258,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         <summary>📈 Performance Chart</summary>
         <div style="margin-top:14px;">
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
-            <button class="filter-btn" onclick="setPortfolioHubPerformance('day', '${performanceMetric}')" ${performanceRange === 'day' ? 'style="font-weight:700;"' : ''}>Day</button>
             <button class="filter-btn" onclick="setPortfolioHubPerformance('week', '${performanceMetric}')" ${performanceRange === 'week' ? 'style="font-weight:700;"' : ''}>Week</button>
             <button class="filter-btn" onclick="setPortfolioHubPerformance('month', '${performanceMetric}')" ${performanceRange === 'month' ? 'style="font-weight:700;"' : ''}>Month</button>
             <button class="filter-btn" onclick="setPortfolioHubPerformance('${performanceRange}', 'pct')" ${performanceMetric === 'pct' ? 'style="font-weight:700;"' : ''}>P/L %</button>
@@ -1267,7 +1266,7 @@ router.get('/', async (req, res) => {
 router.get('/portfolio-hub', async (req, res) => {
   try {
     const portfolioHub = await buildPortfolioHubView({
-      performanceRange: req.query.phRange,
+      performanceRange: req.query.phRange || 'week',
       performanceMetric: req.query.phMetric
     });
     portfolioHub.holdingsSort = {
