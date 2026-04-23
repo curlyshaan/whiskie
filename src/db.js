@@ -3325,9 +3325,15 @@ export async function getUpcomingEarningsDashboardRows(days = 1) {
                   added_date DESC
          LIMIT 1
        ) sw ON TRUE
-       WHERE ec.earnings_date >= CURRENT_DATE
+       WHERE ec.earnings_date >= CURRENT_DATE - INTERVAL '1 day'
          AND ec.earnings_date <= CURRENT_DATE + ($1::text || ' days')::interval
-       ORDER BY ec.symbol,
+       ORDER BY CASE
+                  WHEN ec.earnings_date = CURRENT_DATE THEN 0
+                  WHEN ec.earnings_date = CURRENT_DATE + INTERVAL '1 day' THEN 1
+                  WHEN ec.earnings_date = CURRENT_DATE - INTERVAL '1 day' THEN 2
+                  ELSE 3
+                END ASC,
+                ec.symbol,
                 ec.earnings_date ASC,
                 CASE
                   WHEN ec.session_normalized IN ('pre_market', 'post_market') THEN 0
@@ -3606,6 +3612,12 @@ export async function markEarningsReminderPredicted(id, predictedAt, predictionD
     console.error(`Error marking earnings reminder ${id} as predicted:`, error);
     throw error;
   }
+}
+
+
+export async function clearEarningsReminders() {
+  const result = await pool.query('TRUNCATE TABLE earnings_reminders RESTART IDENTITY');
+  return result;
 }
 
 export async function saveEarningsReminderGrade(id, gradePayload = {}) {

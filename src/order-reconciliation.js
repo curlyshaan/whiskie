@@ -34,6 +34,11 @@ class OrderReconciliation {
       ADD COLUMN IF NOT EXISTS catalysts JSONB,
       ADD COLUMN IF NOT EXISTS news_links JSONB;
     `);
+
+    await db.query(`
+      ALTER TABLE position_lots
+      ADD COLUMN IF NOT EXISTS has_fixed_target BOOLEAN;
+    `);
   }
 
   /**

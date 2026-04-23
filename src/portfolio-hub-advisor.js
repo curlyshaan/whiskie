@@ -88,26 +88,26 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
 
   if (opusReview && typeof opusReview.actionLabel === 'string') {
     const remainingShares = Number(opusReview.remainingShares);
-    const plannedTotalShares = Number(opusReview.plannedTotalShares);
-    const executedShares = Number(opusReview.executedShares);
     const targetPositionShares = Number(opusReview.targetPositionShares);
     const currentShares = Math.abs(Number(row.shares || 0));
     const stageLabel = opusReview.stageLabel || null;
     const hasTargetPosition = Number.isFinite(targetPositionShares);
+    const directionAwareDelta = hasTargetPosition && Number.isFinite(currentShares)
+      ? Math.max(0, Math.abs(currentShares - targetPositionShares))
+      : Math.max(0, remainingShares || 0);
+
+    const normalizedAction = row.positionType === 'short' && String(opusReview.actionLabel || '').toLowerCase() === 'trim'
+      ? 'Cover'
+      : opusReview.actionLabel;
+
     return {
-      actionLabel: opusReview.actionLabel,
+      actionLabel: normalizedAction,
       summary: opusReview.summary || '',
       detail: opusReview.detail || '',
-      shareCountText: hasTargetPosition && Number.isFinite(currentShares)
-        ? `${opusReview.actionLabel} ${formatShareCount(Math.max(0, currentShares - targetPositionShares))} to reach ${formatShareCount(targetPositionShares)} held${stageLabel ? ` (${stageLabel})` : ''}.`
-        : Number.isFinite(remainingShares) && remainingShares > 0
-        ? `${opusReview.actionLabel} ${formatShareCount(remainingShares)} remaining${stageLabel ? ` (${stageLabel})` : ''}.`
-        : opusReview.shareCountText || null,
-      planProgressText: hasTargetPosition && Number.isFinite(currentShares)
-        ? `Target position: ${formatShareCount(targetPositionShares)} held, current: ${formatShareCount(currentShares)}, remaining trim: ${formatShareCount(Math.max(0, currentShares - targetPositionShares))}.`
-        : Number.isFinite(plannedTotalShares)
-        ? `Plan: ${formatShareCount(plannedTotalShares)} total, ${formatShareCount(executedShares || 0)} executed, ${formatShareCount(Math.max(0, remainingShares || 0))} remaining.`
+      shareCountText: directionAwareDelta > 0
+        ? `${normalizedAction} ${formatShareCount(directionAwareDelta)}${stageLabel ? ` (${stageLabel})` : ''}.`
         : null,
+      planProgressText: null,
       stopLoss: Number.isFinite(Number(opusReview.stopLoss)) ? Number(opusReview.stopLoss) : null,
       takeProfit: Number.isFinite(Number(opusReview.takeProfit)) ? Number(opusReview.takeProfit) : null,
       confidence: opusReview.confidence || null,

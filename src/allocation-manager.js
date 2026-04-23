@@ -1,4 +1,5 @@
 import vixRegime from './vix-regime.js';
+import macroRegime from './macro-regime.js';
 import * as db from './db.js';
 
 /**
@@ -16,12 +17,26 @@ class AllocationManager {
    * TODO: Integrate with FRED API to fetch Fed Funds rate automatically
    * For now, this can be set manually or via environment variable
    */
-  getRateEnvironment() {
-    // Check if rate environment is set in environment variable
+  async getRateEnvironment() {
     const envRate = process.env.RATE_ENVIRONMENT;
     if (envRate && ['LOW_RATES', 'NEUTRAL_RATES', 'HIGH_RATES'].includes(envRate)) {
+      this.currentRateEnvironment = envRate;
       return envRate;
     }
+
+    try {
+      const fedFunds = await macroRegime.getFedFundsRate();
+      if (Number.isFinite(fedFunds)) {
+        this.currentRateEnvironment = fedFunds >= 4.5
+          ? 'HIGH_RATES'
+          : fedFunds <= 1.5
+            ? 'LOW_RATES'
+            : 'NEUTRAL_RATES';
+      }
+    } catch (error) {
+      console.warn('⚠️ Falling back to cached rate environment:', error.message);
+    }
+
     return this.currentRateEnvironment;
   }
 

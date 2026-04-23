@@ -157,6 +157,13 @@ function buildAdviceKey(symbol, positionType) {
   return `${String(symbol || '').toUpperCase()}:${String(positionType || '').toLowerCase()}`;
 }
 
+function summarizeHoldingAction(row) {
+  const action = String(row.whiskieActionLabel || 'Hold').trim();
+  const summary = String(row.whiskieView || '').trim();
+  const shareCount = String(row.whiskieShareCountText || '').trim();
+  return [action, shareCount || summary].filter(Boolean).slice(0, 2).join(' — ');
+}
+
 async function buildPortfolioHubMarketContext(portfolioHub) {
   const [regime, spyRegime, macroNews] = await Promise.all([
     vixRegime.getRegime().catch(() => null),
@@ -296,6 +303,19 @@ function shouldIncrementalReviewHolding(row) {
   return false;
 }
 
+function pickDirectionalAdvice(row, latestAdviceRows = []) {
+  const byDirection = (latestAdviceRows || [])
+    .filter(candidate => String(candidate.symbol || '').toUpperCase() === String(row.symbol || '').toUpperCase())
+    .filter(candidate => String(candidate.position_type || '').toLowerCase() === String(row.positionType || '').toLowerCase())
+    .sort((a, b) => new Date(b.opus_review_created_at || b.created_at || 0) - new Date(a.opus_review_created_at || a.created_at || 0));
+
+  if (byDirection.length) {
+    return byDirection[0];
+  }
+
+  return null;
+}
+
 export async function buildPortfolioHubView(options = {}) {
   const performanceRange = ['week', 'month'].includes(String(options.performanceRange || 'week'))
     ? String(options.performanceRange || 'week')
@@ -389,7 +409,9 @@ export async function buildPortfolioHubView(options = {}) {
       null,
       null
     );
-    const latestAdvice = latestAdviceMap.get(buildAdviceKey(symbol, row.positionType)) || null;
+    const latestAdvice = latestAdviceMap.get(buildAdviceKey(symbol, row.positionType))
+      || pickDirectionalAdvice(row, latestAdviceRows)
+      || null;
     const persistedOpusReview = buildPersistedOpusReview(latestAdvice?.opus_review);
     if (persistedOpusReview) {
       persistedOpusReview.createdAt = latestAdvice?.opus_review_created_at || latestAdvice?.created_at || null;
@@ -508,15 +530,27 @@ export async function buildPortfolioHubView(options = {}) {
       const candidates = holdings
         .filter(holding => holding.sector === row.sector && holding.positionType === 'long')
         .sort((a, b) => {
-          const scoreA = (a.weightPct || 0) + Math.max(Number(a.unrealizedPnLPct || 0), 0);
-          const scoreB = (b.weightPct || 0) + Math.max(Number(b.unrealizedPnLPct || 0), 0);
+          const actionPriority = action => {
+            const normalized = String(action || '').toLowerCase();
+            if (normalized === 'trim') return 3;
+            if (normalized === 'reduce') return 2;
+            if (normalized === 'hold') return 1;
+            return 0;
+          };
+          const scoreA = actionPriority(a.whiskieActionLabel) * 1000 + (a.weightPct || 0) * 10 + Math.max(Number(a.unrealizedPnLPct || 0), 0);
+          const scoreB = actionPriority(b.whiskieActionLabel) * 1000 + (b.weightPct || 0) * 10 + Math.max(Number(b.unrealizedPnLPct || 0), 0);
           return scoreB - scoreA;
         })
         .slice(0, 3)
         .map(holding => ({
           symbol: holding.symbol,
-          action: holding.unrealizedPnLPct > 15 ? 'trim 15-25%' : holding.weightPct > 10 ? 'trim 10-20%' : 'reduce 5-10%',
-          rationale: `weight ${holding.weightPct.toFixed(1)}%, P/L ${holding.unrealizedPnLPct.toFixed(1)}%`
+          action: holding.whiskieShareCountText || holding.whiskieView || holding.whiskieActionLabel || (holding.unrealizedPnLPct > 15 ? 'trim 15-25%' : holding.weightPct > 10 ? 'trim 10-20%' : 'reduce 5-10%'),
+          rationale: [
+            `weight ${holding.weightPct.toFixed(1)}%`,
+            `P/L ${holding.unrealizedPnLPct.toFixed(1)}%`,
+            holding.whiskiePathway ? `pathway ${holding.whiskiePathway}` : null,
+            holding.whiskieSource ? `source ${holding.whiskieSource}` : null
+          ].filter(Boolean).join(', ')
         }));
 
       return {
@@ -550,13 +584,14 @@ export async function buildPortfolioHubView(options = {}) {
     activeReturnPct: Number(row.active_return_pct ?? 0),
     activeReturnValue: Number(row.active_return_value ?? 0)
   }));
-  const riskMetrics = await portfolioRiskMetrics.calculateRiskMetrics(totalValue, { benchmarkSymbol });
-  const benchmarkReturnPct = Number.parseFloat(String(riskMetrics.benchmarkReturnPct || '0').replace('%', '')) || 0;
-  const activeReturnPct = Number.parseFloat(String(riskMetrics.activeReturnPct || '0').replace('%', '')) || 0;
-  const benchmarkReturnValue = benchmarkBaselineValue * (benchmarkReturnPct / 100);
-  const activeReturnValue = totalValue - benchmarkBaselineValue - benchmarkReturnValue;
+  const hasEnoughSnapshots = historyRows.length >= 2;
+  const riskMetrics = hasEnoughSnapshots ? await portfolioRiskMetrics.calculateRiskMetrics(totalValue, { benchmarkSymbol }) : portfolioRiskMetrics.getEmptyMetrics();
+  const benchmarkReturnPct = hasEnoughSnapshots ? (Number.parseFloat(String(riskMetrics.benchmarkReturnPct || '0').replace('%', '')) || 0) : 0;
+  const activeReturnPct = hasEnoughSnapshots ? (Number.parseFloat(String(riskMetrics.activeReturnPct || '0').replace('%', '')) || 0) : 0;
+  const benchmarkReturnValue = hasEnoughSnapshots ? benchmarkBaselineValue * (benchmarkReturnPct / 100) : 0;
+  const activeReturnValue = hasEnoughSnapshots ? (totalValue - baselineTotalValue - benchmarkReturnValue) : 0;
   const etfRotationContext = await etfManager.getRotationAwareSummary().catch(() => ({ leading: [], lagging: [], availableETFs: [] }));
-  const performanceSeries = historyRows
+  const performanceSeries = (historyRows.length >= 2 ? historyRows : [])
     .map(row => ({
       label: formatPerformancePointLabel(row.created_at, performanceRange),
       ...normalizePerformancePointValue(row, performanceMetric),
@@ -585,7 +620,7 @@ export async function buildPortfolioHubView(options = {}) {
     if (!item.candidates.length) return;
     insights.push(`Reduce ${item.sector} exposure (${item.sectorWeightPct.toFixed(1)}%): ${item.candidates.map(candidate => `${candidate.symbol} ${candidate.action} (${candidate.rationale})`).join(', ')}.`);
   });
-  const explicitActions = holdings.filter(row => row.whiskieView).slice(0, 5).map(row => `${row.symbol}: ${row.whiskieView}`);
+  const explicitActions = holdings.filter(row => row.whiskieView || row.whiskieShareCountText).slice(0, 5).map(row => `${row.symbol}: ${summarizeHoldingAction(row)}`);
   if (explicitActions.length) insights.push(`Sizing actions: ${explicitActions.join(' | ')}`);
 
   if (shouldPersistHistory) {
@@ -598,7 +633,7 @@ export async function buildPortfolioHubView(options = {}) {
         sectorWeightPct: row.sectorWeightPct,
         unrealizedPnLPct: row.unrealizedPnLPct,
         whiskiePathway: row.whiskiePathway,
-        recommendation: row.whiskieView,
+        recommendation: summarizeHoldingAction(row),
         snapshotPayload: {
           ...row,
           totalPortfolioValue: totalValue,

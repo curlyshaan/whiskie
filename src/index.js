@@ -50,6 +50,7 @@ import { runWeeklyReview } from './weekly-review.js';
 import stockProfiles from './stock-profiles.js';
 import catalystResearch, { detectCatalysts } from './catalyst-research.js';
 import earningsReminders from './earnings-reminders.js';
+import { buildPortfolioHubView } from './portfolio-hub.js';
 
 dotenv.config();
 
@@ -57,6 +58,22 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const CRON_JOBS_ENABLED = process.env.ENABLE_SCHEDULED_JOBS !== 'false';
 let profileBuildRun = null;
+
+async function capturePortfolioHubSnapshot(label, scheduledTime = new Date()) {
+  const jobId = await db.logCronJobStart(label, 'daily', scheduledTime);
+  try {
+    const portfolioHub = await buildPortfolioHubView({
+      performanceRange: 'week',
+      performanceMetric: 'pct',
+      persistHistory: true
+    });
+    console.log(`📸 ${label} saved ${Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings.length : 0} holding snapshot(s)`);
+    await db.logCronJobComplete(jobId, true);
+  } catch (error) {
+    await db.logCronJobComplete(jobId, false, error.message);
+    throw error;
+  }
+}
 
 function getEasternDateString(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -226,6 +243,31 @@ class WhiskieBot {
         } catch (error) {
           console.error('❌ Daily summary failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Daily earnings calendar refresh and reminder sync - weekdays 8:30 AM ET
+      cron.schedule('30 8 * * 1-5', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Earnings Calendar Refresh', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ 8:30 AM ET - Refreshing earnings calendar and syncing reminders');
+          const { exec } = await import('child_process');
+          const { promisify } = await import('util');
+          const execAsync = promisify(exec);
+          const { stdout, stderr } = await execAsync('node scripts/refresh-earnings-fmp.js');
+          if (stdout) console.log(stdout.trim());
+          if (stderr) console.error(stderr.trim());
+          const reminders = await earningsReminders.syncAutoEarningsReminders();
+          console.log(`✅ Earnings reminder sync complete: ${reminders.length} reminder(s)`);
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Earnings calendar refresh failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await email.sendErrorAlert(error, 'Earnings calendar refresh failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -506,8 +548,20 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule hourly check to expire old trade approvals
 
+      // Schedule Portfolio Hub snapshots - weekdays 11:00 AM, 1:00 PM, and 3:00 PM ET
+      cron.schedule('0 11,13,15 * * 1-5', async () => {
+        const scheduledTime = new Date();
+        try {
+          await capturePortfolioHubSnapshot('Portfolio Hub Snapshot', scheduledTime);
+        } catch (error) {
+          console.error('❌ Portfolio Hub snapshot failed:', error);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule exit follow-through updater - weekdays 6:15 PM ET
       cron.schedule('15 18 * * 1-5', async () => {
         const scheduledTime = new Date();
         const jobId = await db.logCronJobStart('Exit Follow-Through Updater', 'daily', scheduledTime);
@@ -1033,6 +1087,29 @@ class WhiskieBot {
           }
         })();
         res.json({ success: true, message: 'EOD summary started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/refresh-earnings-reminders', async (req, res) => {
+      try {
+        console.log('📡 Manual earnings calendar/reminder refresh triggered via API');
+        (async () => {
+          try {
+            const { exec } = await import('child_process');
+            const { promisify } = await import('util');
+            const execAsync = promisify(exec);
+            const { stdout, stderr } = await execAsync('node scripts/refresh-earnings-fmp.js');
+            if (stdout) console.log(stdout.trim());
+            if (stderr) console.error(stderr.trim());
+            const reminders = await earningsReminders.syncAutoEarningsReminders();
+            console.log(`✅ Refreshed earnings calendar and synced ${reminders.length} reminder(s)`);
+          } catch (error) {
+            console.error('❌ Error in manual earnings calendar/reminder refresh:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Earnings calendar refresh started. Check logs for progress.' });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
@@ -3970,10 +4047,46 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
       const performers = portfolio.positions
         .map(p => ({
           symbol: p.symbol,
-          change: ((p.currentPrice - p.cost_basis) / p.cost_basis) * 100
+          change: Number(p.cost_basis || 0) > 0 ? ((Number(p.currentPrice || 0) - Number(p.cost_basis || 0)) / Number(p.cost_basis || 0)) * 100 : 0
         }))
         .sort((a, b) => b.change - a.change)
         .slice(0, 3);
+
+      let dailyChange = 0;
+      try {
+        const recentSnapshots = await db.getPerformanceHistory(2);
+        if (recentSnapshots.length >= 2) {
+          const [latestSnapshot, priorSnapshot] = recentSnapshots;
+          const latestValue = Number(latestSnapshot.total_value || 0);
+          const priorValue = Number(priorSnapshot.total_value || 0);
+          if (latestValue > 0 && priorValue > 0) {
+            dailyChange = (latestValue - priorValue) / priorValue;
+          }
+        }
+      } catch (error) {
+        console.error('Error calculating daily summary change:', error);
+      }
+
+      let trades = [];
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const tradeHistory = await db.getTradeHistory(25);
+        trades = tradeHistory.filter(trade => String(trade.executed_at || '').startsWith(today));
+      } catch (error) {
+        console.error('Error loading daily trades:', error);
+      }
+
+      portfolio.positions = portfolio.positions.map(position => {
+        const costBasis = Number(position.cost_basis || 0);
+        const currentPrice = Number(position.currentPrice || 0);
+        const quantity = Math.abs(Number(position.quantity || 0));
+        const gainLoss = costBasis > 0 ? (currentPrice - costBasis) / costBasis : 0;
+        return {
+          ...position,
+          gainLoss,
+          quantity
+        };
+      });
 
       // Get alerts
       const health = await analysisEngine.analyzePortfolioHealth(portfolio);
@@ -3983,9 +4096,9 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         totalValue: portfolio.totalValue,
         cash: portfolio.cash,
         positions: portfolio.positions,
-        dailyChange: 0, // TODO: Calculate
-        totalReturn: portfolio.drawdown * 100,
-        trades: [], // TODO: Get today's trades
+        dailyChange,
+        totalReturn: (portfolio.totalValue - analysisEngine.INITIAL_CAPITAL) / analysisEngine.INITIAL_CAPITAL,
+        trades,
         topPerformers: performers,
         alerts,
         riskMetrics, // Add risk metrics

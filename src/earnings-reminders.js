@@ -348,6 +348,32 @@ function formatPredictorReasoningHtml(text) {
   return `<ul style="margin:0; padding-left:18px;">${lines.map(line => `<li style="margin-bottom:6px;">${escapeHtml(line)}</li>`).join('')}</ul>`;
 }
 
+
+export function computeEarningsGrade(snapshotPrice, referencePrice, predictedDirection) {
+  const normalizedSnapshot = Number(snapshotPrice);
+  const normalizedReference = Number(referencePrice);
+  const actualReactionPct = normalizedSnapshot > 0 && Number.isFinite(normalizedReference)
+    ? ((normalizedReference - normalizedSnapshot) / normalizedSnapshot) * 100
+    : null;
+  const actualReactionDirection = classifyReaction(actualReactionPct);
+  const normalizedPrediction = ['up', 'down', 'flat'].includes(String(predictedDirection || '').toLowerCase())
+    ? String(predictedDirection || '').toLowerCase()
+    : 'unclear';
+  const gradeResult = actualReactionDirection === 'flat'
+    ? (normalizedPrediction === 'flat' ? 'correct' : 'incorrect')
+    : actualReactionDirection === 'unclear'
+      ? 'unclear'
+      : normalizedPrediction === actualReactionDirection
+        ? 'correct'
+        : 'incorrect';
+
+  return {
+    actualReactionPct,
+    actualReactionDirection,
+    gradeResult
+  };
+}
+
 function classifyReaction(movePct, threshold = 1) {
   if (!Number.isFinite(movePct)) return 'unclear';
   if (Math.abs(movePct) < threshold) return 'flat';
@@ -665,25 +691,28 @@ export async function gradeEarningsReminder(reminder) {
 
   const nextSessionDate = nextTradingDay(reminder.earnings_date);
   const quote = await fmp.getQuote(reminder.symbol).catch(() => null);
-  const closePrice = resolveMarketPrice(quote, { marketOpen: false, fallback: null });
 
-  if (!Number.isFinite(Number(closePrice))) {
+  const preferredReferencePrice = (() => {
+    const session = String(reminder.earnings_session || '').toLowerCase();
+    if (session === 'post_market') {
+      return Number(quote?.previousClose ?? quote?.close ?? null);
+    }
+    if (session === 'pre_market') {
+      return Number(quote?.price ?? quote?.previousClose ?? quote?.close ?? null);
+    }
+    return Number(quote?.price ?? quote?.previousClose ?? quote?.close ?? null);
+  })();
+
+  if (!Number.isFinite(preferredReferencePrice)) {
     return null;
   }
 
   const snapshotPrice = Number(reminder.predictor_snapshot_price);
-  const actualReactionPct = snapshotPrice > 0
-    ? ((Number(closePrice) - snapshotPrice) / snapshotPrice) * 100
-    : null;
-  const actualReactionDirection = classifyReaction(actualReactionPct);
-  const predictedDirection = String(reminder.predicted_direction || '').toLowerCase();
-  const gradeResult = actualReactionDirection === 'flat'
-    ? 'flat'
-    : actualReactionDirection === 'unclear'
-      ? 'unclear'
-      : predictedDirection === actualReactionDirection
-        ? 'correct'
-        : 'incorrect';
+  const { actualReactionPct, actualReactionDirection, gradeResult } = computeEarningsGrade(
+    snapshotPrice,
+    preferredReferencePrice,
+    reminder.predicted_direction
+  );
 
   return db.saveEarningsReminderGrade(reminder.id, {
     actualReactionDirection,

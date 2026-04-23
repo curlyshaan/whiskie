@@ -99,6 +99,20 @@ function renderDetailSection(title, content) {
   `;
 }
 
+function renderKeyValueRows(items = []) {
+  const rows = items
+    .filter(item => normalizeText(item?.value))
+    .map(item => `
+      <div class="detail-kv-row">
+        <div class="detail-kv-label">${escapeHtml(item.label)}</div>
+        <div class="detail-kv-value">${escapeHtml(normalizeText(item.value))}</div>
+      </div>
+    `)
+    .join('');
+
+  return rows ? `<div class="detail-kv-grid">${rows}</div>` : '';
+}
+
 function formatTargetType(value) {
   const normalized = normalizeText(value);
   if (!normalized) return '-';
@@ -116,9 +130,33 @@ function renderPositionManagementPills(position) {
     position.target_type && `Target: ${formatTargetType(position.target_type)}`
   ].filter(Boolean);
 
-  if (!items.length) return '-';
+  return items.length
+    ? `<div class="detail-chips">${items.map(item => `<span class="detail-chip">${escapeHtml(item)}</span>`).join('')}</div>`
+    : '<span class="timestamp">Flexible / thesis-driven</span>';
+}
 
-  return `<div class="detail-chips">${items.map(item => `<span class="detail-chip">${escapeHtml(item)}</span>`).join('')}</div>`;
+function renderJsonValue(value) {
+  if (value == null) return '<span class="muted">No data available.</span>';
+  if (Array.isArray(value)) {
+    if (!value.length) return '<span class="muted">No data available.</span>';
+    return renderList(value.map(item => normalizeText(item)).filter(Boolean));
+  }
+  if (typeof value === 'object') {
+    const entries = Object.entries(value).filter(([, entryValue]) => {
+      if (entryValue == null) return false;
+      if (Array.isArray(entryValue)) return entryValue.length > 0;
+      if (typeof entryValue === 'object') return Object.keys(entryValue).length > 0;
+      return normalizeText(entryValue) !== '';
+    });
+    if (!entries.length) return '<span class="muted">No data available.</span>';
+    return `<div class="metric-grid">${entries.map(([key, entryValue]) => `
+      <div class="metric-card">
+        <div class="metric-label">${escapeHtml(key.replace(/_/g, ' '))}</div>
+        <div class="metric-value">${renderJsonValue(entryValue)}</div>
+      </div>
+    `).join('')}</div>`;
+  }
+  return escapeHtml(normalizeText(value)) || '<span class="muted">No data available.</span>';
 }
 
 function formatPercent(value) {
@@ -484,7 +522,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <td colspan="15" style="background:#131a30;">
                     <details>
                       <summary>Whiskie details for ${escapeHtml(row.symbol)}</summary>
-                      <div style="margin-top:10px; display:grid; gap:10px;">
+                      <div style="margin-top:12px; display:grid; gap:12px;">
                         <div class="detail-chips">
                           <span class="detail-chip">Pathway: ${escapeHtml(row.whiskiePathway || '-')}</span>
                           <span class="detail-chip">Sector source: ${escapeHtml(row.sectorSource || '-')}</span>
@@ -493,14 +531,16 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                           <span class="detail-chip">Guidance source: ${escapeHtml(row.whiskieSource || '-')}</span>
                           <span class="detail-chip">Confidence: ${escapeHtml(row.whiskieConfidence || '-')}</span>
                         </div>
-                        <div><strong>Portfolio Hub guidance:</strong> ${escapeHtml(row.whiskieView || '-')}</div>
-                        <div><strong>Share guidance:</strong> ${escapeHtml(row.whiskieShareCountText || '-')}</div>
-                        <div><strong>Plan progress:</strong> ${escapeHtml(row.whiskiePlanProgressText || '-')}</div>
-                        <div><strong>Detail:</strong> ${escapeHtml(row.whiskieDetail || '-')}</div>
-                        <div><strong>Thesis summary:</strong> ${escapeHtml(row.whiskieNotes || '-')}</div>
-                        <div><strong>Catalyst summary:</strong> ${escapeHtml(row.whiskieCatalysts || '-')}</div>
-                        <div><strong>Source reasons:</strong> ${escapeHtml((row.whiskieSourceReasons || []).join(' | ') || '-')}</div>
-                        <div><strong>Opus review saved:</strong> ${row.opusReviewCreatedAt ? escapeHtml(formatShortDate(row.opusReviewCreatedAt)) : '-'}</div>
+                        ${renderKeyValueRows([
+                          { label: 'Portfolio Hub guidance', value: row.whiskieView || '-' },
+                          { label: 'Share guidance', value: row.whiskieShareCountText || '-' },
+                          { label: 'Plan progress', value: row.whiskiePlanProgressText || '-' },
+                          { label: 'Opus review saved', value: row.opusReviewCreatedAt ? formatShortDate(row.opusReviewCreatedAt) : '-' }
+                        ])}
+                        ${renderDetailSection('Detail', formatStructuredText(row.whiskieDetail || '-'))}
+                        ${renderDetailSection('Thesis summary', formatStructuredText(row.whiskieNotes || '-'))}
+                        ${renderDetailSection('Catalyst summary', formatStructuredText(row.whiskieCatalysts || '-'))}
+                        ${renderDetailSection('Source reasons', renderList((row.whiskieSourceReasons || []).map(item => normalizeText(item)).filter(Boolean)))}
                       </div>
                     </details>
                   </td>
@@ -884,6 +924,10 @@ function generateSymbolOverviewHTML(symbol, data = {}) {
   const earningsDetails = data.earningsDetails || null;
   const watchlist = data.watchlist || null;
   const profile = data.profile || null;
+  const quote = data.quote || null;
+  const fundamentals = data.fundamentals || null;
+  const technicals = data.technicals || null;
+  const latestApproval = data.latestApproval || null;
 
   return `
 <!DOCTYPE html>
@@ -900,7 +944,6 @@ function generateSymbolOverviewHTML(symbol, data = {}) {
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
     .muted { color: #94a3b8; }
     .btn { display: inline-block; padding: 10px 14px; border-radius: 8px; text-decoration: none; color: #fff; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin-right: 8px; margin-bottom: 8px; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #0f1425; padding: 12px; border-radius: 8px; }
   </style>
 </head>
 <body>
@@ -916,6 +959,13 @@ function generateSymbolOverviewHTML(symbol, data = {}) {
     </div>
 
     <div class="grid">
+      <div class="card">
+        <h2>Market Snapshot</h2>
+        <p><strong>Price:</strong> ${quote?.price != null ? formatMoney(quote.price) : '-'}</p>
+        <p><strong>Change:</strong> ${quote?.changesPercentage != null ? escapeHtml(String(quote.changesPercentage)) + '%' : '-'}</p>
+        <p><strong>Volume:</strong> ${quote?.volume != null ? escapeHtml(Number(quote.volume).toLocaleString()) : '-'}</p>
+        <p><strong>Exchange:</strong> ${escapeHtml(quote?.exchange || quote?.exchangeShortName || '-')}</p>
+      </div>
       <div class="card">
         <h2>Watchlist / Profile</h2>
         <p><strong>Watchlist status:</strong> ${escapeHtml(watchlist?.status || '-')}</p>
@@ -947,18 +997,41 @@ function generateSymbolOverviewHTML(symbol, data = {}) {
     </div>
 
     <div class="card">
+      <h2>Latest Approval Context</h2>
+      ${latestApproval ? renderMetricGrid([
+        { label: 'Action', value: latestApproval.action },
+        { label: 'Status', value: latestApproval.status },
+        { label: 'Pathway', value: latestApproval.pathway },
+        { label: 'Intent', value: latestApproval.intent },
+        { label: 'Target Type', value: latestApproval.target_type },
+        { label: 'Stop', value: latestApproval.stop_loss ? formatMoney(latestApproval.stop_loss) : '' },
+        { label: 'Take Profit', value: latestApproval.take_profit ? formatMoney(latestApproval.take_profit) : (latestApproval.target_type === 'flexible_fundamental' ? 'Flexible' : '') }
+      ]) : '<div class="muted">No recent approval context for this symbol.</div>'}
+    </div>
+
+    <div class="card">
       <h2>Stock Profile Snapshot</h2>
-      <pre>${escapeHtml(JSON.stringify(profile || {}, null, 2))}</pre>
+      ${renderJsonValue(profile)}
+    </div>
+
+    <div class="card">
+      <h2>Fundamentals Snapshot</h2>
+      ${renderJsonValue(fundamentals)}
+    </div>
+
+    <div class="card">
+      <h2>Technicals Snapshot</h2>
+      ${renderJsonValue(technicals)}
     </div>
 
     <div class="card">
       <h2>Latest Options Analysis Payload</h2>
-      <pre>${escapeHtml(JSON.stringify(optionsRun?.result_payload || {}, null, 2))}</pre>
+      ${renderJsonValue(optionsRun?.result_payload || null)}
     </div>
 
     <div class="card">
       <h2>Earnings Reminder Detail</h2>
-      <pre>${escapeHtml(JSON.stringify(earningsDetails || {}, null, 2))}</pre>
+      ${renderJsonValue(earningsDetails)}
     </div>
   </div>
 </body>
@@ -1431,12 +1504,16 @@ router.get('/symbol/:symbol', async (req, res) => {
       return res.status(400).send('Symbol is required');
     }
 
-    const [portfolioHub, profile, watchlist, optionsRuns, earningsDetails] = await Promise.all([
+    const [portfolioHub, profile, watchlist, optionsRuns, earningsDetails, quote, fundamentals, technicals, latestApproval] = await Promise.all([
       buildPortfolioHubView({ performanceRange: 'week', performanceMetric: 'pct' }).catch(() => ({ holdings: [] })),
       db.getLatestStockProfile(symbol).catch(() => null),
       db.getLatestSaturdayWatchlistEntry(symbol).catch(() => null),
       db.getRecentOptionsAnalysisRuns(20).catch(() => []),
-      getEarningsReminderDetails(symbol).catch(() => null)
+      getEarningsReminderDetails(symbol).catch(() => null),
+      (await import('./fmp.js')).default.getQuote(symbol).catch(() => null),
+      (await import('./fmp.js')).default.getFundamentals(symbol).catch(() => null),
+      (await import('./fmp.js')).default.getTechnicalIndicators(symbol).catch(() => null),
+      db.getLatestPendingApprovalForSymbol(symbol).catch(() => null)
     ]);
 
     const optionsRun = (optionsRuns || []).find(run => String(run.symbol || '').toUpperCase() === symbol) || null;
@@ -1445,7 +1522,11 @@ router.get('/symbol/:symbol', async (req, res) => {
       profile,
       watchlist,
       optionsRun,
-      earningsDetails
+      earningsDetails,
+      quote,
+      fundamentals,
+      technicals,
+      latestApproval
     }));
   } catch (error) {
     console.error('Symbol overview error:', error);
@@ -1564,7 +1645,8 @@ router.get('/logs', async (req, res) => {
 router.get('/earnings-reminders', async (req, res) => {
   try {
     const reminders = await db.getUpcomingEarningsDashboardRows(1);
-    res.send(generateEarningsRemindersHTML(reminders));
+    const pendingGrades = await db.getSentEarningsRemindersPendingGrade().catch(() => []);
+    res.send(generateEarningsRemindersHTML(reminders, pendingGrades));
   } catch (error) {
     console.error('Earnings reminders page error:', error);
     res.status(500).send('Error loading earnings reminders');
@@ -1907,10 +1989,10 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       background: linear-gradient(135deg, #10b981 0%, #059669 100%);
       color: white;
       border: none;
-      padding: 15px 30px;
+      padding: 12px 24px;
       border-radius: 8px;
       cursor: pointer;
-      font-size: 1.1rem;
+      font-size: 1rem;
       font-weight: 600;
       margin-bottom: 20px;
       margin-left: 10px;
@@ -2086,6 +2168,30 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
     .detail-list li {
       margin-bottom: 6px;
+    }
+    .detail-kv-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+    .detail-kv-row {
+      background: #0f1425;
+      border: 1px solid #2a2f4a;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .detail-kv-label {
+      color: #8b93b5;
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+    .detail-kv-value {
+      color: #f8fafc;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
     .detail-chips {
       display: flex;
@@ -4188,7 +4294,7 @@ function generateCronStatusHTML(executions, days) {
         return;
       }
       if (feature === 'earnings') {
-        window.location.href = '/earnings-reminders';
+        window.location.href = '/earnings-reminders?q=' + encodeURIComponent(symbol);
       }
     }
   </script>
@@ -4197,7 +4303,7 @@ function generateCronStatusHTML(executions, days) {
   `;
 }
 
-function generateEarningsRemindersHTML(reminders) {
+function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
   const reminderRows = reminders.map(reminder => ({
     symbol: reminder.symbol,
     companyName: reminder.company_name || '',
@@ -4279,7 +4385,7 @@ function generateEarningsRemindersHTML(reminders) {
 <body>
   <div class="container">
     <h1>⏰ Earnings Predictor</h1>
-    <p class="subtitle">Search upcoming earnings, review catalysts, save one active predictor per symbol, and launch earnings-mode options analysis. The grid below is limited to today and tomorrow earnings calls.</p>
+    <p class="subtitle">Search upcoming earnings, review catalysts, save one active predictor per symbol, and launch earnings-mode options analysis. The grid below shows yesterday, today, and tomorrow earnings sorted as today → tomorrow → yesterday, with symbols alphabetized inside each group.</p>
     <a href="/" class="back-btn">← Back to Dashboard</a>
 
     <div class="layout">
@@ -4372,12 +4478,12 @@ function generateEarningsRemindersHTML(reminders) {
 
     <div class="panel" style="margin-top:24px;">
       <h2>Upcoming Earnings Grid</h2>
-      ${reminders.length === 0 ? '<div class="helper">No upcoming earnings found for today/tomorrow.</div>' : `
+      ${reminders.length === 0 ? '<div class="helper">No earnings rows found for yesterday, today, or tomorrow.</div>' : `
       <div class="metric-row">
         <div class="metric-card"><div class="label">Tracked Symbols</div><div class="value">${reminderRows.length}</div></div>
         <div class="metric-card"><div class="label">Predicted</div><div class="value">${reminderRows.filter(row => row.status === 'predicted').length}</div></div>
         <div class="metric-card"><div class="label">Graded</div><div class="value">${reminderRows.filter(row => row.status === 'graded').length}</div></div>
-        <div class="metric-card"><div class="label">Today + Tomorrow</div><div class="value">${new Set(reminderRows.map(row => row.earningsDate)).size}</div></div>
+        <div class="metric-card"><div class="label">Pending Grade</div><div class="value">${pendingGradeRows.length}</div></div>
       </div>
       <div class="table-toolbar">
         <input id="reminderFilter" type="text" placeholder="Filter symbol, pathway, notes..." />
@@ -4401,6 +4507,7 @@ function generateEarningsRemindersHTML(reminders) {
 
   <script>
     const reminderRows = ${JSON.stringify(reminderRows)};
+    const pendingGradeRows = ${JSON.stringify(pendingGrades)};
     function formatDashboardSession(value) {
       const normalized = String(value || '').trim().toLowerCase();
       if (!normalized) return 'Unknown';
@@ -4486,6 +4593,23 @@ function generateEarningsRemindersHTML(reminders) {
       });
 
       filtered.sort((a, b) => {
+        if (tableSort.key === 'earningsDate') {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const groupRank = value => {
+            const date = new Date(value);
+            date.setHours(0, 0, 0, 0);
+            const diffDays = Math.round((date.getTime() - today.getTime()) / 86400000);
+            if (diffDays === 0) return 0;
+            if (diffDays === 1) return 1;
+            if (diffDays === -1) return 2;
+            return 3;
+          };
+          const rankDiff = groupRank(a.earningsDate) - groupRank(b.earningsDate);
+          if (rankDiff !== 0) return rankDiff;
+          return String(a.symbol || '').localeCompare(String(b.symbol || ''));
+        }
+
         const left = a[tableSort.key];
         const right = b[tableSort.key];
 
