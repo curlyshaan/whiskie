@@ -90,12 +90,42 @@ function buildPersistedOpusReview(raw) {
     summary: raw.summary || '',
     detail: raw.detail || '',
     shareCountText: raw.shareCountText || null,
+    plannedTotalShares: Number.isFinite(Number(raw.plannedTotalShares)) ? Number(raw.plannedTotalShares) : null,
+    executedShares: Number.isFinite(Number(raw.executedShares)) ? Number(raw.executedShares) : 0,
+    remainingShares: Number.isFinite(Number(raw.remainingShares)) ? Number(raw.remainingShares) : null,
+    stageLabel: raw.stageLabel || null,
+    targetWeightPct: Number.isFinite(Number(raw.targetWeightPct)) ? Number(raw.targetWeightPct) : null,
     stopLoss: raw.stopLoss ?? null,
     takeProfit: raw.takeProfit ?? null,
     confidence: raw.confidence || null,
     reasoning: raw.reasoning || '',
     source: 'opus'
   };
+}
+
+function computeExecutedPlanShares(row, opusReview, transactions = []) {
+  if (!opusReview || !opusReview.actionLabel || !Number.isFinite(Number(opusReview.plannedTotalShares))) return 0;
+  const createdAt = opusReview.createdAt ? new Date(opusReview.createdAt) : null;
+  const symbol = String(row.symbol || '').toUpperCase();
+  const positionType = String(row.positionType || '').toLowerCase();
+
+  return (transactions || []).reduce((sum, tx) => {
+    if (String(tx.symbol || '').toUpperCase() !== symbol) return sum;
+
+    if (createdAt && !Number.isNaN(createdAt.getTime())) {
+      const txCreatedAt = new Date(tx.created_at || tx.trade_date || 0);
+      if (!Number.isNaN(txCreatedAt.getTime()) && txCreatedAt < createdAt) return sum;
+    }
+
+    const type = String(tx.transaction_type || '').toLowerCase();
+    if (positionType === 'long' && type === 'sell') return sum + Math.abs(Number(tx.shares || 0));
+    if (positionType === 'short' && type === 'cover') return sum + Math.abs(Number(tx.shares || 0));
+    return sum;
+  }, 0);
+}
+
+function buildAdviceKey(symbol, positionType) {
+  return `${String(symbol || '').toUpperCase()}:${String(positionType || '').toLowerCase()}`;
 }
 
 async function buildPortfolioHubMarketContext(portfolioHub) {
@@ -221,6 +251,7 @@ export async function buildPortfolioHubView(options = {}) {
     ? String(options.performanceRange || 'week')
     : 'week';
   const performanceMetric = String(options.performanceMetric || 'pct') === 'value' ? 'value' : 'pct';
+  const shouldPersistHistory = options.persistHistory === true;
 
   await db.seedPortfolioHubAccounts(DEFAULT_PORTFOLIO_HUB_ACCOUNTS).catch(() => {});
 
@@ -272,7 +303,9 @@ export async function buildPortfolioHubView(options = {}) {
   const symbols = [...new Set([...grouped.values()].map(row => row.symbol))];
   const { earningsMap, stockInfoMap, quoteMap, whiskieContextMap } = await buildPortfolioHubSymbolContext(symbols);
   const latestAdviceRows = await db.getLatestPortfolioHubAdviceHistory(symbols).catch(() => []);
-  const latestAdviceMap = new Map((latestAdviceRows || []).map(row => [String(row.symbol || '').toUpperCase(), row]));
+  const latestAdviceMap = new Map(
+    (latestAdviceRows || []).map(row => [buildAdviceKey(row.symbol, row.position_type), row])
+  );
   const latestFullReviewAt = latestAdviceRows
     .map(row => row.opus_review_created_at)
     .filter(Boolean)
@@ -306,8 +339,18 @@ export async function buildPortfolioHubView(options = {}) {
       null,
       null
     );
-    const latestAdvice = latestAdviceMap.get(symbol) || null;
+    const latestAdvice = latestAdviceMap.get(buildAdviceKey(symbol, row.positionType)) || null;
     const persistedOpusReview = buildPersistedOpusReview(latestAdvice?.opus_review);
+    if (persistedOpusReview) {
+      persistedOpusReview.createdAt = latestAdvice?.opus_review_created_at || latestAdvice?.created_at || null;
+      persistedOpusReview.executedShares = computeExecutedPlanShares(row, persistedOpusReview, transactions);
+      if (Number.isFinite(Number(persistedOpusReview.plannedTotalShares))) {
+        persistedOpusReview.remainingShares = Math.max(
+          0,
+          Math.round(Number(persistedOpusReview.plannedTotalShares) - Number(persistedOpusReview.executedShares || 0))
+        );
+      }
+    }
 
     investedValue += marketValue;
     totalCost += row.totalCost;
@@ -379,6 +422,7 @@ export async function buildPortfolioHubView(options = {}) {
     row.whiskieView = recommendation.summary;
     row.whiskieDetail = recommendation.detail;
     row.whiskieShareCountText = recommendation.shareCountText || null;
+    row.whiskiePlanProgressText = recommendation.planProgressText || null;
     row.sectorWeightPct = sectorWeightPct;
     row.stopLoss = recommendation.stopLoss ?? row.stopLoss;
     row.takeProfit = recommendation.takeProfit ?? row.takeProfit;
@@ -458,36 +502,38 @@ export async function buildPortfolioHubView(options = {}) {
   const explicitActions = holdings.filter(row => row.whiskieView).slice(0, 5).map(row => `${row.symbol}: ${row.whiskieView}`);
   if (explicitActions.length) insights.push(`Sizing actions: ${explicitActions.join(' | ')}`);
 
-  await db.recordPortfolioHubAdviceHistory(
-    holdings.map(row => ({
-      symbol: row.symbol,
-      positionType: row.positionType,
-      weightPct: row.weightPct,
-      sector: row.sector,
-      sectorWeightPct: row.sectorWeightPct,
-      unrealizedPnLPct: row.unrealizedPnLPct,
-      whiskiePathway: row.whiskiePathway,
-      recommendation: row.whiskieView,
-      snapshotPayload: {
-        ...row,
+  if (shouldPersistHistory) {
+    await db.recordPortfolioHubAdviceHistory(
+      holdings.map(row => ({
+        symbol: row.symbol,
+        positionType: row.positionType,
+        weightPct: row.weightPct,
+        sector: row.sector,
+        sectorWeightPct: row.sectorWeightPct,
+        unrealizedPnLPct: row.unrealizedPnLPct,
+        whiskiePathway: row.whiskiePathway,
+        recommendation: row.whiskieView,
+        snapshotPayload: {
+          ...row,
+          totalPortfolioValue: totalValue,
+          portfolioReturnPct: performancePct
+        },
+        longReturnPct: longPerformancePct,
+        shortReturnPct: shortPerformancePct,
+        sectorSnapshot: sectorAllocation,
+        viewScope: performanceRange,
+        metricMode: performanceMetric,
         totalPortfolioValue: totalValue,
-        portfolioReturnPct: performancePct
-      },
-      longReturnPct: longPerformancePct,
-      shortReturnPct: shortPerformancePct,
-      sectorSnapshot: sectorAllocation,
-      viewScope: performanceRange,
-      metricMode: performanceMetric,
-      totalPortfolioValue: totalValue,
-      baselineTotalValue,
-      performanceValue,
-      longPerformanceValue,
-      shortPerformanceValue,
-      sourceLabel: row.whiskieSource,
-      opusReview: row.opusReview,
-      opusReviewCreatedAt: row.opusReviewCreatedAt
-    }))
-  ).catch(() => {});
+        baselineTotalValue,
+        performanceValue,
+        longPerformanceValue,
+        shortPerformanceValue,
+        sourceLabel: row.whiskieSource,
+        opusReview: row.opusReview,
+        opusReviewCreatedAt: row.opusReviewCreatedAt
+      }))
+    ).catch(() => {});
+  }
 
   return {
     accounts,
@@ -515,7 +561,7 @@ export async function buildPortfolioHubView(options = {}) {
 }
 
 export async function runPortfolioHubOpusReview() {
-  const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct' });
+  const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
   const holdings = Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings : [];
   if (!holdings.length) {
     return { reviewedAt: new Date().toISOString(), holdings: [] };
@@ -532,6 +578,9 @@ For each holding, provide:
 - summary: one short sentence with exact-share guidance when action is not Hold
 - detail: one short sentence explaining why
 - shareCountText: exact share guidance like "Add 3 shares" or "Trim 2 shares"
+- plannedTotalShares: total shares planned for the full staged adjustment
+- stageLabel: short label like "Stage 1 of 2" or "Initial trim"
+- targetWeightPct: optional end-state target weight percent if useful
 - confidence: low, medium, or high
 - stopLoss: number or null
 - takeProfit: number or null
@@ -549,6 +598,8 @@ Rules:
   2. Tactical / swing / short holdings: more responsive to VIX, SPY regime, and macro/news conditions
 - In weak or volatile conditions, reduce new-add aggressiveness, prefer higher cash buffers, and be stricter on tactical positions than on core holdings.
 - In strong conditions, you may allow somewhat more tactical adds, but do not churn core long-term holdings.
+- Use staged execution memory: if a position needs a 4-share trim overall, say that clearly in plannedTotalShares and let the immediate shareCountText reflect only the next step.
+- Assume future runs may compare plannedTotalShares with executed shares logged after the review, so avoid repeating the same full trim as if nothing was done.
 
 Portfolio summary:
 ${JSON.stringify(portfolioHub.summary, null, 2)}

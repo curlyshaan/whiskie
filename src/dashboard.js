@@ -429,7 +429,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <td>${escapeHtml(row.whiskiePathway || '-')}</td>
                   <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
                   <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
-                  <td><strong>${escapeHtml(row.whiskieActionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(row.whiskieView || '-')}</span>${row.whiskieShareCountText ? `<br><span class="timestamp">${escapeHtml(row.whiskieShareCountText)}</span>` : ''}</td>
+                  <td><strong>${escapeHtml(row.whiskieActionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(row.whiskieView || '-')}</span>${row.whiskieShareCountText ? `<br><span class="timestamp">${escapeHtml(row.whiskieShareCountText)}</span>` : ''}${row.whiskiePlanProgressText ? `<br><span class="timestamp">${escapeHtml(row.whiskiePlanProgressText)}</span>` : ''}</td>
                 </tr>
                 <tr>
                   <td colspan="14" style="background:#131a30;">
@@ -446,6 +446,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                         </div>
                         <div><strong>Portfolio Hub guidance:</strong> ${escapeHtml(row.whiskieView || '-')}</div>
                         <div><strong>Share guidance:</strong> ${escapeHtml(row.whiskieShareCountText || '-')}</div>
+                        <div><strong>Plan progress:</strong> ${escapeHtml(row.whiskiePlanProgressText || '-')}</div>
                         <div><strong>Detail:</strong> ${escapeHtml(row.whiskieDetail || '-')}</div>
                         <div><strong>Thesis summary:</strong> ${escapeHtml(row.whiskieNotes || '-')}</div>
                         <div><strong>Catalyst summary:</strong> ${escapeHtml(row.whiskieCatalysts || '-')}</div>
@@ -1210,19 +1211,6 @@ router.get('/', async (req, res) => {
       // Table doesn't exist yet
     }
 
-    let livePortfolioSummary = null;
-    try {
-      const livePortfolio = await analysisEngine.getPortfolioState();
-      livePortfolioSummary = {
-        total_value: livePortfolio.totalValue,
-        cash: livePortfolio.cash,
-        positions_value: livePortfolio.positionsValue,
-        total_gain_loss: (livePortfolio.totalValue || 0) - (parseFloat(process.env.INITIAL_CAPITAL) || 100000)
-      };
-    } catch (err) {
-      // Fall back to snapshot-only rendering
-    }
-
     let dailyState = { rows: [] };
     try {
       dailyState = await db.query(
@@ -1266,7 +1254,7 @@ router.get('/', async (req, res) => {
       analyses.rows,
       portfolio.rows,
       trades.rows,
-      livePortfolioSummary || snapshot.rows[0],
+      snapshot.rows[0],
       dailyState.rows,
       promotedDiscovery.rows,
       todaysApprovals.rows

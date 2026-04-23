@@ -96,7 +96,6 @@ export async function buildPortfolioHubSymbolContext(symbols = []) {
 
   for (const symbol of normalizedSymbols) {
     if (stockInfoMap.has(symbol)) continue;
-    const profile = quotes.find?.(() => false);
     const fmpProfile = await fmp.getProfile(symbol).catch(() => null);
     if (fmpProfile?.sector || fmpProfile?.industry) {
       stockInfoMap.set(symbol, {

@@ -87,11 +87,20 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
   const opusReview = context.opusReview || null;
 
   if (opusReview && typeof opusReview.actionLabel === 'string') {
+    const remainingShares = Number(opusReview.remainingShares);
+    const plannedTotalShares = Number(opusReview.plannedTotalShares);
+    const executedShares = Number(opusReview.executedShares);
+    const stageLabel = opusReview.stageLabel || null;
     return {
       actionLabel: opusReview.actionLabel,
       summary: opusReview.summary || '',
       detail: opusReview.detail || '',
-      shareCountText: opusReview.shareCountText || null,
+      shareCountText: Number.isFinite(remainingShares) && remainingShares > 0
+        ? `${opusReview.actionLabel} ${formatShareCount(remainingShares)} remaining${stageLabel ? ` (${stageLabel})` : ''}.`
+        : opusReview.shareCountText || null,
+      planProgressText: Number.isFinite(plannedTotalShares)
+        ? `Plan: ${formatShareCount(plannedTotalShares)} total, ${formatShareCount(executedShares || 0)} executed, ${formatShareCount(Math.max(0, remainingShares || 0))} remaining.`
+        : null,
       stopLoss: Number.isFinite(Number(opusReview.stopLoss)) ? Number(opusReview.stopLoss) : null,
       takeProfit: Number.isFinite(Number(opusReview.takeProfit)) ? Number(opusReview.takeProfit) : null,
       confidence: opusReview.confidence || null,
