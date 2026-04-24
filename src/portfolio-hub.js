@@ -375,9 +375,15 @@ export async function buildPortfolioHubView(options = {}) {
     const shares = Number(tx.shares || 0);
     const price = Number(tx.price || 0);
     const signedShares = ['buy', 'short'].includes(type) ? shares : ['sell', 'cover'].includes(type) ? -shares : shares;
+    const existingAbsShares = Math.abs(Number(row.shares || 0));
+    const avgCostBeforeTrade = existingAbsShares > 0 ? Number(row.totalCost || 0) / existingAbsShares : 0;
 
     row.shares += signedShares;
-    row.totalCost += Math.abs(signedShares) * price;
+    if (['buy', 'short'].includes(type)) {
+      row.totalCost += Math.abs(signedShares) * price;
+    } else if (['sell', 'cover'].includes(type)) {
+      row.totalCost = Math.max(0, Number(row.totalCost || 0) - (Math.abs(signedShares) * avgCostBeforeTrade));
+    }
     row.accounts.push(tx.account_name);
   }
 
