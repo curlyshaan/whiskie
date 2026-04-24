@@ -313,6 +313,7 @@ class TradeApprovalManager {
       tradesHtml += `
         <div style="border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 5px;">
           <h4>${i + 1}. ${trade.action.toUpperCase()} ${trade.quantity} ${trade.symbol}</h4>
+          ${trade.quantityAdjustmentNote ? `<p><strong>Sizing:</strong> ${trade.quantityAdjustmentNote}</p>` : ''}
           <ul>
             <li><strong>Entry:</strong> $${trade.entryPrice?.toFixed(2) || 'Market'}</li>
             ${trade.stopLoss ? `<li><strong>Stop Loss:</strong> $${trade.stopLoss.toFixed(2)}</li>` : ''}

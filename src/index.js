@@ -3009,7 +3009,9 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
           rec.originalQuantity = originalQuantity;
 
           if (adjustedQuantity !== originalQuantity) {
-            console.log(`   ${rec.symbol}: ${originalQuantity} → ${adjustedQuantity} shares (${(originalPositionSize * 100).toFixed(1)}% → ${(adjustedPositionSize * 100).toFixed(1)}%)`);
+            console.log(`   ${rec.symbol}: final ${adjustedQuantity} shares after VIX sizing (${originalQuantity} → ${adjustedQuantity}; ${(originalPositionSize * 100).toFixed(1)}% → ${(adjustedPositionSize * 100).toFixed(1)}%)`);
+          } else {
+            console.log(`   ${rec.symbol}: final ${adjustedQuantity} shares (no VIX quantity change)`);
           }
         }
 
@@ -3114,6 +3116,10 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
               symbol: rec.symbol,
               action: rec.type === 'short' ? 'sell_short' : 'buy',
               quantity: rec.quantity,
+              rawModelQuantity: rec.originalQuantity || rec.quantity,
+              quantityAdjustmentNote: rec.vixAdjusted && rec.originalQuantity && rec.originalQuantity !== rec.quantity
+                ? `VIX ${regime.name} sizing adjusted from ${rec.originalQuantity} to ${rec.quantity} shares`
+                : null,
               entryPrice: rec.entryPrice,
               stopLoss: rec.stopLoss,
               takeProfit: rec.takeProfit,
