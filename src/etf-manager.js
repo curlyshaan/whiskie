@@ -262,7 +262,7 @@ class ETFManager {
     if (!ranking.length) {
       try {
         const sectorRotation = (await import('./sector-rotation.js')).default;
-        ranking = await sectorRotation.calculateSectorStrength();
+        ranking = await sectorRotation.analyzeSectorStrength();
       } catch (error) {
         ranking = [];
       }

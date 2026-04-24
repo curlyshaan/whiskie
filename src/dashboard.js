@@ -850,7 +850,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         transaction_type: transactionType,
         symbol: document.getElementById('phSymbol').value,
         shares: document.getElementById('phShares').value,
-        price: document.getElementById('phCostBasis').value,
+        price: document.getElementById('phPrice').value,
         cash_amount: document.getElementById('phCashAmount').value,
         trade_date: document.getElementById('phTradeDate').value,
         notes: document.getElementById('phNotes').value
@@ -2647,7 +2647,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
         transaction_type: transactionType,
         symbol: document.getElementById('phSymbol').value,
         shares: document.getElementById('phShares').value,
-        price: document.getElementById('phCostBasis').value,
+        price: document.getElementById('phPrice').value,
         cash_amount: document.getElementById('phCashAmount').value,
         trade_date: document.getElementById('phTradeDate').value,
         notes: document.getElementById('phNotes').value
@@ -4348,7 +4348,7 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
     earningsDate: formatDashboardDateOnly(reminder.earnings_date),
     session: formatDashboardSession(reminder.earnings_session || reminder.session_normalized || reminder.earnings_time || 'unknown'),
     pathway: reminder.primary_pathway || '-',
-    secondaryPathways: ((reminder.secondary_pathways || []).join(', ')) || 'none',
+    secondaryPathways: (Array.isArray(reminder.secondary_pathways) ? reminder.secondary_pathways : []).join(', ') || 'none',
     predictorTime: formatDashboardDateTime(reminder.predictor_run_at || reminder.scheduled_send_at),
     scheduledTime: formatDashboardDateTime(reminder.scheduled_send_at),
     status: reminder.status || 'upcoming',

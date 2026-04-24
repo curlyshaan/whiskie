@@ -1813,6 +1813,17 @@ export async function initDatabase() {
       CREATE INDEX IF NOT EXISTS idx_performance_created ON performance_metrics(created_at);
     `);
 
+    await client.query(`
+      ALTER TABLE performance_metrics
+      ADD COLUMN IF NOT EXISTS period VARCHAR(20),
+      ADD COLUMN IF NOT EXISTS calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_performance_metrics_metric_period
+      ON performance_metrics(metric_name, period);
+    `);
+
     console.log('✅ Database schema initialized successfully');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
