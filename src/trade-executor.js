@@ -20,6 +20,11 @@ import { resolveMarketPrice } from './utils.js';
  */
 
 class TradeExecutor {
+  isWorkingOrderError(error) {
+    const message = String(error?.message || '').toLowerCase();
+    return message.includes('fill timeout');
+  }
+
   isExecutionRaceError(error) {
     const message = String(error?.message || '').toLowerCase();
     return message.includes('already executed')
@@ -146,6 +151,16 @@ class TradeExecutor {
     try {
       await this.executeTrade(lockedApproval);
     } catch (error) {
+      if (this.isWorkingOrderError(error)) {
+        await db.query(
+          `UPDATE trade_approvals
+           SET status = 'approved'
+           WHERE id = $1 AND status = 'executing' AND executed_at IS NULL`,
+          [approvalId]
+        );
+        throw new Error(`Approval ${approvalId} has a working broker order pending fill`);
+      }
+
       await db.query(
         `UPDATE trade_approvals
          SET status = 'pending', approved_at = NULL
@@ -272,6 +287,9 @@ class TradeExecutor {
       });
 
     } catch (error) {
+      if (this.isWorkingOrderError(error)) {
+        console.warn(`   ⏳ Entry order still working for ${approval.symbol}: ${error.message}`);
+      }
       console.error(`   ❌ Execution failed:`, error.message);
       throw error;
     }
