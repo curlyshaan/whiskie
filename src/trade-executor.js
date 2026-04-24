@@ -20,6 +20,14 @@ import { resolveMarketPrice } from './utils.js';
  */
 
 class TradeExecutor {
+  isExecutionRaceError(error) {
+    const message = String(error?.message || '').toLowerCase();
+    return message.includes('already executed')
+      || message.includes('already processing')
+      || message.includes('could not be locked for execution')
+      || message.includes('is already executing');
+  }
+
   /**
    * Process all approved trades
    */
@@ -52,8 +60,12 @@ class TradeExecutor {
 
       for (const trade of approvedTrades) {
         try {
-          await this.executeTrade(trade);
+          await this.executeApprovalById(trade.id);
         } catch (error) {
+          if (this.isExecutionRaceError(error)) {
+            console.warn(`⚠️ Skipping duplicate execution attempt for approval ${trade.id}: ${error.message}`);
+            continue;
+          }
           console.error(`❌ Failed to execute trade ${trade.id}:`, error.message);
           await email.sendErrorAlert(error, `Trade execution failed: ${trade.symbol}`);
         }
@@ -76,6 +88,14 @@ class TradeExecutor {
     const approval = result.rows?.[0];
     if (!approval) {
       throw new Error(`Approval ${approvalId} not found`);
+    }
+
+    if (approval.status === 'executing') {
+      throw new Error(`Approval ${approvalId} is already processing`);
+    }
+
+    if (approval.status === 'executed') {
+      throw new Error(`Approval ${approvalId} is already executed`);
     }
 
     if (!['approved', 'pending'].includes(approval.status)) {
@@ -103,13 +123,33 @@ class TradeExecutor {
       Object.assign(approval, refreshedApproval);
     }
 
+    const lockResult = await db.query(
+      `UPDATE trade_approvals
+       SET status = 'executing'
+       WHERE id = $1 AND status = 'approved' AND executed_at IS NULL
+       RETURNING *`,
+      [approvalId]
+    );
+
+    const lockedApproval = lockResult.rows?.[0];
+    if (!lockedApproval) {
+      const current = await db.query(
+        `SELECT status, executed_at
+         FROM trade_approvals
+         WHERE id = $1`,
+        [approvalId]
+      );
+      const currentStatus = current.rows?.[0]?.status || 'unknown';
+      throw new Error(`Approval ${approvalId} could not be locked for execution (status: ${currentStatus})`);
+    }
+
     try {
-      await this.executeTrade(approval);
+      await this.executeTrade(lockedApproval);
     } catch (error) {
       await db.query(
         `UPDATE trade_approvals
          SET status = 'pending', approved_at = NULL
-         WHERE id = $1 AND status = 'approved' AND executed_at IS NULL`,
+         WHERE id = $1 AND status = 'executing' AND executed_at IS NULL`,
         [approvalId]
       );
       throw error;

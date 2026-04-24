@@ -76,9 +76,19 @@ class AnalysisEngine {
       }
 
       // Calculate portfolio metrics
-      let cash = balances?.total_cash || balances?.cash?.cash_available || 0;
-      let positionsValue = balances?.long_market_value || 0;
-      let totalValue = balances?.total_equity || cash || this.INITIAL_CAPITAL;
+      let cash = balances?.total_cash
+        ?? balances?.cash?.total_cash
+        ?? balances?.cash?.cash_available
+        ?? balances?.cash?.cash_balance
+        ?? 0;
+      let positionsValue = balances?.long_market_value
+        ?? balances?.market_value
+        ?? balances?.securities_market_value
+        ?? 0;
+      let totalValue = balances?.total_equity
+        ?? balances?.account_equity
+        ?? balances?.total_account_value
+        ?? (cash + positionsValue);
 
       if (tradierUnavailable) {
         positionsValue = mergedPositions.reduce((sum, position) => sum + (Number(position.currentPrice || 0) * Math.abs(Number(position.quantity || 0))), 0);
