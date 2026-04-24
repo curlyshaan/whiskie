@@ -86,10 +86,21 @@ class TradeExecutor {
       await db.query(
         `UPDATE trade_approvals
          SET status = 'approved', approved_at = NOW()
+         WHERE id = $1 AND status = 'pending'`,
+        [approvalId]
+      );
+
+      const refreshed = await db.query(
+        `SELECT * FROM trade_approvals
          WHERE id = $1`,
         [approvalId]
       );
-      approval.status = 'approved';
+      const refreshedApproval = refreshed.rows?.[0];
+      if (!refreshedApproval || refreshedApproval.status !== 'approved') {
+        throw new Error(`Approval ${approvalId} could not be moved to approved state`);
+      }
+
+      Object.assign(approval, refreshedApproval);
     }
 
     try {
@@ -98,7 +109,7 @@ class TradeExecutor {
       await db.query(
         `UPDATE trade_approvals
          SET status = 'pending', approved_at = NULL
-         WHERE id = $1 AND executed_at IS NULL`,
+         WHERE id = $1 AND status = 'approved' AND executed_at IS NULL`,
         [approvalId]
       );
       throw error;
@@ -143,6 +154,8 @@ class TradeExecutor {
         return;
       }
 
+      let shouldSyncPositions = approval.action === 'sell_short';
+
       if (approval.action === 'sell_short') {
         // Execute short with protection
         const result = await shortManager.placeShortWithProtection(
@@ -168,6 +181,13 @@ class TradeExecutor {
       } else {
         const managementPlan = this.buildManagementPlan(approval);
         const order = await this.placeApprovedLongOrder(approval, managementPlan, marketOpen);
+
+        if (approval.order_type === 'limit' && marketOpen && String(order.status || '').toLowerCase() !== 'filled') {
+          console.log(`   ⏳ Limit order submitted and left working (${order.status})`);
+          return;
+        }
+
+        shouldSyncPositions = true;
 
         // Execute long trade
         // Log trade
@@ -195,7 +215,7 @@ class TradeExecutor {
         console.log(`   ✅ Trade executed successfully`);
       }
 
-      if (approval.status === 'executed' || approval.order_type !== 'limit' || approval.action === 'sell_short') {
+      if (shouldSyncPositions) {
         await orderReconciliation.syncPositionsFromBroker();
       }
       await orderReconciliation.syncPositionMetadataFromLots();

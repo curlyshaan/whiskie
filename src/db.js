@@ -3430,9 +3430,9 @@ export async function getSentEarningsRemindersPendingGrade() {
          AND predicted_direction IS NOT NULL
          AND grade_result IS NULL
          AND (
-           (earnings_session = 'pre_market' AND NOW() >= ((earnings_date::timestamp) + INTERVAL '11 hours'))
+           (earnings_session = 'pre_market' AND (NOW() AT TIME ZONE 'America/New_York') >= ((earnings_date::timestamp) + INTERVAL '11 hours'))
            OR
-           (earnings_session <> 'pre_market' AND NOW() >= (
+           (earnings_session <> 'pre_market' AND (NOW() AT TIME ZONE 'America/New_York') >= (
              CASE EXTRACT(ISODOW FROM earnings_date)
                WHEN 5 THEN (earnings_date::timestamp + INTERVAL '3 days')
                WHEN 6 THEN (earnings_date::timestamp + INTERVAL '2 days')

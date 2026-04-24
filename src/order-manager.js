@@ -158,6 +158,10 @@ class OrderManager {
 
       // Save to database with new OCO order ID
       await this.saveOrderToDatabase(symbol);
+      await db.query(
+        `UPDATE positions SET oco_order_id = $1 WHERE symbol = $2`,
+        [newOcoOrder.id, symbol]
+      );
 
       return {
         success: true,
@@ -223,6 +227,10 @@ class OrderManager {
 
       // Save to database
       await this.saveOrderToDatabase(symbol);
+      await db.query(
+        `UPDATE positions SET oco_order_id = $1 WHERE symbol = $2`,
+        [newOcoOrder.id, symbol]
+      );
 
       return {
         success: true,
@@ -417,9 +425,12 @@ REASON: [why current orders are appropriate]`;
     // Store in position record
     await db.query(
       `UPDATE positions
-       SET stop_loss = $1, take_profit = $2, updated_at = CURRENT_TIMESTAMP
-       WHERE symbol = $3`,
-      [orderInfo.stopLoss, orderInfo.takeProfit, symbol]
+       SET stop_loss = $1,
+           take_profit = $2,
+           oco_order_id = $3,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE symbol = $4`,
+      [orderInfo.stopLoss, orderInfo.takeProfit, orderInfo.ocoOrderId || orderInfo.otocoOrderId || null, symbol]
     );
   }
 

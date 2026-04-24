@@ -101,7 +101,7 @@ class TradeApprovalManager {
       ADD COLUMN IF NOT EXISTS override_phase2_decision VARCHAR(10),
       ADD COLUMN IF NOT EXISTS override_symbol VARCHAR(10),
       ADD COLUMN IF NOT EXISTS override_reason TEXT,
-      ADD COLUMN IF NOT EXISTS decision_run_id INTEGER,
+      ADD COLUMN IF NOT EXISTS decision_run_id VARCHAR(64),
       ADD COLUMN IF NOT EXISTS source_phase VARCHAR(50),
       ADD COLUMN IF NOT EXISTS raw_model_quantity INTEGER,
       ADD COLUMN IF NOT EXISTS quantity_adjustment_note TEXT

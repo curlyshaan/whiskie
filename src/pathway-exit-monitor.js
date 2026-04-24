@@ -459,7 +459,7 @@ class PathwayExitMonitor {
            trailing_stop_distance = $1,
            oco_order_id = $2
        WHERE symbol = $3`,
-      [Math.abs(trailDistance), trailingStopOrder.order.id, symbol]
+      [Math.abs(trailDistance), trailingStopOrder.id, symbol]
     );
 
     console.log(`   ✅ Trailing stop activated for ${symbol}`);
@@ -471,7 +471,7 @@ class PathwayExitMonitor {
       trailPrice,
       trailDistance,
       reason,
-      orderId: trailingStopOrder.order.id
+      orderId: trailingStopOrder.id
     };
   }
 

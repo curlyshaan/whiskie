@@ -384,7 +384,7 @@ class TradierAPI {
           duration: 'gtc'
         }
       });
-      return response.data;
+      return response.data.order;
     } catch (error) {
       console.error(`Error placing trailing stop order for ${symbol}:`, error.message);
       throw error;
