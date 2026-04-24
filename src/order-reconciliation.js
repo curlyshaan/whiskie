@@ -9,6 +9,11 @@ import email from './email.js';
 import analysisEngine from './analysis.js';
 
 class OrderReconciliation {
+  normalizeBrokerPositions(rawPositions) {
+    if (!rawPositions) return [];
+    return Array.isArray(rawPositions) ? rawPositions : [rawPositions];
+  }
+
   async ensurePositionMetadataColumns() {
     await db.query(`
       ALTER TABLE positions
@@ -52,7 +57,7 @@ class OrderReconciliation {
       const dbPositions = await db.getPositions();
 
       // Get positions from broker
-      const brokerPositions = await tradier.getPositions();
+      const brokerPositions = this.normalizeBrokerPositions(await tradier.getPositions());
 
       const discrepancies = [];
 
