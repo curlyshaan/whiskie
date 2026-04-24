@@ -10,7 +10,7 @@ dotenv.config();
 
 class MacroRegimeDetector {
   constructor() {
-    this.FRED_API_KEY = process.env.FRED_API_KEY || '2958ae89236d50a86d62cdd43ab3bc0c';
+    this.FRED_API_KEY = process.env.FRED_API_KEY || '';
     this.FRED_BASE_URL = 'https://api.stlouisfed.org/fred/series/observations';
     this.SERIES = {
       yieldCurve: 'T10Y2Y',
@@ -22,6 +22,9 @@ class MacroRegimeDetector {
   async fetchLatestSeriesValue(seriesId) {
     const url = new URL(this.FRED_BASE_URL);
     url.searchParams.set('series_id', seriesId);
+    if (!this.FRED_API_KEY) {
+      throw new Error('FRED_API_KEY is not configured');
+    }
     url.searchParams.set('api_key', this.FRED_API_KEY);
     url.searchParams.set('file_type', 'json');
     url.searchParams.set('sort_order', 'desc');

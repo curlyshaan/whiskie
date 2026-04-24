@@ -125,7 +125,13 @@ class TavilyAPI {
 
       return results;
     } catch (error) {
-      console.error('Tavily search error:', error.message, {
+      const responseStatus = error?.response?.status;
+      const responseBody = error?.response?.data;
+      const responseDetail = typeof responseBody?.detail?.error === 'string'
+        ? responseBody.detail.error
+        : (typeof responseBody?.detail === 'string' ? responseBody.detail : null);
+      console.error('Tavily search error:', {
+        message: error.message,
         query: normalizedQuery,
         options: {
           depth: options.depth || 'basic',
@@ -135,8 +141,8 @@ class TavilyAPI {
           includeDomains: options.includeDomains || [],
           excludeDomains: options.excludeDomains || []
         },
-        responseStatus: error?.response?.status,
-        responseBody: error?.response?.data || null
+        responseStatus,
+        responseDetail
       });
       throw error;
     }

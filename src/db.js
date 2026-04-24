@@ -29,7 +29,15 @@ pool.on('error', (err) => {
  */
 export async function initDatabase() {
   console.log(`📊 Initializing database schema... (timeout ${DATABASE_CONNECT_TIMEOUT_MS}ms)`);
-  const client = await pool.connect();
+  let client;
+  try {
+    client = await pool.connect();
+  } catch (error) {
+    if (error?.code === 'EAI_AGAIN') {
+      console.error('❌ Database hostname lookup failed during startup. Railway internal DNS may be temporarily unavailable; retrying the deployment usually resolves this.');
+    }
+    throw error;
+  }
 
   try {
 
@@ -491,6 +499,8 @@ export async function initDatabase() {
         prediction_catalyst_summary TEXT,
         actual_reaction_direction VARCHAR(10),
         actual_reaction_pct DECIMAL(8, 4),
+        reference_session_date DATE,
+        reference_price DECIMAL(12, 4),
         grade_result VARCHAR(20),
         graded_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -501,6 +511,12 @@ export async function initDatabase() {
     await client.query(`
       ALTER TABLE earnings_reminders
       ADD COLUMN IF NOT EXISTS prediction_key_risk TEXT;
+    `);
+
+    await client.query(`
+      ALTER TABLE earnings_reminders
+      ADD COLUMN IF NOT EXISTS reference_session_date DATE,
+      ADD COLUMN IF NOT EXISTS reference_price DECIMAL(12, 4);
     `);
 
     await client.query(`
@@ -3640,6 +3656,8 @@ export async function saveEarningsReminderGrade(id, gradePayload = {}) {
            actual_reaction_pct = $3,
            grade_result = $4,
            graded_at = $5,
+           reference_session_date = $6,
+           reference_price = $7,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
        RETURNING *`,
@@ -3648,7 +3666,9 @@ export async function saveEarningsReminderGrade(id, gradePayload = {}) {
         gradePayload.actualReactionDirection || null,
         gradePayload.actualReactionPct ?? null,
         gradePayload.gradeResult || null,
-        gradePayload.gradedAt || new Date()
+        gradePayload.gradedAt || new Date(),
+        gradePayload.referenceSessionDate || null,
+        gradePayload.referencePrice ?? null
       ]
     );
     return result.rows[0] || null;

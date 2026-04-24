@@ -22,14 +22,25 @@ class CircuitBreaker {
    * Check if circuit breaker is tripped
    */
   async checkCircuitBreaker(portfolioValue) {
-    const dailyLoss = await this.getDailyLoss(portfolioValue);
+    const normalizedPortfolioValue = Number(portfolioValue || 0);
+    if (!Number.isFinite(normalizedPortfolioValue) || normalizedPortfolioValue <= 0) {
+      return { tripped: false };
+    }
+
+    const latestSnapshot = await this.getLatestSnapshot();
+    const latestPositionsValue = Number(latestSnapshot?.positions_value || 0);
+    if (latestSnapshot && latestPositionsValue === 0) {
+      return { tripped: false };
+    }
+
+    const dailyLoss = await this.getDailyLoss(normalizedPortfolioValue);
     if (dailyLoss >= this.MAX_DAILY_LOSS_PCT) {
       await this.trip(`Daily loss limit reached (${(dailyLoss * 100).toFixed(1)}%)`);
       return { tripped: true, reason: this.tripReason };
     }
 
     // Check weekly loss limit
-    const weeklyLoss = await this.getWeeklyLoss(portfolioValue);
+    const weeklyLoss = await this.getWeeklyLoss(normalizedPortfolioValue);
     if (weeklyLoss >= this.MAX_WEEKLY_LOSS_PCT) {
       await this.trip(`Weekly loss limit reached (${(weeklyLoss * 100).toFixed(1)}%)`);
       return { tripped: true, reason: this.tripReason };
@@ -76,6 +87,22 @@ class CircuitBreaker {
        SET reset_at = NOW()
        WHERE reset_at IS NULL`
     );
+  }
+
+
+  async getLatestSnapshot() {
+    try {
+      const result = await db.query(
+        `SELECT total_value, cash, positions_value, snapshot_date
+         FROM portfolio_snapshots
+         ORDER BY snapshot_date DESC
+         LIMIT 1`
+      );
+      return result.rows[0] || null;
+    } catch (error) {
+      console.error('Error fetching latest snapshot for circuit breaker:', error);
+      return null;
+    }
   }
 
   /**

@@ -6,7 +6,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-const FRED_API_KEY = process.env.FRED_API_KEY || '2958ae89236d50a86d62cdd43ab3bc0c';
+const FRED_API_KEY = process.env.FRED_API_KEY || '';
 const FRED_BASE_URL = 'https://api.stlouisfed.org/fred';
 
 /**
@@ -44,6 +44,11 @@ async function fetchFredReleaseDates(releaseId, daysAhead = 60) {
 
   const realtimeStart = today.toISOString().split('T')[0];
   const realtimeEnd = futureDate.toISOString().split('T')[0];
+
+  if (!FRED_API_KEY) {
+    console.warn(`⚠️ Skipping FRED release dates for ${releaseId}: FRED_API_KEY is not configured`);
+    return [];
+  }
 
   const url = `${FRED_BASE_URL}/release/dates?release_id=${releaseId}&api_key=${FRED_API_KEY}&file_type=json&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}&sort_order=asc`;
 

@@ -380,6 +380,8 @@ function classifyReaction(movePct, threshold = 1) {
   return movePct > 0 ? 'up' : 'down';
 }
 
+let yahooTimingFailureCount = 0;
+
 export async function enrichEarningsWhispersTiming(symbol) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
   try {
@@ -404,7 +406,12 @@ export async function enrichEarningsWhispersTiming(symbol) {
       source: 'yahoo'
     };
   } catch (error) {
-    console.warn(`⚠️ Yahoo timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
+    yahooTimingFailureCount += 1;
+    if (yahooTimingFailureCount <= 3) {
+      console.warn(`⚠️ Yahoo timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
+    } else if (yahooTimingFailureCount === 4) {
+      console.warn('⚠️ Yahoo timing enrichment failures are recurring; suppressing additional per-symbol warnings for this run');
+    }
   }
 
   return {
@@ -719,7 +726,8 @@ export async function gradeEarningsReminder(reminder) {
     actualReactionPct,
     gradeResult,
     gradedAt: new Date(),
-    referenceSessionDate: nextSessionDate
+    referenceSessionDate: nextSessionDate,
+    referencePrice: preferredReferencePrice
   });
 }
 

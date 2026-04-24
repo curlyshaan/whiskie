@@ -54,8 +54,15 @@ class TradierAPI {
         const status = error.response?.status;
         const method = (error.config?.method || 'get').toUpperCase();
         const path = error.request?.path || error.config?.url || 'unknown';
-        const body = JSON.stringify(error.response?.data || {}).slice(0, 500);
-        console.error(`[TradierError] status=${status || 'unknown'} method=${method} path=${path} body=${body}`);
+        const detail = typeof error.response?.data?.fault?.faultstring === 'string'
+          ? error.response.data.fault.faultstring
+          : (typeof error.response?.data?.error === 'string' ? error.response.data.error : null);
+        console.error('[TradierError]', {
+          status: status || 'unknown',
+          method,
+          path,
+          detail
+        });
         return Promise.reject(error);
       }
     );
