@@ -1443,7 +1443,40 @@ router.get('/', async (req, res) => {
     let trades = { rows: [] };
     try {
       trades = await db.query(
-        `SELECT * FROM trades
+        `SELECT *
+         FROM (
+           SELECT
+             t.executed_at,
+             t.action,
+             t.symbol,
+             t.quantity,
+             t.price,
+             t.total_value,
+             t.status,
+             t.order_id
+           FROM trades t
+           UNION ALL
+           SELECT
+             ta.executed_at,
+             ta.action,
+             ta.symbol,
+             ta.quantity,
+             COALESCE(ta.entry_price, 0) AS price,
+             ABS(COALESCE(ta.quantity, 0) * COALESCE(ta.entry_price, 0)) AS total_value,
+             ta.status,
+             NULL::varchar AS order_id
+           FROM trade_approvals ta
+           WHERE ta.status = 'executed'
+             AND ta.executed_at IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1
+               FROM trades t
+               WHERE t.symbol = ta.symbol
+                 AND t.action = ta.action
+                 AND t.quantity = ta.quantity
+                 AND ABS(EXTRACT(EPOCH FROM (t.executed_at - ta.executed_at))) <= 300
+             )
+         ) recent_trades
          ORDER BY executed_at DESC
          LIMIT 10`
       );
