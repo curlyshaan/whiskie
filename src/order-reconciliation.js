@@ -174,6 +174,20 @@ class OrderReconciliation {
         }
       }
 
+      const brokerPositionCount = (portfolio.positions || []).length;
+      if (brokerPositionCount === 0) {
+        const normalizedCash = Number(portfolio.cash || 0);
+        await db.savePortfolioSnapshot({
+          total_value: normalizedCash,
+          cash: normalizedCash,
+          positions_value: 0,
+          daily_change: 0,
+          total_return: 0,
+          sp500_return: 0,
+          snapshot_date: new Date().toISOString().split('T')[0]
+        });
+      }
+
       console.log(`✅ Portfolio sync complete (${added.length} added, ${updated.length} updated, ${removed.length} removed)`);
 
       return {
@@ -181,7 +195,7 @@ class OrderReconciliation {
         added,
         updated,
         removed,
-        totalBrokerPositions: (portfolio.positions || []).length
+        totalBrokerPositions: brokerPositionCount
       };
     } catch (error) {
       console.error('Error syncing positions from broker:', error);

@@ -3016,6 +3016,14 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         // STEP 2: Validate asset class allocation with VIX-adjusted quantities
         const adjustedRecs = await this.validateAndAdjustAssetClassAllocation(validatedRecommendations, portfolio);
 
+        const existingPositionMap = new Map((portfolio.positions || []).map(position => [
+          String(position.symbol || '').toUpperCase(),
+          {
+            quantity: Number(position.quantity || 0),
+            costBasis: Number(position.cost_basis || position.costBasis || 0)
+          }
+        ]));
+
         // Batch submit all trades for approval
         const submittedTrades = [];
         const approvalIds = [];
@@ -3027,6 +3035,18 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
             continue;
           }
           seenApprovalSymbols.add(rec.symbol);
+
+          const existingPosition = existingPositionMap.get(String(rec.symbol || '').toUpperCase());
+          const isExistingLongHold = rec.type === 'long'
+            && existingPosition
+            && existingPosition.quantity > 0
+            && Number(rec.quantity) === Number(existingPosition.quantity)
+            && (rec.holdingPosture === 'hold' || rec.holdingPosture === 'rebalance' || rec.thesisState === 'unchanged');
+
+          if (isExistingLongHold) {
+            console.log(`   ℹ️ Skipping approval for ${rec.symbol}: existing long matches current quantity (${rec.quantity}) with posture=${rec.holdingPosture || 'n/a'} thesis=${rec.thesisState || 'n/a'}`);
+            continue;
+          }
 
           const action = rec.type === 'short' ? 'SHORT' : 'BUY';
           console.log(`   💰 Preparing trade: ${action} ${rec.quantity} ${rec.symbol} at $${rec.entryPrice}...`);
