@@ -99,6 +99,48 @@ function renderDetailSection(title, content) {
   `;
 }
 
+function formatDailySymbolStateChange(value) {
+  const text = normalizeText(value);
+  if (!text) return '-';
+
+  const fingerprintMatch = text.match(/^Market\/technical fingerprint changed from (.+) to (.+)$/i);
+  if (fingerprintMatch) {
+    const parseFingerprint = raw => {
+      const parts = String(raw || '').split('|');
+      return {
+        source: parts[0] || 'n/a',
+        depth: parts[1] || 'n/a',
+        pathway: parts[2] || 'n/a',
+        action: parts[3] || 'n/a',
+        momentum: parts[4] || 'n/a',
+        dailyMove: parts[5] || 'n/a',
+        rsi: parts[6] || 'n/a',
+        trend: parts[7] || 'n/a'
+      };
+    };
+
+    const before = parseFingerprint(fingerprintMatch[1]);
+    const after = parseFingerprint(fingerprintMatch[2]);
+    const labels = [
+      ['source', 'Source'],
+      ['depth', 'Depth'],
+      ['pathway', 'Pathway'],
+      ['action', 'Status'],
+      ['momentum', 'Score'],
+      ['dailyMove', 'Daily move'],
+      ['rsi', 'RSI'],
+      ['trend', 'Trend']
+    ];
+    const changed = labels
+      .filter(([key]) => String(before[key]) !== String(after[key]))
+      .map(([key, label]) => `${label}: ${before[key]} → ${after[key]}`);
+
+    return changed.length ? changed.join(' | ') : 'Market/technical fingerprint changed';
+  }
+
+  return text;
+}
+
 function renderKeyValueRows(items = []) {
   const rows = items
     .filter(item => normalizeText(item?.value))
@@ -479,14 +521,12 @@ function renderPortfolioHubSection(portfolioHub = {}) {
             <thead>
               <tr>
                 <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('symbol', '${nextSortDirection('symbol')}')">Symbol${sortIndicator('symbol')}</button></th>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('positionType', '${nextSortDirection('positionType')}')">Type${sortIndicator('positionType')}</button></th>
                 <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('shares', '${nextSortDirection('shares')}')">Shares${sortIndicator('shares')}</button></th>
                 <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('avgCost', '${nextSortDirection('avgCost')}')">Avg Cost${sortIndicator('avgCost')}</button></th>
                 <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('currentPrice', '${nextSortDirection('currentPrice')}')">Current${sortIndicator('currentPrice')}</button></th>
                 <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('marketValue', '${nextSortDirection('marketValue')}')">Value${sortIndicator('marketValue')}</button></th>
                 <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('weightPct', '${nextSortDirection('weightPct')}')">Weight${sortIndicator('weightPct')}</button></th>
                 <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('unrealizedPnLPct', '${nextSortDirection('unrealizedPnLPct')}')">P/L${sortIndicator('unrealizedPnLPct')}</button></th>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('sector', '${nextSortDirection('sector')}')">Sector${sortIndicator('sector')}</button></th>
                 <th>Earnings</th>
                 <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('whiskiePathway', '${nextSortDirection('whiskiePathway')}')">Whiskie Pathway${sortIndicator('whiskiePathway')}</button></th>
                 <th>Stop</th>
@@ -498,15 +538,13 @@ function renderPortfolioHubSection(portfolioHub = {}) {
             <tbody>
               ${holdings.map(row => `
                 <tr>
-                  <td><strong>${escapeHtml(row.symbol)}</strong></td>
-                  <td>${escapeHtml(row.positionType)}</td>
+                  <td><strong>${escapeHtml(row.symbol)}</strong><br><span class="timestamp">${escapeHtml(row.positionType)}</span></td>
                   <td>${Math.abs(Number(row.shares || 0)).toFixed(2)}</td>
                   <td>${formatMoney(row.avgCost)}</td>
                   <td>${formatMoney(row.currentPrice)}</td>
                   <td>${formatMoney(row.marketValue)}</td>
                   <td>${formatPercent(row.weightPct)}</td>
                   <td class="${Number(row.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(row.unrealizedPnL)}<br>${formatPercent(row.unrealizedPnLPct)}</td>
-                  <td>${escapeHtml(row.sector || '-')}</td>
                   <td>${formatShortDate(row.nextEarningsDate)}</td>
                   <td>${escapeHtml(row.whiskiePathway || '-')}</td>
                   <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
@@ -519,7 +557,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   </td>
                 </tr>
                 <tr>
-                  <td colspan="15" style="background:#131a30;">
+                  <td colspan="13" style="background:#131a30;">
                     <details>
                       <summary>Whiskie details for ${escapeHtml(row.symbol)}</summary>
                       <div style="margin-top:12px; display:grid; gap:12px;">
@@ -2438,7 +2476,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
                 <td>${escapeHtml(state.review_reason_code || state.escalation_reason || '-')}</td>
                 <td>${escapeHtml(state.source || '-')}</td>
                 <td>${escapeHtml(state.primary_pathway || '-')}</td>
-                <td>${escapeHtml(state.what_changed || '-')}</td>
+                <td>${escapeHtml(formatDailySymbolStateChange(state.what_changed || '-'))}</td>
                 <td>${escapeHtml(formatDashboardDateTime(state.next_review_due))}</td>
               </tr>
             `).join('')}

@@ -259,6 +259,15 @@ class ETFManager {
       ranking = [];
     }
 
+    if (!ranking.length) {
+      try {
+        const sectorRotation = (await import('./sector-rotation.js')).default;
+        ranking = await sectorRotation.calculateSectorStrength();
+      } catch (error) {
+        ranking = [];
+      }
+    }
+
     const etfMap = new Map((etfs || []).map(etf => [String(etf.symbol || '').toUpperCase(), etf]));
     const leading = [];
     const lagging = [];

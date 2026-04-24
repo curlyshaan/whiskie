@@ -127,13 +127,39 @@ class OrderReconciliation {
       }
 
       for (const pos of portfolio.positions || []) {
+        const existingPosition = dbPositions.find(dbPos => dbPos.symbol === pos.symbol) || {};
         await db.upsertPosition({
           symbol: pos.symbol,
           quantity: pos.quantity,
           cost_basis: pos.cost_basis,
           current_price: pos.currentPrice,
           sector: pos.sector,
-          stock_type: pos.stock_type
+          stock_type: pos.stock_type,
+          industry: pos.industry ?? existingPosition.industry ?? null,
+          stop_loss: existingPosition.stop_loss ?? null,
+          take_profit: existingPosition.take_profit ?? null,
+          pathway: existingPosition.pathway ?? null,
+          intent: existingPosition.intent ?? existingPosition.current_intent ?? null,
+          peak_price: existingPosition.peak_price ?? pos.currentPrice,
+          position_type: existingPosition.position_type || (pos.quantity < 0 ? 'short' : 'long'),
+          strategy_type: existingPosition.strategy_type ?? null,
+          thesis_state: existingPosition.thesis_state ?? null,
+          holding_posture: existingPosition.holding_posture ?? null,
+          holding_period: existingPosition.holding_period ?? null,
+          secondary_pathways: existingPosition.secondary_pathways ?? [],
+          pathway_selection_rule: existingPosition.pathway_selection_rule ?? null,
+          confidence: existingPosition.confidence ?? null,
+          growth_potential: existingPosition.growth_potential ?? null,
+          stop_type: existingPosition.stop_type ?? null,
+          stop_reason: existingPosition.stop_reason ?? null,
+          target_type: existingPosition.target_type ?? null,
+          has_fixed_target: existingPosition.has_fixed_target ?? null,
+          trailing_stop_pct: existingPosition.trailing_stop_pct ?? null,
+          rebalance_threshold_pct: existingPosition.rebalance_threshold_pct ?? null,
+          max_holding_days: existingPosition.max_holding_days ?? null,
+          fundamental_stop_conditions: existingPosition.fundamental_stop_conditions ?? null,
+          catalysts: existingPosition.catalysts ?? null,
+          news_links: existingPosition.news_links ?? null
         });
 
         await db.query(
@@ -232,19 +258,19 @@ class OrderReconciliation {
                  ELSE secondary_pathways
                END,
                pathway_selection_rule = CASE
-                 WHEN $9 IS NOT NULL AND (pathway_selection_rule IS NULL OR pathway_selection_rule = 'unclassified') THEN $9
+                 WHEN $9::text IS NOT NULL AND (pathway_selection_rule IS NULL OR pathway_selection_rule = 'unclassified') THEN $9::text
                  ELSE pathway_selection_rule
                END,
-               confidence = COALESCE($10, confidence),
-               growth_potential = COALESCE($11, growth_potential),
-               stop_type = COALESCE($12, stop_type),
-               target_type = COALESCE($13, target_type),
-               trailing_stop_pct = COALESCE($14, trailing_stop_pct),
-               rebalance_threshold_pct = COALESCE($15, rebalance_threshold_pct),
-               max_holding_days = COALESCE($16, max_holding_days),
-               stop_loss = COALESCE($17, stop_loss),
-               take_profit = COALESCE($18, take_profit),
-               has_fixed_target = COALESCE($19, has_fixed_target),
+               confidence = COALESCE($10::text, confidence),
+               growth_potential = COALESCE($11::text, growth_potential),
+               stop_type = COALESCE($12::text, stop_type),
+               target_type = COALESCE($13::text, target_type),
+               trailing_stop_pct = COALESCE($14::numeric, trailing_stop_pct),
+               rebalance_threshold_pct = COALESCE($15::numeric, rebalance_threshold_pct),
+               max_holding_days = COALESCE($16::integer, max_holding_days),
+               stop_loss = COALESCE($17::numeric, stop_loss),
+               take_profit = COALESCE($18::numeric, take_profit),
+               has_fixed_target = COALESCE($19::boolean, has_fixed_target),
                fundamental_stop_conditions = COALESCE($20::jsonb, fundamental_stop_conditions),
                catalysts = COALESCE($21::jsonb, catalysts),
                news_links = COALESCE($22::jsonb, news_links),
