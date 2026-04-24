@@ -174,6 +174,8 @@ class OrderReconciliation {
         }
       }
 
+      await this.syncPositionMetadataFromLots();
+
       const brokerPositionCount = (portfolio.positions || []).length;
       if (brokerPositionCount === 0) {
         const normalizedCash = Number(portfolio.cash || 0);
