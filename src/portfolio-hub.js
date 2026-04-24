@@ -128,6 +128,21 @@ function computeExecutedPlanShares(row, opusReview, transactions = []) {
   }, 0);
 }
 
+function sumExecutedAdviceShares(symbol, positionType, adviceRows = []) {
+  const normalizedSymbol = String(symbol || '').toUpperCase();
+  const normalizedPositionType = String(positionType || '').toLowerCase();
+
+  return (adviceRows || []).reduce((sum, row) => {
+    if (String(row.symbol || '').toUpperCase() !== normalizedSymbol) return sum;
+    if (String(row.position_type || '').toLowerCase() !== normalizedPositionType) return sum;
+
+    const actionLabel = String(row.opus_review?.actionLabel || '').toLowerCase();
+    if (!['trim', 'reduce', 'cover'].includes(actionLabel)) return sum;
+
+    return sum + Math.abs(Number(row.executed_shares || 0));
+  }, 0);
+}
+
 function inferTargetPositionShares(row, opusReview) {
   const explicitTarget = Number(opusReview?.targetPositionShares);
   if (Number.isFinite(explicitTarget) && explicitTarget >= 0) {
@@ -415,7 +430,9 @@ export async function buildPortfolioHubView(options = {}) {
     const persistedOpusReview = buildPersistedOpusReview(latestAdvice?.opus_review);
     if (persistedOpusReview) {
       persistedOpusReview.createdAt = latestAdvice?.opus_review_created_at || latestAdvice?.created_at || null;
-      persistedOpusReview.executedShares = computeExecutedPlanShares(row, persistedOpusReview, transactions);
+      const transactionExecutedShares = computeExecutedPlanShares(row, persistedOpusReview, transactions);
+      const historicalExecutedShares = sumExecutedAdviceShares(symbol, row.positionType, latestAdviceRows);
+      persistedOpusReview.executedShares = Math.max(transactionExecutedShares, historicalExecutedShares);
       const inferredTargetPositionShares = inferTargetPositionShares(row, persistedOpusReview);
       if (Number.isFinite(Number(inferredTargetPositionShares))) {
         persistedOpusReview.targetPositionShares = inferredTargetPositionShares;
