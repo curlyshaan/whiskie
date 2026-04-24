@@ -850,7 +850,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         transaction_type: transactionType,
         symbol: document.getElementById('phSymbol').value,
         shares: document.getElementById('phShares').value,
-        price: document.getElementById('phPrice').value,
+        price: document.getElementById('phCostBasis').value,
         cash_amount: document.getElementById('phCashAmount').value,
         trade_date: document.getElementById('phTradeDate').value,
         notes: document.getElementById('phNotes').value
@@ -2647,7 +2647,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
         transaction_type: transactionType,
         symbol: document.getElementById('phSymbol').value,
         shares: document.getElementById('phShares').value,
-        price: document.getElementById('phPrice').value,
+        price: document.getElementById('phCostBasis').value,
         cash_amount: document.getElementById('phCashAmount').value,
         trade_date: document.getElementById('phTradeDate').value,
         notes: document.getElementById('phNotes').value
@@ -4361,6 +4361,7 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
     keyRisk: reminder.prediction_key_risk || '',
     actualReactionPct: reminder.actual_reaction_pct ?? null
   }));
+  const pendingGradeRows = Array.isArray(pendingGrades) ? pendingGrades : [];
   return `
 <!DOCTYPE html>
 <html>
@@ -4545,7 +4546,7 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
 
   <script>
     const reminderRows = ${JSON.stringify(reminderRows)};
-    const pendingGradeRows = ${JSON.stringify(pendingGrades)};
+    const pendingGradeRows = ${JSON.stringify(pendingGradeRows)};
     function formatDashboardSession(value) {
       const normalized = String(value || '').trim().toLowerCase();
       if (!normalized) return 'Unknown';

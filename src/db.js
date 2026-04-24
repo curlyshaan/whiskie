@@ -2159,9 +2159,9 @@ export async function createPortfolioHubTransaction(transaction) {
        WHERE account_id = $1
          AND COALESCE(symbol, '') = COALESCE($2, '')
          AND transaction_type = $3
-         AND COALESCE(shares, 0) = COALESCE($4, 0)
-         AND COALESCE(price, 0) = COALESCE($5, 0)
-         AND COALESCE(cash_amount, 0) = COALESCE($6, 0)
+         AND COALESCE(shares, 0) = COALESCE($4::numeric, 0)
+         AND COALESCE(price, 0) = COALESCE($5::numeric, 0)
+         AND COALESCE(cash_amount, 0) = COALESCE($6::numeric, 0)
          AND trade_date = $7
        LIMIT 1`,
       [
@@ -2183,7 +2183,7 @@ export async function createPortfolioHubTransaction(transaction) {
       `INSERT INTO portfolio_hub_transactions (
          account_id, symbol, transaction_type, shares, price, cash_amount,
          stop_loss, take_profit, notes, trade_date
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, CURRENT_DATE))
+       ) VALUES ($1, $2, $3, $4::numeric, $5::numeric, $6::numeric, $7::numeric, $8::numeric, $9, COALESCE($10, CURRENT_DATE))
        RETURNING *`,
       [
         transaction.account_id,
@@ -3338,13 +3338,13 @@ export async function getUpcomingEarningsDashboardRows(days = 1) {
        ) sw ON TRUE
        WHERE ec.earnings_date >= CURRENT_DATE - INTERVAL '1 day'
          AND ec.earnings_date <= CURRENT_DATE + ($1::text || ' days')::interval
-       ORDER BY CASE
+       ORDER BY ec.symbol,
+                CASE
                   WHEN ec.earnings_date = CURRENT_DATE THEN 0
                   WHEN ec.earnings_date = CURRENT_DATE + INTERVAL '1 day' THEN 1
                   WHEN ec.earnings_date = CURRENT_DATE - INTERVAL '1 day' THEN 2
                   ELSE 3
                 END ASC,
-                ec.symbol,
                 ec.earnings_date ASC,
                 CASE
                   WHEN ec.session_normalized IN ('pre_market', 'post_market') THEN 0
