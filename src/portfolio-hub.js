@@ -179,7 +179,8 @@ function safeDateValue(value) {
 
 function normalizeNumericField(value) {
   const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
+  if (!Number.isFinite(numeric)) return null;
+  return numeric > 0 ? numeric : null;
 }
 
 function buildChangeItems(currentRow, previousAdviceRow) {
