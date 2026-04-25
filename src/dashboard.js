@@ -312,6 +312,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
     holdingsSort.sortDirection
   );
   const accounts = portfolioHub.accounts || [];
+  const recommendationChanges = portfolioHub.recommendationChanges || [];
   const transactions = portfolioHub.transactions || [];
   const sectorRows = portfolioHub.sectorAllocation || [];
   const shortSectorRows = portfolioHub.shortSectorExposure || [];
@@ -513,6 +514,28 @@ function renderPortfolioHubSection(portfolioHub = {}) {
           <div class="position-summary-note" style="margin-top:10px;">This section reads directly from each account's live Portfolio Hub cash balance, so buys, sells, shorts, covers, deposits, withdrawals, and cash overrides will update it automatically after each saved transaction.</div>
         </div>
       </details>
+
+      <div style="margin-top:18px;">
+        <div class="detail-section-title">Latest Recommendation Changes</div>
+        ${recommendationChanges.length === 0 ? '<div class="no-data">No new Whiskie recommendation changes saved yet.</div>' : `
+          <table>
+            <thead>
+              <tr><th>When</th><th>Symbol</th><th>Change</th><th>Details</th><th>Previous</th></tr>
+            </thead>
+            <tbody>
+              ${recommendationChanges.map(item => `
+                <tr>
+                  <td>${formatDateTime(item.createdAt)}</td>
+                  <td><strong>${escapeHtml(item.symbol || '-')}</strong><br><span class="timestamp">${escapeHtml(item.positionType || '-')}</span></td>
+                  <td>${escapeHtml(item.changeType === 'shares' ? 'Shares' : item.changeType === 'target' ? 'Price Target' : 'Stop Loss')}</td>
+                  <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span></td>
+                  <td>${escapeHtml(item.previous || 'New')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
 
       <div style="margin-top:18px;">
         <div class="detail-section-title">Combined Holdings</div>

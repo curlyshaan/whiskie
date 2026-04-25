@@ -172,6 +172,66 @@ function buildAdviceKey(symbol, positionType) {
   return `${String(symbol || '').toUpperCase()}:${String(positionType || '').toLowerCase()}`;
 }
 
+function safeDateValue(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function normalizeNumericField(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function buildChangeItems(currentRow, previousAdviceRow) {
+  const currentReview = currentRow?.opusReview || null;
+  if (!currentReview) return [];
+
+  const previousReview = buildPersistedOpusReview(previousAdviceRow?.opus_review);
+  const currentAction = String(currentReview.actionLabel || 'Hold').trim();
+  const previousAction = String(previousReview?.actionLabel || 'Hold').trim();
+  const currentShareText = String(currentReview.shareCountText || '').trim();
+  const previousShareText = String(previousReview?.shareCountText || '').trim();
+  const currentStopLoss = normalizeNumericField(currentReview.stopLoss);
+  const previousStopLoss = normalizeNumericField(previousReview?.stopLoss);
+  const currentTakeProfit = normalizeNumericField(currentReview.takeProfit);
+  const previousTakeProfit = normalizeNumericField(previousReview?.takeProfit);
+  const items = [];
+
+  if (currentAction !== previousAction || currentShareText !== previousShareText) {
+    items.push({
+      type: 'shares',
+      summary: currentShareText || currentReview.summary || `${currentAction} recommendation updated`,
+      previous: previousShareText || previousReview?.summary || previousAction || null
+    });
+  }
+
+  if (currentStopLoss !== previousStopLoss) {
+    items.push({
+      type: 'stop_loss',
+      summary: currentStopLoss == null
+        ? 'Stop loss removed'
+        : previousStopLoss == null
+          ? `Stop loss added at ${currentStopLoss.toFixed(2)}`
+          : `Stop loss changed to ${currentStopLoss.toFixed(2)}`,
+      previous: previousStopLoss == null ? null : previousStopLoss.toFixed(2)
+    });
+  }
+
+  if (currentTakeProfit !== previousTakeProfit) {
+    items.push({
+      type: 'target',
+      summary: currentTakeProfit == null
+        ? 'Price target removed'
+        : previousTakeProfit == null
+          ? `Price target added at ${currentTakeProfit.toFixed(2)}`
+          : `Price target changed to ${currentTakeProfit.toFixed(2)}`,
+      previous: previousTakeProfit == null ? null : previousTakeProfit.toFixed(2)
+    });
+  }
+
+  return items;
+}
+
 function summarizeHoldingAction(row) {
   const action = String(row.whiskieActionLabel || 'Hold').trim();
   const summary = String(row.whiskieView || '').trim();
@@ -397,6 +457,14 @@ export async function buildPortfolioHubView(options = {}) {
   const latestAdviceMap = new Map(
     (latestAdviceRows || []).map(row => [buildAdviceKey(row.symbol, row.position_type), row])
   );
+  const adviceHistoryByKey = new Map();
+  (latestAdviceRows || []).forEach(row => {
+    const key = buildAdviceKey(row.symbol, row.position_type);
+    const list = adviceHistoryByKey.get(key) || [];
+    list.push(row);
+    adviceHistoryByKey.set(key, list);
+  });
+  adviceHistoryByKey.forEach(list => list.sort((a, b) => safeDateValue(b.opus_review_created_at || b.created_at) - safeDateValue(a.opus_review_created_at || a.created_at)));
   const latestFullReviewAt = latestAdviceRows
     .map(row => row.opus_review_created_at)
     .filter(Boolean)
@@ -531,6 +599,28 @@ export async function buildPortfolioHubView(options = {}) {
     row.whiskieSource = recommendation.source || (row.opusReview ? 'opus' : 'policy');
     row.whiskieConfidence = recommendation.confidence || row.opusReview?.confidence || null;
   });
+
+  const recommendationChanges = holdings
+    .flatMap(row => {
+      if (!row.opusReview) return [];
+      const history = adviceHistoryByKey.get(buildAdviceKey(row.symbol, row.positionType)) || [];
+      const latestRow = history[0] || null;
+      const previousRow = history[1] || null;
+      const changeItems = buildChangeItems(row, previousRow);
+      const changeTimestamp = latestRow?.opus_review_created_at || latestRow?.created_at || row.opusReviewCreatedAt || null;
+
+      return changeItems.map(item => ({
+        symbol: row.symbol,
+        positionType: row.positionType,
+        actionLabel: row.whiskieActionLabel || 'Hold',
+        changeType: item.type,
+        summary: item.summary,
+        previous: item.previous,
+        createdAt: changeTimestamp
+      }));
+    })
+    .sort((a, b) => safeDateValue(b.createdAt) - safeDateValue(a.createdAt))
+    .slice(0, 7);
 
   const summary = {
     totalValue,
@@ -715,7 +805,8 @@ export async function buildPortfolioHubView(options = {}) {
     etfRotationContext,
     performanceRange,
     performanceMetric,
-    latestFullReviewAt
+    latestFullReviewAt,
+    recommendationChanges
   };
 }
 
