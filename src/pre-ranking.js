@@ -65,6 +65,37 @@ class PreRanking {
     return 0;
   }
 
+  resolveAverageVolume(quote, stock = {}) {
+    const quoteAverageVolume = this.getAverageVolumeFromQuote(quote);
+    if (quoteAverageVolume > 0) {
+      return {
+        avgVolume: quoteAverageVolume,
+        source: 'quote'
+      };
+    }
+
+    const universeAverageVolume = Number(stock.avgDailyVolume || stock.avg_daily_volume || 0);
+    if (Number.isFinite(universeAverageVolume) && universeAverageVolume > 0) {
+      return {
+        avgVolume: Math.round(universeAverageVolume),
+        source: 'stock_universe'
+      };
+    }
+
+    const liveVolume = Number(quote?.volume || 0);
+    if (Number.isFinite(liveVolume) && liveVolume > 0) {
+      return {
+        avgVolume: Math.round(liveVolume),
+        source: 'live_volume_fallback'
+      };
+    }
+
+    return {
+      avgVolume: 0,
+      source: 'missing'
+    };
+  }
+
   async getEarningsMap() {
     const result = await db.query(
       `SELECT DISTINCT ON (symbol)
@@ -185,7 +216,7 @@ class PreRanking {
 
         const price = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
         const MIN_PRICE = 5.00;
-        const avgVolume = this.getAverageVolumeFromQuote(quote);
+        const { avgVolume, source: avgVolumeSource } = this.resolveAverageVolume(quote, stock);
         const bid = quote.bid || 0;
         const ask = quote.ask || 0;
         const spread = (ask && bid && price) ? (ask - bid) / price : 0;
@@ -219,6 +250,7 @@ class PreRanking {
             industry: stock.industry,
             price,
             avgVolume,
+            avgVolumeSource,
             dollarVolume,
             spread,
             quote,
@@ -362,6 +394,7 @@ class PreRanking {
   async getAllStocks() {
     const result = await db.query(
       `SELECT symbol, sector, industry
+              , avg_daily_volume
        FROM stock_universe
        WHERE status = $1
          AND ($2 = FALSE OR COALESCE(is_growth_candidate, FALSE) = FALSE)
@@ -372,6 +405,7 @@ class PreRanking {
       symbol: row.symbol,
       sector: row.sector,
       industry: row.industry,
+      avgDailyVolume: Number(row.avg_daily_volume || 0),
       source: 'universe'
     }));
   }

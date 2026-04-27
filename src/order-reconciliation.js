@@ -220,6 +220,9 @@ class OrderReconciliation {
    * Handle discrepancies
    */
   async handleDiscrepancies(discrepancies) {
+    const recheck = await this.recheckDiscrepancies(discrepancies);
+    const persistentDiscrepancies = recheck.filter(item => item.stillExists);
+
     // Log to database
     await db.query(
       `INSERT INTO reconciliation_log (discrepancies, created_at)
@@ -227,9 +230,14 @@ class OrderReconciliation {
       [JSON.stringify(discrepancies)]
     );
 
+    if (persistentDiscrepancies.length === 0) {
+      console.log('✅ Reconciliation discrepancies cleared on verification pass — skipping alert email');
+      return;
+    }
+
     // Send alert email
     let message = 'Position discrepancies detected:\n\n';
-    for (const d of discrepancies) {
+    for (const d of persistentDiscrepancies) {
       message += `${d.symbol}: ${d.issue}\n`;
       message += `  DB: ${d.dbQty} shares\n`;
       message += `  Broker: ${d.brokerQty} shares\n\n`;
@@ -237,6 +245,28 @@ class OrderReconciliation {
     message += 'Please review and manually reconcile.';
 
     await email.sendAlert('Position Reconciliation Alert', message);
+  }
+
+  async recheckDiscrepancies(discrepancies) {
+    const dbPositions = await db.getPositions();
+    const brokerPositions = this.normalizeBrokerPositions(await tradier.getPositions());
+
+    return discrepancies.map(discrepancy => {
+      const dbPos = dbPositions.find(position => position.symbol === discrepancy.symbol);
+      const brokerPos = brokerPositions.find(position => position.symbol === discrepancy.symbol);
+      const dbQty = Number(dbPos?.quantity || 0);
+      const brokerQty = Number(brokerPos?.quantity || 0);
+      const stillExists = (!dbPos && brokerPos)
+        || (dbPos && !brokerPos)
+        || (dbPos && brokerPos && Math.abs(dbQty) !== Math.abs(brokerQty));
+
+      return {
+        ...discrepancy,
+        dbQty,
+        brokerQty,
+        stillExists
+      };
+    });
   }
 
   async syncPositionMetadataFromLots() {
