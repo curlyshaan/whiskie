@@ -318,7 +318,8 @@ export async function initDatabase() {
         generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         market_context JSONB,
         portfolio_snapshot JSONB,
-        notes TEXT
+        notes TEXT,
+        raw_model_payload JSONB
       );
     `);
 
@@ -353,6 +354,102 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS relationship_type VARCHAR(30),
       ADD COLUMN IF NOT EXISTS related_holding_symbol VARCHAR(10),
       ADD COLUMN IF NOT EXISTS related_holding_action TEXT;
+    `);
+
+    await client.query(`
+      ALTER TABLE portfolio_hub_recommended_position_items
+      ADD COLUMN IF NOT EXISTS action_taxonomy VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS deterministic_score DECIMAL(10, 4),
+      ADD COLUMN IF NOT EXISTS deterministic_rank INTEGER,
+      ADD COLUMN IF NOT EXISTS scoring_breakdown JSONB,
+      ADD COLUMN IF NOT EXISTS raw_model_payload JSONB;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_review_runs (
+        id SERIAL PRIMARY KEY,
+        source_label VARCHAR(100) DEFAULT 'opus',
+        review_type VARCHAR(30) DEFAULT 'holding_review',
+        generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        market_context JSONB,
+        portfolio_snapshot JSONB,
+        notes TEXT,
+        raw_model_payload JSONB
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_review_items (
+        id SERIAL PRIMARY KEY,
+        run_id INTEGER NOT NULL REFERENCES portfolio_hub_review_runs(id) ON DELETE CASCADE,
+        symbol VARCHAR(10) NOT NULL,
+        position_type VARCHAR(10),
+        action_label VARCHAR(30) NOT NULL,
+        action_taxonomy VARCHAR(50),
+        summary TEXT,
+        detail TEXT,
+        share_count_text TEXT,
+        planned_total_shares DECIMAL(14, 4),
+        target_position_shares DECIMAL(14, 4),
+        stage_label VARCHAR(50),
+        target_weight_pct DECIMAL(10, 4),
+        confidence VARCHAR(20),
+        stop_loss DECIMAL(14, 4),
+        take_profit DECIMAL(14, 4),
+        reasoning TEXT,
+        deterministic_score DECIMAL(10, 4),
+        deterministic_rank INTEGER,
+        scoring_breakdown JSONB,
+        raw_model_payload JSONB,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_portfolio_hub_review_items_run_id
+      ON portfolio_hub_review_items(run_id);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_portfolio_hub_review_items_symbol
+      ON portfolio_hub_review_items(symbol);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_recommendation_changes (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        position_type VARCHAR(10),
+        recommendation VARCHAR(50),
+        source_label VARCHAR(100) DEFAULT 'opus_change',
+        opus_review JSONB,
+        opus_review_created_at TIMESTAMP,
+        action_taxonomy VARCHAR(50),
+        change_key VARCHAR(255) UNIQUE NOT NULL,
+        change_type VARCHAR(50),
+        change_summary TEXT,
+        change_previous_value TEXT,
+        deterministic_score DECIMAL(10, 4),
+        scoring_breakdown JSONB,
+        implemented BOOLEAN DEFAULT FALSE,
+        implemented_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_portfolio_hub_recommendation_changes_symbol
+      ON portfolio_hub_recommendation_changes(symbol);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_operational_locks (
+        lock_name VARCHAR(100) PRIMARY KEY,
+        owner_id VARCHAR(100),
+        acquired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_heartbeat_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        metadata JSONB
+      );
     `);
 
     // AI decisions - log all AI analysis and reasoning
@@ -2639,31 +2736,120 @@ export async function recordPortfolioHubAdviceHistory(entries = []) {
   }
 }
 
+export async function createPortfolioHubReviewRun(entry = {}) {
+  const result = await pool.query(
+    `INSERT INTO portfolio_hub_review_runs (
+      source_label, review_type, market_context, portfolio_snapshot, notes, raw_model_payload
+    ) VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING *`,
+    [
+      entry.sourceLabel || 'opus',
+      entry.reviewType || 'holding_review',
+      entry.marketContext ? JSON.stringify(entry.marketContext) : null,
+      entry.portfolioSnapshot ? JSON.stringify(entry.portfolioSnapshot) : null,
+      entry.notes || null,
+      entry.rawModelPayload ? JSON.stringify(entry.rawModelPayload) : null
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+export async function replacePortfolioHubReviewItems(runId, items = []) {
+  await pool.query(
+    `DELETE FROM portfolio_hub_review_items
+     WHERE run_id = $1`,
+    [runId]
+  );
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    await pool.query(
+      `INSERT INTO portfolio_hub_review_items (
+        run_id, symbol, position_type, action_label, action_taxonomy, summary, detail,
+        share_count_text, planned_total_shares, target_position_shares, stage_label,
+        target_weight_pct, confidence, stop_loss, take_profit, reasoning,
+        deterministic_score, deterministic_rank, scoring_breakdown, raw_model_payload
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11,
+        $12, $13, $14, $15, $16,
+        $17, $18, $19, $20
+      )`,
+      [
+        runId,
+        item.symbol,
+        item.positionType || null,
+        item.actionLabel || 'Hold',
+        item.actionTaxonomy || null,
+        item.summary || null,
+        item.detail || null,
+        item.shareCountText || null,
+        item.plannedTotalShares ?? null,
+        item.targetPositionShares ?? null,
+        item.stageLabel || null,
+        item.targetWeightPct ?? null,
+        item.confidence || null,
+        item.stopLoss ?? null,
+        item.takeProfit ?? null,
+        item.reasoning || null,
+        item.deterministicScore ?? null,
+        item.deterministicRank ?? null,
+        item.scoringBreakdown ? JSON.stringify(item.scoringBreakdown) : null,
+        item.rawModelPayload ? JSON.stringify(item.rawModelPayload) : null
+      ]
+    );
+  }
+}
+
+export async function getLatestPortfolioHubReviewRun() {
+  const runResult = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_review_runs
+     ORDER BY generated_at DESC, id DESC
+     LIMIT 1`
+  );
+  const run = runResult.rows[0] || null;
+  if (!run) return null;
+
+  const itemsResult = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_review_items
+     WHERE run_id = $1
+     ORDER BY deterministic_rank ASC NULLS LAST, id ASC`,
+    [run.id]
+  );
+
+  return {
+    ...run,
+    items: itemsResult.rows || []
+  };
+}
+
 export async function resetPortfolioHubRecommendationChanges() {
   await pool.query(
-    `UPDATE portfolio_hub_advice_history
+    `UPDATE portfolio_hub_recommendation_changes
      SET implemented = FALSE,
          implemented_at = NULL
      WHERE change_key IS NOT NULL`
   );
 
   await pool.query(
-    `DELETE FROM portfolio_hub_advice_history
-     WHERE change_key IS NOT NULL`
+    `DELETE FROM portfolio_hub_recommendation_changes`
   );
 }
 
 export async function savePortfolioHubRecommendationChange(entry = {}) {
   const result = await pool.query(
-    `INSERT INTO portfolio_hub_advice_history (
+    `INSERT INTO portfolio_hub_recommendation_changes (
        symbol, position_type, recommendation, source_label, opus_review,
-       opus_review_created_at, change_key, change_summary, change_previous_value,
+       opus_review_created_at, action_taxonomy, change_key, change_type,
+       change_summary, change_previous_value, deterministic_score, scoring_breakdown,
        implemented, implemented_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9,
+       $10, $11, $12, $13, COALESCE($14, FALSE), $15
      )
-     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, FALSE), $11
-     WHERE NOT EXISTS (
-       SELECT 1 FROM portfolio_hub_advice_history WHERE change_key = $7
-     )
+     ON CONFLICT (change_key) DO NOTHING
      RETURNING *`,
     [
       entry.symbol,
@@ -2672,9 +2858,13 @@ export async function savePortfolioHubRecommendationChange(entry = {}) {
       entry.sourceLabel || 'opus_change',
       entry.opusReview ? JSON.stringify(entry.opusReview) : null,
       entry.opusReviewCreatedAt || null,
+      entry.actionTaxonomy || null,
       entry.changeKey || null,
+      entry.changeType || null,
       entry.changeSummary || null,
       entry.changePreviousValue || null,
+      entry.deterministicScore ?? null,
+      entry.scoringBreakdown ? JSON.stringify(entry.scoringBreakdown) : null,
       entry.implemented ?? false,
       entry.implementedAt || null
     ]
@@ -2686,8 +2876,7 @@ export async function savePortfolioHubRecommendationChange(entry = {}) {
 export async function listPortfolioHubRecommendationChanges() {
   const result = await pool.query(
     `SELECT *
-     FROM portfolio_hub_advice_history
-     WHERE change_key IS NOT NULL
+     FROM portfolio_hub_recommendation_changes
      ORDER BY created_at DESC, id DESC`
   );
   return result.rows || [];
@@ -2696,16 +2885,14 @@ export async function listPortfolioHubRecommendationChanges() {
 export async function deletePortfolioHubRecommendationChangesNotInKeys(changeKeys = []) {
   if (!Array.isArray(changeKeys) || !changeKeys.length) {
     await pool.query(
-      `DELETE FROM portfolio_hub_advice_history
-       WHERE change_key IS NOT NULL`
+      `DELETE FROM portfolio_hub_recommendation_changes`
     );
     return;
   }
 
   await pool.query(
-    `DELETE FROM portfolio_hub_advice_history
-     WHERE change_key IS NOT NULL
-       AND NOT (change_key = ANY($1))`,
+    `DELETE FROM portfolio_hub_recommendation_changes
+     WHERE NOT (change_key = ANY($1))`,
     [changeKeys]
   );
 }
@@ -2722,7 +2909,7 @@ export async function deleteLegacyPortfolioHubAdviceRowsBefore(date = null) {
 
 export async function setPortfolioHubRecommendationChangeImplemented(id, implemented) {
   const result = await pool.query(
-    `UPDATE portfolio_hub_advice_history
+    `UPDATE portfolio_hub_recommendation_changes
      SET implemented = $2,
          implemented_at = CASE WHEN $2 THEN NOW() ELSE NULL END
      WHERE id = $1
@@ -2735,14 +2922,15 @@ export async function setPortfolioHubRecommendationChangeImplemented(id, impleme
 export async function createPortfolioHubRecommendedPositionRun(entry = {}) {
   const result = await pool.query(
     `INSERT INTO portfolio_hub_recommended_position_runs (
-      source_label, market_context, portfolio_snapshot, notes
-    ) VALUES ($1, $2, $3, $4)
+      source_label, market_context, portfolio_snapshot, notes, raw_model_payload
+    ) VALUES ($1, $2, $3, $4, $5)
     RETURNING *`,
     [
       entry.sourceLabel || 'opus',
       entry.marketContext ? JSON.stringify(entry.marketContext) : null,
       entry.portfolioSnapshot ? JSON.stringify(entry.portfolioSnapshot) : null,
-      entry.notes || null
+      entry.notes || null,
+      entry.rawModelPayload ? JSON.stringify(entry.rawModelPayload) : null
     ]
   );
   return result.rows[0] || null;
@@ -2763,8 +2951,9 @@ export async function replacePortfolioHubRecommendedPositionItems(runId, items =
         starter_position_value, entry_zone, stop_loss, take_profit, target_framework,
         pathway, thesis, why_now, portfolio_fit, sector_impact, invalidation,
         relationship_type, related_holding_symbol, related_holding_action,
-        model_reasoning, sort_order
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+        model_reasoning, action_taxonomy, deterministic_score, deterministic_rank,
+        scoring_breakdown, raw_model_payload, sort_order
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`,
       [
         runId,
         item.symbol,
@@ -2787,6 +2976,11 @@ export async function replacePortfolioHubRecommendedPositionItems(runId, items =
         item.relatedHoldingSymbol || null,
         item.relatedHoldingAction || null,
         item.modelReasoning || null,
+        item.actionTaxonomy || null,
+        item.deterministicScore ?? null,
+        item.deterministicRank ?? null,
+        item.scoringBreakdown ? JSON.stringify(item.scoringBreakdown) : null,
+        item.rawModelPayload ? JSON.stringify(item.rawModelPayload) : null,
         index
       ]
     );
@@ -2824,6 +3018,56 @@ export async function cleanupPortfolioHubRecommendedPositionRuns(daysOld = 30) {
     [String(daysOld)]
   );
   return result.rowCount || 0;
+}
+
+export async function getPortfolioHubOperationalLocks() {
+  const result = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_operational_locks
+     ORDER BY lock_name ASC`
+  );
+  return result.rows || [];
+}
+
+export async function acquirePortfolioHubAdvisoryLock(lockName, ownerId = null, metadata = null) {
+  const lockKey = `portfolio_hub:${String(lockName || 'default')}`;
+  const advisoryResult = await pool.query(
+    `SELECT pg_try_advisory_lock(hashtext($1)) AS acquired`,
+    [lockKey]
+  );
+  const acquired = Boolean(advisoryResult.rows?.[0]?.acquired);
+  if (!acquired) return false;
+
+  await pool.query(
+    `INSERT INTO portfolio_hub_operational_locks (
+       lock_name, owner_id, acquired_at, last_heartbeat_at, metadata
+     ) VALUES ($1, $2, NOW(), NOW(), $3)
+     ON CONFLICT (lock_name) DO UPDATE
+     SET owner_id = EXCLUDED.owner_id,
+         acquired_at = NOW(),
+         last_heartbeat_at = NOW(),
+         metadata = EXCLUDED.metadata`,
+    [
+      String(lockName || 'default'),
+      ownerId || null,
+      metadata ? JSON.stringify(metadata) : null
+    ]
+  );
+
+  return true;
+}
+
+export async function releasePortfolioHubAdvisoryLock(lockName) {
+  const lockKey = `portfolio_hub:${String(lockName || 'default')}`;
+  await pool.query(
+    `DELETE FROM portfolio_hub_operational_locks
+     WHERE lock_name = $1`,
+    [String(lockName || 'default')]
+  );
+  await pool.query(
+    `SELECT pg_advisory_unlock(hashtext($1))`,
+    [lockKey]
+  );
 }
 
 export async function upsertPortfolioHubBaseline(accountGroup, baselineDate, totalValue, positionsSnapshot) {

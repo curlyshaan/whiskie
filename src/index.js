@@ -3,7 +3,6 @@ import dotenv from 'dotenv';
 import express from 'express';
 import dashboard from './dashboard.js';
 import adhocAnalyzer from './adhoc-analyzer.js';
-import gemma from './gemma.js';
 import tradier from './tradier.js';
 import claude from './claude.js';
 import fmp from './fmp.js';
@@ -101,7 +100,6 @@ app.use(express.json());
 // Mount dashboard routes
 app.use('/', dashboard);
 app.use('/adhoc-analyzer', adhocAnalyzer);
-app.use('/', gemma);
 
 const normalizeRuntimeMode = (value = '') => value.toString().trim().toLowerCase();
 const runtimeMode = normalizeRuntimeMode(process.env.TRADING_MODE || process.env.NODE_ENV);

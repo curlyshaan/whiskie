@@ -21,6 +21,11 @@ export const DEFAULT_PORTFOLIO_HUB_ACCOUNTS = [
   'Sara-Webull-IRA'
 ];
 
+const PORTFOLIO_HUB_LOCKS = {
+  opusReview: 'portfolio_hub_opus_review',
+  recommendedPositions: 'portfolio_hub_recommended_positions'
+};
+
 function normalizeDirectionalLevels(positionType, currentPrice, stopLoss, takeProfit) {
   const normalizedStop = Number(stopLoss);
   const normalizedTarget = Number(takeProfit);
@@ -181,6 +186,73 @@ function buildRecommendationChangeKey(symbol, positionType, changeType, summary)
   ].join(':');
 }
 
+function confidenceScore(value) {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized === 'high') return 15;
+  if (normalized === 'medium') return 8;
+  if (normalized === 'low') return 3;
+  return 0;
+}
+
+function classifyReviewActionTaxonomy(item = {}) {
+  const action = String(item.actionLabel || '').toLowerCase();
+  const summary = String(item.summary || '').toLowerCase();
+  const detail = String(item.detail || '').toLowerCase();
+
+  if (action === 'trim' && (summary.includes('start') || detail.includes('start'))) return 'trim_and_start';
+  if (action === 'trim') return 'trim_existing';
+  if (action === 'reduce') return 'rotate_from_existing';
+  if (action === 'add') return 'add_to_existing';
+  if (action === 'cover') return 'cover_short';
+  return 'hold_existing';
+}
+
+function classifyRecommendedPositionTaxonomy(item = {}) {
+  const relationship = String(item.relationshipType || '').toLowerCase();
+  const direction = String(item.direction || '').toLowerCase();
+  if (relationship === 'existing_holding') return 'add_to_existing';
+  if (relationship === 'replacement_candidate') return 'rotate_from_existing';
+  if (direction === 'short') return 'start_short';
+  return 'start_new';
+}
+
+function scoreRecommendedPositionItem(item = {}, portfolioHub = {}, stockInfoMap = new Map()) {
+  const symbol = String(item.symbol || '').toUpperCase();
+  const relationship = String(item.relationshipType || '').toLowerCase();
+  const direction = String(item.direction || '').toLowerCase();
+  const info = stockInfoMap.get(symbol) || {};
+  const sectorKey = String(info.sector || '').trim().toLowerCase();
+  const sectorWeight = Number((portfolioHub.sectorAllocation || []).find(row => String(row.sector || '').trim().toLowerCase() === sectorKey)?.weightPct || 0);
+  const cashPct = Number(portfolioHub.summary?.cashPct || 0);
+
+  const breakdown = {
+    conviction: confidenceScore(item.conviction),
+    longBias: direction === 'long' ? 10 : 2,
+    diversification: relationship === 'complementary' ? 12 : relationship === 'replacement_candidate' ? 7 : 3,
+    sectorPenalty: sectorWeight >= PORTFOLIO_HUB_POLICY.long.sectorConcentrationThresholdPct ? -12 : Math.max(0, 8 - Math.round(sectorWeight / 5)),
+    cashSupport: cashPct >= 10 ? 8 : cashPct >= 5 ? 4 : 0,
+    pathwayBonus: item.pathway ? 5 : 0
+  };
+
+  const score = Object.values(breakdown).reduce((sum, value) => sum + Number(value || 0), 0);
+  return { score, breakdown };
+}
+
+function scoreReviewItem(item = {}, holding = {}) {
+  const action = String(item.actionLabel || '').toLowerCase();
+  const pnlPct = Math.abs(Number(holding.unrealizedPnLPct || 0));
+  const weightPct = Number(holding.weightPct || 0);
+  const breakdown = {
+    conviction: confidenceScore(item.confidence),
+    actionUrgency: ['trim', 'reduce', 'cover'].includes(action) ? 12 : action === 'add' ? 8 : 2,
+    concentration: Math.min(12, Math.round(weightPct)),
+    pnlMagnitude: Math.min(10, Math.round(pnlPct / 2)),
+    ruleClarity: item.shareCountText ? 6 : 2
+  };
+  const score = Object.values(breakdown).reduce((sum, value) => sum + Number(value || 0), 0);
+  return { score, breakdown };
+}
+
 function safeDateValue(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
@@ -297,7 +369,9 @@ async function syncPortfolioHubRecommendationChanges(holdings = [], adviceHistor
         sourceLabel: 'opus_change',
         opusReview: row.opusReview,
         opusReviewCreatedAt: changeTimestamp,
+        actionTaxonomy: classifyReviewActionTaxonomy(row.opusReview || {}),
         changeKey,
+        changeType: item.type,
         changeSummary: item.summary,
         changePreviousValue: item.previous
       }).catch(() => null);
@@ -471,11 +545,6 @@ function buildRecommendedPositionsFreshness(run) {
   return { status: 'expired', label: 'Needs refresh' };
 }
 
-const portfolioHubRunLocks = {
-  opusReview: false,
-  recommendedPositions: false
-};
-
 async function buildPortfolioHubMarketContext(portfolioHub) {
   const [regime, spyRegime, macroNews] = await Promise.all([
     vixRegime.getRegime().catch(() => null),
@@ -638,10 +707,11 @@ export async function buildPortfolioHubView(options = {}) {
 
   await db.seedPortfolioHubAccounts(DEFAULT_PORTFOLIO_HUB_ACCOUNTS).catch(() => {});
 
-  const [accounts, transactions, latestRecommendedRun] = await Promise.all([
+  const [accounts, transactions, latestRecommendedRun, latestReviewRun] = await Promise.all([
     db.getPortfolioHubAccounts().catch(() => []),
     db.listPortfolioHubTransactions().catch(() => []),
-    db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null)
+    db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null),
+    db.getLatestPortfolioHubReviewRun().catch(() => null)
   ]);
 
   if (!transactions.length && !accounts.length) {
@@ -988,10 +1058,13 @@ export async function buildPortfolioHubView(options = {}) {
       symbol: row.symbol,
       positionType: row.position_type,
       actionLabel: row.recommendation,
-      changeType: String(row.change_key || '').split(':')[2] || 'shares',
+      changeType: row.change_type || String(row.change_key || '').split(':')[2] || 'shares',
+      actionTaxonomy: row.action_taxonomy || null,
       summary: row.change_summary,
       previous: row.change_previous_value,
       createdAt: row.opus_review_created_at || row.created_at,
+      deterministicScore: row.deterministic_score != null ? Number(row.deterministic_score) : null,
+      scoringBreakdown: row.scoring_breakdown || null,
       implemented: Boolean(row.implemented),
       implementedAt: row.implemented_at || null
     }))
@@ -1027,6 +1100,7 @@ export async function buildPortfolioHubView(options = {}) {
     performanceRange,
     performanceMetric,
     latestFullReviewAt,
+    latestReviewRun,
     recommendationChanges,
     recommendedPositionsRun: latestRecommendedRun
       ? {
@@ -1038,10 +1112,14 @@ export async function buildPortfolioHubView(options = {}) {
 }
 
 export async function runPortfolioHubRecommendedPositions() {
-  if (portfolioHubRunLocks.recommendedPositions) {
+  const acquired = await db.acquirePortfolioHubAdvisoryLock(
+    PORTFOLIO_HUB_LOCKS.recommendedPositions,
+    `pid-${process.pid}-recommended`,
+    { type: 'recommended_positions' }
+  ).catch(() => false);
+  if (!acquired) {
     return db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null);
   }
-  portfolioHubRunLocks.recommendedPositions = true;
   try {
   const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
   const [dailyStates, saturdayRows] = await Promise.all([
@@ -1154,11 +1232,27 @@ ${JSON.stringify(candidates.map(item => ({
       portfolioFit: item.portfolioFit || null,
       sectorImpact: item.sectorImpact || null,
       invalidation: item.invalidation || null,
-      modelReasoning: item.modelReasoning || null
+      modelReasoning: item.modelReasoning || null,
+      rawModelPayload: item
     }))
     .filter(item => item.symbol);
 
-  const items = enforceRecommendedPositionConstraints(rawItems, portfolioHub, stockInfoMap);
+  const items = enforceRecommendedPositionConstraints(rawItems, portfolioHub, stockInfoMap)
+    .map(item => {
+      const scoring = scoreRecommendedPositionItem(item, portfolioHub, stockInfoMap);
+      return {
+        ...item,
+        actionTaxonomy: classifyRecommendedPositionTaxonomy(item),
+        deterministicScore: scoring.score,
+        scoringBreakdown: scoring.breakdown
+      };
+    })
+    .sort((a, b) => Number(b.deterministicScore || 0) - Number(a.deterministicScore || 0))
+    .map((item, index) => ({
+      ...item,
+      deterministicRank: index + 1
+    }))
+    .slice(0, 5);
 
   const run = await db.createPortfolioHubRecommendedPositionRun({
     sourceLabel: 'opus',
@@ -1168,7 +1262,8 @@ ${JSON.stringify(candidates.map(item => ({
       sectorAllocation: portfolioHub.sectorAllocation,
       holdingsCount: (portfolioHub.holdings || []).length
     },
-    notes: `Generated ${items.length} recommended position ideas`
+    notes: `Generated ${items.length} recommended position ideas`,
+    rawModelPayload: parsed
   });
 
   await db.replacePortfolioHubRecommendedPositionItems(run.id, items);
@@ -1178,15 +1273,19 @@ ${JSON.stringify(candidates.map(item => ({
     items
   };
   } finally {
-    portfolioHubRunLocks.recommendedPositions = false;
+    await db.releasePortfolioHubAdvisoryLock(PORTFOLIO_HUB_LOCKS.recommendedPositions).catch(() => null);
   }
 }
 
 export async function runPortfolioHubOpusReview() {
-  if (portfolioHubRunLocks.opusReview) {
+  const acquired = await db.acquirePortfolioHubAdvisoryLock(
+    PORTFOLIO_HUB_LOCKS.opusReview,
+    `pid-${process.pid}-review`,
+    { type: 'opus_review' }
+  ).catch(() => false);
+  if (!acquired) {
     return { reviewedAt: new Date().toISOString(), holdings: [], skipped: 'already_running' };
   }
-  portfolioHubRunLocks.opusReview = true;
   try {
   const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
   const holdings = Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings : [];
@@ -1282,6 +1381,50 @@ ${JSON.stringify(holdingsToReview.map(row => ({
   const entries = Array.isArray(parsed) ? parsed : Array.isArray(parsed.holdings) ? parsed.holdings : [];
   const bySymbol = new Map(entries.map(item => [String(item.symbol || '').toUpperCase(), item]));
   const reviewedAt = new Date().toISOString();
+  const reviewItems = holdingsToReview.map(row => {
+    const opusReview = bySymbol.get(row.symbol) || null;
+    const normalized = {
+      symbol: row.symbol,
+      positionType: row.positionType,
+      actionLabel: opusReview?.actionLabel || 'Hold',
+      summary: opusReview?.summary || row.whiskieView || '',
+      detail: opusReview?.detail || '',
+      shareCountText: opusReview?.shareCountText || null,
+      plannedTotalShares: Number.isFinite(Number(opusReview?.plannedTotalShares)) ? Number(opusReview.plannedTotalShares) : null,
+      targetPositionShares: Number.isFinite(Number(opusReview?.targetPositionShares)) ? Number(opusReview.targetPositionShares) : null,
+      stageLabel: opusReview?.stageLabel || null,
+      targetWeightPct: Number.isFinite(Number(opusReview?.targetWeightPct)) ? Number(opusReview.targetWeightPct) : null,
+      confidence: opusReview?.confidence || null,
+      stopLoss: Number.isFinite(Number(opusReview?.stopLoss)) ? Number(opusReview.stopLoss) : null,
+      takeProfit: Number.isFinite(Number(opusReview?.takeProfit)) ? Number(opusReview.takeProfit) : null,
+      reasoning: opusReview?.reasoning || '',
+      actionTaxonomy: classifyReviewActionTaxonomy(opusReview || {}),
+      rawModelPayload: opusReview
+    };
+    const scoring = scoreReviewItem(normalized, row);
+    return {
+      ...normalized,
+      deterministicScore: scoring.score,
+      scoringBreakdown: scoring.breakdown
+    };
+  }).sort((a, b) => Number(b.deterministicScore || 0) - Number(a.deterministicScore || 0))
+    .map((item, index) => ({
+      ...item,
+      deterministicRank: index + 1
+    }));
+
+  const reviewRun = await db.createPortfolioHubReviewRun({
+    sourceLabel: 'opus',
+    reviewType: 'holding_review',
+    marketContext: marketContext.summary,
+    portfolioSnapshot: {
+      summary: portfolioHub.summary,
+      holdingsCount: holdingsToReview.length
+    },
+    notes: `Reviewed ${reviewItems.length} holdings`,
+    rawModelPayload: parsed
+  });
+  await db.replacePortfolioHubReviewItems(reviewRun.id, reviewItems);
 
   await db.recordPortfolioHubAdviceHistory(
     holdingsToReview.map(row => {
@@ -1319,13 +1462,16 @@ ${JSON.stringify(holdingsToReview.map(row => ({
 
   return {
     reviewedAt,
-    holdings: holdingsToReview.map(row => ({
-      symbol: row.symbol,
-      positionType: row.positionType,
-      opusReview: bySymbol.get(row.symbol) || null
+    holdings: reviewItems.map(item => ({
+      symbol: item.symbol,
+      positionType: item.positionType,
+      actionTaxonomy: item.actionTaxonomy,
+      deterministicScore: item.deterministicScore,
+      deterministicRank: item.deterministicRank,
+      opusReview: bySymbol.get(item.symbol) || null
     }))
   };
   } finally {
-    portfolioHubRunLocks.opusReview = false;
+    await db.releasePortfolioHubAdvisoryLock(PORTFOLIO_HUB_LOCKS.opusReview).catch(() => null);
   }
 }

@@ -339,6 +339,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
         <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Recalculate Portfolio Hub</button>
         <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Run Opus Portfolio Review</button>
+        <button class="analyze-btn" onclick="togglePortfolioHubAdminPanel()">Toggle Admin / Debug</button>
       </div>
       <div class="position-summary-note" style="margin-bottom:14px;">Last full Opus review: ${latestFullReviewAt ? escapeHtml(formatDateTime(latestFullReviewAt)) : 'Not run yet'}</div>
 
@@ -472,7 +473,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <td>${formatDateTime(item.createdAt)}</td>
                   <td><strong>${escapeHtml(item.symbol || '-')}</strong><br><span class="timestamp">${escapeHtml(item.positionType || '-')}</span></td>
                   <td>${escapeHtml(item.changeType === 'shares' ? 'Shares' : item.changeType === 'target' ? 'Price Target' : 'Stop Loss')}</td>
-                  <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span>${item.previous ? `<br><span class="timestamp">Prior: ${escapeHtml(item.previous)}</span>` : ''}</td>
+                  <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span>${item.actionTaxonomy ? `<br><span class="timestamp">Taxonomy: ${escapeHtml(item.actionTaxonomy)}</span>` : ''}${item.deterministicScore != null ? `<br><span class="timestamp">Score: ${escapeHtml(String(item.deterministicScore))}</span>` : ''}${item.previous ? `<br><span class="timestamp">Prior: ${escapeHtml(item.previous)}</span>` : ''}</td>
                   <td>
                     <label style="display:flex; align-items:center; gap:8px;">
                       <input type="checkbox" ${item.implemented ? 'checked' : ''} onchange="setPortfolioHubRecommendationImplemented(${Number(item.id)}, this.checked)" />
@@ -504,6 +505,9 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                       <span class="detail-chip">Conviction: ${escapeHtml(item.conviction || '-')}</span>
                       <span class="detail-chip">Pathway: ${escapeHtml(item.pathway || '-')}</span>
                       <span class="detail-chip">Relationship: ${escapeHtml(item.relationship_type || item.relationshipType || '-')}</span>
+                      <span class="detail-chip">Taxonomy: ${escapeHtml(item.action_taxonomy || item.actionTaxonomy || '-')}</span>
+                      <span class="detail-chip">Rank: ${escapeHtml(String(item.deterministic_rank || item.deterministicRank || '-'))}</span>
+                      <span class="detail-chip">Score: ${escapeHtml(String(item.deterministic_score || item.deterministicScore || '-'))}</span>
                       ${(item.related_holding_symbol || item.relatedHoldingSymbol) ? `<span class="detail-chip">Related holding: ${escapeHtml(item.related_holding_symbol || item.relatedHoldingSymbol)}</span>` : ''}
                     </div>
                   </div>
@@ -524,11 +528,19 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                 ${renderDetailSection('Thesis', formatStructuredText(item.thesis || '-'))}
                 ${renderDetailSection('Why now', formatStructuredText(item.why_now || item.whyNow || '-'))}
                 ${renderDetailSection('Invalidation', formatStructuredText(item.invalidation || '-'))}
+                ${renderDetailSection('Scoring breakdown', renderJsonValue(item.scoring_breakdown || item.scoringBreakdown || null))}
               </div>
             `).join('')}
           </div>
         `}
       </div>
+
+      <details id="portfolioHubAdminPanel" style="margin-top:18px; display:none;">
+        <summary>Admin / Debug State</summary>
+        <div id="portfolioHubAdminContent" style="margin-top:12px;">
+          <div class="no-data">Load the admin panel to inspect normalized DB-backed state.</div>
+        </div>
+      </details>
 
       <div style="margin-top:18px;">
         <div class="detail-section-title">Combined Holdings</div>
@@ -985,6 +997,33 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       } catch (error) {
         alert('Error saving implemented state: ' + error.message);
         location.reload();
+      }
+    }
+
+    async function togglePortfolioHubAdminPanel() {
+      const panel = document.getElementById('portfolioHubAdminPanel');
+      const content = document.getElementById('portfolioHubAdminContent');
+      const isHidden = panel.style.display === 'none';
+      panel.style.display = isHidden ? 'block' : 'none';
+      if (!isHidden) return;
+
+      content.innerHTML = '<div class="position-summary-note">Loading admin/debug state...</div>';
+      try {
+        const response = await fetch('/api/portfolio-hub/debug/state');
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to load admin/debug state');
+        content.innerHTML =
+          '<div class="metric-grid">' +
+            '<div class="metric-card"><div class="metric-label">Latest review</div><div class="metric-value">' + escapeHtml(data.latestFullReviewAt || '-') + '</div></div>' +
+            '<div class="metric-card"><div class="metric-label">Review run id</div><div class="metric-value">' + escapeHtml(String(data.latestReviewRun?.id || '-')) + '</div></div>' +
+            '<div class="metric-card"><div class="metric-label">Recommended run id</div><div class="metric-value">' + escapeHtml(String(data.latestRecommendedRun?.id || '-')) + '</div></div>' +
+            '<div class="metric-card"><div class="metric-label">Active locks</div><div class="metric-value">' + escapeHtml(String((data.locks || []).length)) + '</div></div>' +
+          '</div>' +
+          renderDetailSection('Lock rows', renderJsonValue(data.locks || [])) +
+          renderDetailSection('Latest review run', renderJsonValue(data.latestReviewRun || null)) +
+          renderDetailSection('Latest recommended-position run', renderJsonValue(data.latestRecommendedRun || null));
+      } catch (error) {
+        content.innerHTML = '<div class="no-data">' + escapeHtml(error.message) + '</div>';
       }
     }
 
@@ -2395,10 +2434,6 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       <a href="/portfolio-hub" class="nav-card adhoc">
         <div class="nav-card-title">🧭 Portfolio Hub</div>
         <div class="nav-card-copy">Separate manual household portfolio dashboard kept distinct from the live bot.</div>
-      </a>
-      <a href="/gemma" class="nav-card options">
-        <div class="nav-card-title">⚾ Gemma</div>
-        <div class="nav-card-copy">MLB pregame betting dashboard with per-game Opus analysis and best-book odds views.</div>
       </a>
       <a href="/symbol/SPY" class="nav-card options">
         <div class="nav-card-title">🧩 Symbol Overview</div>
@@ -4117,9 +4152,13 @@ router.post('/api/portfolio-hub/recommended-positions', async (req, res) => {
 router.get('/api/portfolio-hub/debug/state', async (req, res) => {
   try {
     const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
+    const locks = await db.getPortfolioHubOperationalLocks().catch(() => []);
     res.json({
       success: true,
       latestFullReviewAt: portfolioHub.latestFullReviewAt || null,
+      latestReviewRun: portfolioHub.latestReviewRun || null,
+      latestRecommendedRun: portfolioHub.recommendedPositionsRun || null,
+      locks,
       recommendationChangesCount: Array.isArray(portfolioHub.recommendationChanges) ? portfolioHub.recommendationChanges.length : 0,
       recommendedPositionsGeneratedAt: portfolioHub.recommendedPositionsRun?.generated_at || null,
       recommendedPositionsFreshness: portfolioHub.recommendedPositionsRun?.freshness || null,
