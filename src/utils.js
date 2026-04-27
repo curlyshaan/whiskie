@@ -58,9 +58,7 @@ export function resolveMarketPrice(quote, options = {}) {
     return fallback;
   }
 
-  const liveCandidates = [quote.price, quote.last, quote.previousClose, quote.close];
-  const closedCandidates = [quote.previousClose, quote.close, quote.price, quote.last];
-  const candidates = marketOpen ? liveCandidates : closedCandidates;
+  const candidates = [quote.price, quote.last, quote.previousClose, quote.close];
 
   for (const candidate of candidates) {
     const value = Number(candidate);

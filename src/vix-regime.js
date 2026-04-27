@@ -18,12 +18,19 @@ class VixRegime {
    */
   async getCurrentVix() {
     try {
-      const quote = await fmp.getQuote('VIX');
-      const marketOpen = await tradier.isMarketOpen().catch(() => false);
-      return parseFloat(resolveMarketPrice(quote, { marketOpen, fallback: 20 }));
+      const quote = await fmp.getQuote('^VIX');
+      const resolved = Number(resolveMarketPrice(quote, { marketOpen: true, fallback: null }));
+      if (Number.isFinite(resolved) && resolved > 0) {
+        return resolved;
+      }
+      throw new Error('No valid live VIX price returned');
     } catch (error) {
-      console.warn('⚠️ Could not fetch VIX, defaulting to 20 (Normal regime)');
-      return 20;
+      if (this.regimeEntryVix != null && Number.isFinite(Number(this.regimeEntryVix)) && Number(this.regimeEntryVix) > 0) {
+        console.warn(`⚠️ Could not fetch live VIX, reusing last known value ${Number(this.regimeEntryVix).toFixed(2)}`);
+        return Number(this.regimeEntryVix);
+      }
+      console.warn('⚠️ Could not fetch live VIX and no cached value exists; defaulting to CAUTION regime floor of 25');
+      return 25;
     }
   }
 
