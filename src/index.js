@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import dashboard from './dashboard.js';
 import adhocAnalyzer from './adhoc-analyzer.js';
+import gemma from './gemma.js';
 import tradier from './tradier.js';
 import claude from './claude.js';
 import fmp from './fmp.js';
@@ -50,7 +51,7 @@ import { runWeeklyReview } from './weekly-review.js';
 import stockProfiles from './stock-profiles.js';
 import catalystResearch, { detectCatalysts } from './catalyst-research.js';
 import earningsReminders from './earnings-reminders.js';
-import { buildPortfolioHubView } from './portfolio-hub.js';
+import { buildPortfolioHubView, runPortfolioHubRecommendedPositions } from './portfolio-hub.js';
 
 dotenv.config();
 
@@ -100,6 +101,7 @@ app.use(express.json());
 // Mount dashboard routes
 app.use('/', dashboard);
 app.use('/adhoc-analyzer', adhocAnalyzer);
+app.use('/', gemma);
 
 const normalizeRuntimeMode = (value = '') => value.toString().trim().toLowerCase();
 const runtimeMode = normalizeRuntimeMode(process.env.TRADING_MODE || process.env.NODE_ENV);
@@ -556,6 +558,19 @@ class WhiskieBot {
           await capturePortfolioHubSnapshot('Portfolio Hub Snapshot', scheduledTime);
         } catch (error) {
           console.error('❌ Portfolio Hub snapshot failed:', error);
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      // Schedule Portfolio Hub recommended new positions - weekdays 10:30 AM and 2:30 PM ET
+      cron.schedule('30 10,14 * * 1-5', async () => {
+        try {
+          await db.cleanupPortfolioHubRecommendedPositionRuns(30).catch(() => 0);
+          await runPortfolioHubRecommendedPositions();
+          console.log('🧭 Portfolio Hub recommended new positions refreshed');
+        } catch (error) {
+          console.error('❌ Portfolio Hub recommended positions refresh failed:', error);
         }
       }, {
         timezone: 'America/New_York'

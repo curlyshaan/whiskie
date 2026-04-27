@@ -320,6 +320,162 @@ async function cleanupLegacyPortfolioHubAdviceHistory() {
   await db.deleteLegacyPortfolioHubAdviceRowsBefore(cutoff).catch(() => null);
 }
 
+function buildRecommendedPositionCandidates({ holdings = [], saturdayRows = [], dailyStates = [] }) {
+  const heldSymbols = new Set((holdings || []).map(row => String(row.symbol || '').toUpperCase()).filter(Boolean));
+  const candidates = new Map();
+
+  for (const row of saturdayRows || []) {
+    const symbol = String(row.symbol || '').toUpperCase();
+    if (!symbol) continue;
+    candidates.set(symbol, {
+      symbol,
+      source: 'watchlist',
+      pathway: row.primary_pathway || row.pathway || null,
+      intent: row.intent || null,
+      score: Number(row.opus_conviction || row.score || 0),
+      reasons: row.reasons || null,
+      held: heldSymbols.has(symbol)
+    });
+  }
+
+  for (const row of dailyStates || []) {
+    const symbol = String(row.symbol || '').toUpperCase();
+    if (!symbol || candidates.has(symbol)) continue;
+    candidates.set(symbol, {
+      symbol,
+      source: 'daily_state',
+      pathway: row.primary_pathway || null,
+      intent: row.last_action || null,
+      score: Number(row.conviction_score || 0),
+      reasons: row.thesis_summary || null,
+      held: heldSymbols.has(symbol)
+    });
+  }
+
+  return [...candidates.values()]
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+    .slice(0, 20);
+}
+
+function inferRelatedHoldingForRecommendation(item, holdings = [], stockInfoMap = new Map()) {
+  const symbol = String(item.symbol || '').toUpperCase();
+  const candidateInfo = stockInfoMap.get(symbol) || null;
+  const candidateSector = String(candidateInfo?.sector || '').trim().toLowerCase();
+  const candidateIndustry = String(candidateInfo?.industry || '').trim().toLowerCase();
+  const candidatePathway = String(item.pathway || '').trim().toLowerCase();
+
+  const directHolding = (holdings || []).find(row => String(row.symbol || '').toUpperCase() === symbol);
+  if (directHolding) {
+    return {
+      relationshipType: 'existing_holding',
+      relatedHoldingSymbol: directHolding.symbol,
+      relatedHoldingAction: 'Manage this through Combined Holdings / Latest Recommendation Changes'
+    };
+  }
+
+  const overlappingHolding = (holdings || []).find(row => {
+    const info = stockInfoMap.get(String(row.symbol || '').toUpperCase()) || null;
+    const holdingSector = String(info?.sector || row.sector || '').trim().toLowerCase();
+    const holdingIndustry = String(info?.industry || '').trim().toLowerCase();
+    const holdingPathway = String(row.whiskiePathway || '').trim().toLowerCase();
+    return (
+      (candidateIndustry && holdingIndustry && candidateIndustry === holdingIndustry) ||
+      (candidateSector && holdingSector && candidateSector === holdingSector && candidatePathway && holdingPathway && candidatePathway === holdingPathway)
+    );
+  });
+
+  if (!overlappingHolding) {
+    return {
+      relationshipType: 'complementary',
+      relatedHoldingSymbol: null,
+      relatedHoldingAction: null
+    };
+  }
+
+  return {
+    relationshipType: 'replacement_candidate',
+    relatedHoldingSymbol: overlappingHolding.symbol,
+    relatedHoldingAction: `Compare against existing ${overlappingHolding.symbol} before adding`
+  };
+}
+
+function enforceRecommendedPositionConstraints(items = [], portfolioHub = {}, stockInfoMap = new Map()) {
+  const sectorWeights = new Map((portfolioHub.sectorAllocation || []).map(row => [String(row.sector || '').trim().toLowerCase(), Number(row.weightPct || 0)]));
+  const holdings = portfolioHub.holdings || [];
+  const filtered = [];
+  const seenSectors = new Set();
+
+  for (const item of items) {
+    const symbol = String(item.symbol || '').toUpperCase();
+    const stockInfo = stockInfoMap.get(symbol) || null;
+    const sector = String(stockInfo?.sector || '').trim();
+    const sectorKey = sector.toLowerCase();
+    const relationship = inferRelatedHoldingForRecommendation(item, holdings, stockInfoMap);
+    const isExistingHolding = relationship.relationshipType === 'existing_holding';
+    const currentSectorWeight = sectorWeights.get(sectorKey) || 0;
+    const exceedsSector = sector && currentSectorWeight >= PORTFOLIO_HUB_POLICY.long.sectorConcentrationThresholdPct;
+
+    if (!isExistingHolding && exceedsSector && relationship.relationshipType !== 'replacement_candidate') {
+      continue;
+    }
+
+    if (!isExistingHolding && sector && seenSectors.has(sectorKey) && relationship.relationshipType !== 'replacement_candidate') {
+      continue;
+    }
+
+    filtered.push({
+      ...item,
+      relationshipType: relationship.relationshipType,
+      relatedHoldingSymbol: relationship.relatedHoldingSymbol,
+      relatedHoldingAction: relationship.relatedHoldingAction,
+      sectorImpact: item.sectorImpact || (
+        sector
+          ? `${sector} currently ${currentSectorWeight.toFixed(1)}% of portfolio`
+          : 'Sector impact unavailable'
+      ),
+      portfolioFit: item.portfolioFit || (
+        relationship.relationshipType === 'replacement_candidate'
+          ? `Potential replacement candidate for ${relationship.relatedHoldingSymbol}`
+          : relationship.relationshipType === 'existing_holding'
+            ? 'Already held; treat as add/upgrade through holdings workflow'
+            : 'Adds diversification without obvious holding overlap'
+      )
+    });
+
+    if (sector) seenSectors.add(sectorKey);
+    if (filtered.length >= 5) break;
+  }
+
+  return filtered;
+}
+
+function buildRecommendedPositionsFreshness(run) {
+  if (!run?.generated_at) {
+    return { status: 'missing', label: 'Not run yet' };
+  }
+
+  const generatedAt = new Date(run.generated_at);
+  if (Number.isNaN(generatedAt.getTime())) {
+    return { status: 'unknown', label: 'Unknown freshness' };
+  }
+
+  const ageMs = Date.now() - generatedAt.getTime();
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+
+  if (ageDays < 1) {
+    return { status: 'fresh', label: 'Fresh' };
+  }
+  if (ageDays < 3) {
+    return { status: 'stale', label: 'Stale' };
+  }
+  return { status: 'expired', label: 'Needs refresh' };
+}
+
+const portfolioHubRunLocks = {
+  opusReview: false,
+  recommendedPositions: false
+};
+
 async function buildPortfolioHubMarketContext(portfolioHub) {
   const [regime, spyRegime, macroNews] = await Promise.all([
     vixRegime.getRegime().catch(() => null),
@@ -482,9 +638,10 @@ export async function buildPortfolioHubView(options = {}) {
 
   await db.seedPortfolioHubAccounts(DEFAULT_PORTFOLIO_HUB_ACCOUNTS).catch(() => {});
 
-  const [accounts, transactions] = await Promise.all([
+  const [accounts, transactions, latestRecommendedRun] = await Promise.all([
     db.getPortfolioHubAccounts().catch(() => []),
-    db.listPortfolioHubTransactions().catch(() => [])
+    db.listPortfolioHubTransactions().catch(() => []),
+    db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null)
   ]);
 
   if (!transactions.length && !accounts.length) {
@@ -870,11 +1027,167 @@ export async function buildPortfolioHubView(options = {}) {
     performanceRange,
     performanceMetric,
     latestFullReviewAt,
-    recommendationChanges
+    recommendationChanges,
+    recommendedPositionsRun: latestRecommendedRun
+      ? {
+          ...latestRecommendedRun,
+          freshness: buildRecommendedPositionsFreshness(latestRecommendedRun)
+        }
+      : null
   };
 }
 
+export async function runPortfolioHubRecommendedPositions() {
+  if (portfolioHubRunLocks.recommendedPositions) {
+    return db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null);
+  }
+  portfolioHubRunLocks.recommendedPositions = true;
+  try {
+  const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
+  const [dailyStates, saturdayRows] = await Promise.all([
+    db.getLatestDailySymbolStates().catch(() => []),
+    db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => [])
+  ]);
+
+  const candidates = buildRecommendedPositionCandidates({
+    holdings: portfolioHub.holdings || [],
+    saturdayRows,
+    dailyStates
+  });
+
+  const candidateSymbols = candidates.map(item => item.symbol);
+  const { quoteMap, whiskieContextMap, stockInfoMap } = await buildPortfolioHubSymbolContext(candidateSymbols);
+  const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
+
+  const prompt = `You are generating Recommended New Positions for a household portfolio dashboard called Portfolio Hub. Return JSON only.
+
+Goal:
+- find long-term holdings and medium-term swing opportunities
+- avoid short-term trades, day trades, scalp trades, or intraday churn
+- prefer early discovery of future compounders when justified
+- keep shorts highly selective
+
+Return an array of up to 5 ideas. Each idea must include:
+- symbol
+- direction: LONG or SHORT
+- horizonLabel: Long-term core, Long-term starter, Medium-term swing, or Selective short
+- conviction: low, medium, or high
+- starterShares: integer
+- starterPositionValue: dollar amount
+- entryZone
+- stopLoss
+- takeProfit
+- targetFramework
+- pathway
+- thesis
+- whyNow
+- portfolioFit
+- sectorImpact
+- invalidation
+- relationshipType: complementary, replacement_candidate, or existing_holding
+- relatedHoldingSymbol
+- relatedHoldingAction
+- modelReasoning
+
+Rules:
+- No short-term trades
+- Use current portfolio concentration, cash, regime, and sector exposure
+- Prefer staged entries over oversized immediate buys
+- Focus on watchlist-plus-held-symbol discovery context, but recommend new positions, not holding maintenance
+- Be selective and practical
+- If a candidate overlaps with an existing holding by sector, industry, or pathway, explicitly decide whether it is complementary or a replacement candidate
+- If it is a replacement candidate, identify the related held symbol and what action should be considered
+
+Portfolio summary:
+${JSON.stringify(portfolioHub.summary, null, 2)}
+
+Sector allocation:
+${JSON.stringify(portfolioHub.sectorAllocation || [], null, 2)}
+
+Market context:
+${JSON.stringify(marketContext.summary, null, 2)}
+
+Current holdings:
+${JSON.stringify((portfolioHub.holdings || []).map(row => ({
+  symbol: row.symbol,
+  positionType: row.positionType,
+  weightPct: row.weightPct,
+  marketValue: row.marketValue,
+  sector: row.sector,
+  whiskiePathway: row.whiskiePathway,
+  whiskieHoldingPosture: row.whiskieHoldingPosture
+})), null, 2)}
+
+Candidates:
+${JSON.stringify(candidates.map(item => ({
+  ...item,
+  quote: quoteMap.get(item.symbol) || null,
+  whiskieContext: whiskieContextMap.get(item.symbol) || null,
+  stockInfo: stockInfoMap.get(item.symbol) || null
+})), null, 2)}`;
+
+  const response = await claude.analyze(prompt, { model: 'opus' });
+  const rawText = String(response?.analysis || '').trim();
+  const startIndex = rawText.search(/[\[{]/);
+  const endIndex = Math.max(rawText.lastIndexOf('}'), rawText.lastIndexOf(']'));
+  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+    throw new Error('Portfolio Hub recommended positions did not return JSON');
+  }
+
+  const parsed = JSON.parse(rawText.slice(startIndex, endIndex + 1));
+  const rawItems = (Array.isArray(parsed) ? parsed : parsed.items || [])
+    .slice(0, 5)
+    .map(item => ({
+      symbol: String(item.symbol || '').toUpperCase(),
+      direction: String(item.direction || 'LONG').toUpperCase(),
+      horizonLabel: item.horizonLabel || null,
+      conviction: item.conviction || null,
+      starterShares: Number.isFinite(Number(item.starterShares)) ? Number(item.starterShares) : null,
+      starterPositionValue: Number.isFinite(Number(item.starterPositionValue)) ? Number(item.starterPositionValue) : null,
+      entryZone: item.entryZone || null,
+      stopLoss: Number.isFinite(Number(item.stopLoss)) ? Number(item.stopLoss) : null,
+      takeProfit: Number.isFinite(Number(item.takeProfit)) ? Number(item.takeProfit) : null,
+      targetFramework: item.targetFramework || null,
+      pathway: item.pathway || null,
+      thesis: item.thesis || null,
+      whyNow: item.whyNow || null,
+      portfolioFit: item.portfolioFit || null,
+      sectorImpact: item.sectorImpact || null,
+      invalidation: item.invalidation || null,
+      modelReasoning: item.modelReasoning || null
+    }))
+    .filter(item => item.symbol);
+
+  const items = enforceRecommendedPositionConstraints(rawItems, portfolioHub, stockInfoMap);
+
+  const run = await db.createPortfolioHubRecommendedPositionRun({
+    sourceLabel: 'opus',
+    marketContext: marketContext.summary,
+    portfolioSnapshot: {
+      summary: portfolioHub.summary,
+      sectorAllocation: portfolioHub.sectorAllocation,
+      holdingsCount: (portfolioHub.holdings || []).length
+    },
+    notes: `Generated ${items.length} recommended position ideas`
+  });
+
+  await db.replacePortfolioHubRecommendedPositionItems(run.id, items);
+
+  return {
+    ...run,
+    items
+  };
+  } finally {
+    portfolioHubRunLocks.recommendedPositions = false;
+  }
+}
+
 export async function runPortfolioHubOpusReview() {
+  if (portfolioHubRunLocks.opusReview) {
+    return { reviewedAt: new Date().toISOString(), holdings: [], skipped: 'already_running' };
+  }
+  portfolioHubRunLocks.opusReview = true;
+  try {
   const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
   const holdings = Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings : [];
   if (!holdings.length) {
@@ -1012,4 +1325,7 @@ ${JSON.stringify(holdingsToReview.map(row => ({
       opusReview: bySymbol.get(row.symbol) || null
     }))
   };
+  } finally {
+    portfolioHubRunLocks.opusReview = false;
+  }
 }

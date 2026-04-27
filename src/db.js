@@ -311,6 +311,50 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS implemented_at TIMESTAMP;
     `);
 
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_recommended_position_runs (
+        id SERIAL PRIMARY KEY,
+        source_label VARCHAR(100) DEFAULT 'opus',
+        generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        market_context JSONB,
+        portfolio_snapshot JSONB,
+        notes TEXT
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_recommended_position_items (
+        id SERIAL PRIMARY KEY,
+        run_id INTEGER NOT NULL REFERENCES portfolio_hub_recommended_position_runs(id) ON DELETE CASCADE,
+        symbol VARCHAR(10) NOT NULL,
+        direction VARCHAR(10) NOT NULL,
+        horizon_label VARCHAR(50),
+        conviction VARCHAR(20),
+        starter_shares DECIMAL(14, 4),
+        starter_position_value DECIMAL(14, 2),
+        entry_zone TEXT,
+        stop_loss DECIMAL(14, 4),
+        take_profit DECIMAL(14, 4),
+        target_framework TEXT,
+        pathway VARCHAR(100),
+        thesis TEXT,
+        why_now TEXT,
+        portfolio_fit TEXT,
+        sector_impact TEXT,
+        invalidation TEXT,
+        model_reasoning TEXT,
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      ALTER TABLE portfolio_hub_recommended_position_items
+      ADD COLUMN IF NOT EXISTS relationship_type VARCHAR(30),
+      ADD COLUMN IF NOT EXISTS related_holding_symbol VARCHAR(10),
+      ADD COLUMN IF NOT EXISTS related_holding_action TEXT;
+    `);
+
     // AI decisions - log all AI analysis and reasoning
     await client.query(`
       CREATE TABLE IF NOT EXISTS ai_decisions (
@@ -2686,6 +2730,100 @@ export async function setPortfolioHubRecommendationChangeImplemented(id, impleme
     [id, Boolean(implemented)]
   );
   return result.rows[0] || null;
+}
+
+export async function createPortfolioHubRecommendedPositionRun(entry = {}) {
+  const result = await pool.query(
+    `INSERT INTO portfolio_hub_recommended_position_runs (
+      source_label, market_context, portfolio_snapshot, notes
+    ) VALUES ($1, $2, $3, $4)
+    RETURNING *`,
+    [
+      entry.sourceLabel || 'opus',
+      entry.marketContext ? JSON.stringify(entry.marketContext) : null,
+      entry.portfolioSnapshot ? JSON.stringify(entry.portfolioSnapshot) : null,
+      entry.notes || null
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+export async function replacePortfolioHubRecommendedPositionItems(runId, items = []) {
+  await pool.query(
+    `DELETE FROM portfolio_hub_recommended_position_items
+     WHERE run_id = $1`,
+    [runId]
+  );
+
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    await pool.query(
+      `INSERT INTO portfolio_hub_recommended_position_items (
+        run_id, symbol, direction, horizon_label, conviction, starter_shares,
+        starter_position_value, entry_zone, stop_loss, take_profit, target_framework,
+        pathway, thesis, why_now, portfolio_fit, sector_impact, invalidation,
+        relationship_type, related_holding_symbol, related_holding_action,
+        model_reasoning, sort_order
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+      [
+        runId,
+        item.symbol,
+        item.direction,
+        item.horizonLabel || null,
+        item.conviction || null,
+        item.starterShares ?? null,
+        item.starterPositionValue ?? null,
+        item.entryZone || null,
+        item.stopLoss ?? null,
+        item.takeProfit ?? null,
+        item.targetFramework || null,
+        item.pathway || null,
+        item.thesis || null,
+        item.whyNow || null,
+        item.portfolioFit || null,
+        item.sectorImpact || null,
+        item.invalidation || null,
+        item.relationshipType || null,
+        item.relatedHoldingSymbol || null,
+        item.relatedHoldingAction || null,
+        item.modelReasoning || null,
+        index
+      ]
+    );
+  }
+}
+
+export async function getLatestPortfolioHubRecommendedPositionRun() {
+  const runResult = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_recommended_position_runs
+     ORDER BY generated_at DESC, id DESC
+     LIMIT 1`
+  );
+  const run = runResult.rows[0] || null;
+  if (!run) return null;
+
+  const itemsResult = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_recommended_position_items
+     WHERE run_id = $1
+     ORDER BY sort_order ASC, id ASC`,
+    [run.id]
+  );
+
+  return {
+    ...run,
+    items: itemsResult.rows || []
+  };
+}
+
+export async function cleanupPortfolioHubRecommendedPositionRuns(daysOld = 30) {
+  const result = await pool.query(
+    `DELETE FROM portfolio_hub_recommended_position_runs
+     WHERE generated_at < (NOW() - ($1::text || ' days')::interval)`,
+    [String(daysOld)]
+  );
+  return result.rowCount || 0;
 }
 
 export async function upsertPortfolioHubBaseline(accountGroup, baselineDate, totalValue, positionsSnapshot) {

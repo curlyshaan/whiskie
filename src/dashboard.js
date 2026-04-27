@@ -3,7 +3,7 @@ import * as db from './db.js';
 import { stripThinkingBlocks } from './utils.js';
 import earningsReminders from './earnings-reminders.js';
 import analysisEngine from './analysis.js';
-import { buildPortfolioHubView, DEFAULT_PORTFOLIO_HUB_ACCOUNTS, runPortfolioHubOpusReview } from './portfolio-hub.js';
+import { buildPortfolioHubView, DEFAULT_PORTFOLIO_HUB_ACCOUNTS, runPortfolioHubOpusReview, runPortfolioHubRecommendedPositions } from './portfolio-hub.js';
 import { getEarningsReminderDetails } from './earnings-reminders.js';
 
 const router = express.Router();
@@ -313,6 +313,8 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   );
   const accounts = portfolioHub.accounts || [];
   const recommendationChanges = portfolioHub.recommendationChanges || [];
+  const recommendedPositionsRun = portfolioHub.recommendedPositionsRun || null;
+  const recommendedPositions = recommendedPositionsRun?.items || [];
   const transactions = portfolioHub.transactions || [];
   const sectorRows = portfolioHub.sectorAllocation || [];
   const shortSectorRows = portfolioHub.shortSectorExposure || [];
@@ -481,6 +483,50 @@ function renderPortfolioHubSection(portfolioHub = {}) {
               `).join('')}
             </tbody>
           </table>
+        `}
+      </div>
+
+      <div style="margin-top:18px;">
+        <div class="detail-section-title">Recommended New Positions</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
+          <button class="analyze-btn" onclick="refreshPortfolioHubRecommendedPositions()" id="portfolioHubRecommendedBtn">Refresh Recommendations</button>
+        </div>
+        <div class="position-summary-note" style="margin-bottom:12px;">Last generated: ${recommendedPositionsRun?.generated_at ? escapeHtml(formatDateTime(recommendedPositionsRun.generated_at)) : 'Not run yet'}${recommendedPositionsRun?.freshness?.label ? ` • ${escapeHtml(recommendedPositionsRun.freshness.label)}` : ''}</div>
+        ${recommendedPositions.length === 0 ? '<div class="no-data">No recommended new positions yet. Run a refresh to generate long-term and medium-term ideas.</div>' : `
+          <div style="display:grid; gap:14px;">
+            ${recommendedPositions.map(item => `
+              <div style="background:#0f1425; border:1px solid #2a2f4a; border-radius:12px; padding:16px;">
+                <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+                  <div>
+                    <div style="font-size:1.15rem; font-weight:700;">${escapeHtml(item.symbol || '-')} <span class="timestamp">${escapeHtml(item.direction || '-')}</span></div>
+                    <div class="detail-chips" style="margin-top:8px;">
+                      <span class="detail-chip">${escapeHtml(item.horizon_label || item.horizonLabel || '-')}</span>
+                      <span class="detail-chip">Conviction: ${escapeHtml(item.conviction || '-')}</span>
+                      <span class="detail-chip">Pathway: ${escapeHtml(item.pathway || '-')}</span>
+                      <span class="detail-chip">Relationship: ${escapeHtml(item.relationship_type || item.relationshipType || '-')}</span>
+                      ${(item.related_holding_symbol || item.relatedHoldingSymbol) ? `<span class="detail-chip">Related holding: ${escapeHtml(item.related_holding_symbol || item.relatedHoldingSymbol)}</span>` : ''}
+                    </div>
+                  </div>
+                  <div style="text-align:right;">
+                    <div><strong>Starter Shares:</strong> ${item.starter_shares ?? item.starterShares ?? '-'}</div>
+                    <div><strong>Starter Value:</strong> ${item.starter_position_value != null || item.starterPositionValue != null ? formatMoney(item.starter_position_value ?? item.starterPositionValue) : '-'}</div>
+                  </div>
+                </div>
+                ${renderKeyValueRows([
+                  { label: 'Entry zone', value: item.entry_zone || item.entryZone || '-' },
+                  { label: 'Stop loss', value: (item.stop_loss ?? item.stopLoss) ? formatMoney(item.stop_loss ?? item.stopLoss) : '-' },
+                  { label: 'Take profit', value: (item.take_profit ?? item.takeProfit) ? formatMoney(item.take_profit ?? item.takeProfit) : '-' },
+                  { label: 'Target framework', value: item.target_framework || item.targetFramework || '-' },
+                  { label: 'Portfolio fit', value: item.portfolio_fit || item.portfolioFit || '-' },
+                  { label: 'Sector impact', value: item.sector_impact || item.sectorImpact || '-' },
+                  { label: 'Holding relationship action', value: item.related_holding_action || item.relatedHoldingAction || '-' }
+                ])}
+                ${renderDetailSection('Thesis', formatStructuredText(item.thesis || '-'))}
+                ${renderDetailSection('Why now', formatStructuredText(item.why_now || item.whyNow || '-'))}
+                ${renderDetailSection('Invalidation', formatStructuredText(item.invalidation || '-'))}
+              </div>
+            `).join('')}
+          </div>
         `}
       </div>
 
@@ -885,6 +931,32 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         if (btn) {
           btn.disabled = false;
           btn.textContent = 'Run Opus Portfolio Review';
+        }
+      }
+    }
+
+    async function refreshPortfolioHubRecommendedPositions() {
+      const btn = document.getElementById('portfolioHubRecommendedBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Refreshing recommendations...';
+      }
+
+      try {
+        const response = await fetch('/api/portfolio-hub/recommended-positions', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to generate recommended positions');
+        const count = Array.isArray(data.result?.items) ? data.result.items.length : 0;
+        alert(count > 0
+          ? ('Recommended new positions refreshed for ' + count + ' idea(s).')
+          : 'No new recommended positions were generated.');
+        location.reload();
+      } catch (error) {
+        alert('Error refreshing recommended positions: ' + error.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Refresh Recommendations';
         }
       }
     }
@@ -4028,6 +4100,31 @@ router.post('/api/portfolio-hub/opus-review', async (req, res) => {
   try {
     const result = await runPortfolioHubOpusReview();
     res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/portfolio-hub/recommended-positions', async (req, res) => {
+  try {
+    const result = await runPortfolioHubRecommendedPositions();
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/api/portfolio-hub/debug/state', async (req, res) => {
+  try {
+    const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
+    res.json({
+      success: true,
+      latestFullReviewAt: portfolioHub.latestFullReviewAt || null,
+      recommendationChangesCount: Array.isArray(portfolioHub.recommendationChanges) ? portfolioHub.recommendationChanges.length : 0,
+      recommendedPositionsGeneratedAt: portfolioHub.recommendedPositionsRun?.generated_at || null,
+      recommendedPositionsFreshness: portfolioHub.recommendedPositionsRun?.freshness || null,
+      holdingsCount: Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings.length : 0
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
