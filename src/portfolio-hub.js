@@ -172,6 +172,15 @@ function buildAdviceKey(symbol, positionType) {
   return `${String(symbol || '').toUpperCase()}:${String(positionType || '').toLowerCase()}`;
 }
 
+function buildRecommendationChangeKey(symbol, positionType, changeType, summary) {
+  return [
+    String(symbol || '').toUpperCase(),
+    String(positionType || '').toLowerCase(),
+    String(changeType || '').toLowerCase(),
+    String(summary || '').trim().toLowerCase()
+  ].join(':');
+}
+
 function safeDateValue(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
@@ -233,11 +242,52 @@ function buildChangeItems(currentRow, previousAdviceRow) {
   return items;
 }
 
+async function syncPortfolioHubRecommendationChanges(holdings = [], adviceHistoryByKey = new Map()) {
+  const existingRows = await db.listPortfolioHubRecommendationChanges().catch(() => []);
+  const existingByKey = new Map((existingRows || []).map(row => [String(row.change_key || ''), row]));
+  const activeKeys = new Set();
+
+  for (const row of holdings) {
+    if (!row.opusReview) continue;
+    const history = adviceHistoryByKey.get(buildAdviceKey(row.symbol, row.positionType)) || [];
+    const latestRow = history[0] || null;
+    const previousRow = history[1] || null;
+    const changeItems = buildChangeItems(row, previousRow);
+    const changeTimestamp = latestRow?.opus_review_created_at || latestRow?.created_at || row.opusReviewCreatedAt || null;
+
+    for (const item of changeItems) {
+      const changeKey = buildRecommendationChangeKey(row.symbol, row.positionType, item.type, item.summary);
+      activeKeys.add(changeKey);
+      if (existingByKey.has(changeKey)) continue;
+
+      await db.savePortfolioHubRecommendationChange({
+        symbol: row.symbol,
+        positionType: row.positionType,
+        recommendation: row.whiskieActionLabel || 'Hold',
+        sourceLabel: 'opus_change',
+        opusReview: row.opusReview,
+        opusReviewCreatedAt: changeTimestamp,
+        changeKey,
+        changeSummary: item.summary,
+        changePreviousValue: item.previous
+      }).catch(() => null);
+    }
+  }
+
+  await db.deletePortfolioHubRecommendationChangesNotInKeys([...activeKeys]).catch(() => null);
+}
+
 function summarizeHoldingAction(row) {
   const action = String(row.whiskieActionLabel || 'Hold').trim();
   const summary = String(row.whiskieView || '').trim();
   const shareCount = String(row.whiskieShareCountText || '').trim();
   return [action, shareCount || summary].filter(Boolean).slice(0, 2).join(' — ');
+}
+
+async function cleanupLegacyPortfolioHubAdviceHistory() {
+  const cutoff = process.env.PORTFOLIO_HUB_CHANGE_RESET_BEFORE;
+  if (!cutoff) return;
+  await db.deleteLegacyPortfolioHubAdviceRowsBefore(cutoff).catch(() => null);
 }
 
 async function buildPortfolioHubMarketContext(portfolioHub) {
@@ -393,6 +443,7 @@ function pickDirectionalAdvice(row, latestAdviceRows = []) {
 }
 
 export async function buildPortfolioHubView(options = {}) {
+  await cleanupLegacyPortfolioHubAdviceHistory();
   const performanceRange = ['week', 'month'].includes(String(options.performanceRange || 'week'))
     ? String(options.performanceRange || 'week')
     : 'week';
@@ -601,28 +652,6 @@ export async function buildPortfolioHubView(options = {}) {
     row.whiskieConfidence = recommendation.confidence || row.opusReview?.confidence || null;
   });
 
-  const recommendationChanges = holdings
-    .flatMap(row => {
-      if (!row.opusReview) return [];
-      const history = adviceHistoryByKey.get(buildAdviceKey(row.symbol, row.positionType)) || [];
-      const latestRow = history[0] || null;
-      const previousRow = history[1] || null;
-      const changeItems = buildChangeItems(row, previousRow);
-      const changeTimestamp = latestRow?.opus_review_created_at || latestRow?.created_at || row.opusReviewCreatedAt || null;
-
-      return changeItems.map(item => ({
-        symbol: row.symbol,
-        positionType: row.positionType,
-        actionLabel: row.whiskieActionLabel || 'Hold',
-        changeType: item.type,
-        summary: item.summary,
-        previous: item.previous,
-        createdAt: changeTimestamp
-      }));
-    })
-    .sort((a, b) => safeDateValue(b.createdAt) - safeDateValue(a.createdAt))
-    .slice(0, 7);
-
   const summary = {
     totalValue,
     investedValue,
@@ -676,34 +705,26 @@ export async function buildPortfolioHubView(options = {}) {
 
   const historyStart = selectHistoryWindow(performanceRange);
   const adviceHistory = await db.getPortfolioHubAdviceHistorySince(historyStart).catch(() => []);
-  const historyRows = adviceHistory.filter(row => String(row.view_scope || 'day') === performanceRange);
+  const historyRows = adviceHistory
+    .filter(row => String(row.view_scope || 'day') === performanceRange)
+    .filter(row => !row.change_key);
   const accountGroup = 'default';
   await db.upsertPortfolioHubBaseline(accountGroup, historyStart.toISOString().split('T')[0], totalValue, holdings).catch(() => null);
   const explicitBaseline = await db.getPortfolioHubBaseline(accountGroup, historyStart.toISOString().split('T')[0]).catch(() => null);
-  const baselineRow = historyRows[0] || adviceHistory[0] || null;
-  const baselineTotalValue = Number(explicitBaseline?.total_value || baselineRow?.total_portfolio_value || baselineRow?.baseline_total_value || baselineRow?.snapshot_payload?.totalPortfolioValue || totalValue);
+  const baselineTotalValue = Number(explicitBaseline?.total_value || totalValue);
   const performancePct = baselineTotalValue > 0 ? ((totalValue - baselineTotalValue) / baselineTotalValue) * 100 : 0;
-  const longPerformancePct = longCost > 0 ? ((longExposure - longCost) / longCost) * 100 : 0;
-  const shortPerformancePct = shortCost > 0 ? ((shortExposure - shortCost) / shortCost) * 100 : 0;
   const performanceValue = totalValue - baselineTotalValue;
-  const longPerformanceValue = longExposure - longCost;
-  const shortPerformanceValue = shortExposure - shortCost;
-
+  const longPerformancePct = 0;
+  const shortPerformancePct = 0;
+  const longPerformanceValue = 0;
+  const shortPerformanceValue = 0;
   const benchmarkSymbol = 'SPY';
-  const benchmarkBaselineValue = baselineTotalValue > 0 ? baselineTotalValue : totalValue;
-  const benchmarkHistorySeries = historyRows.map(row => ({
-    label: formatPerformancePointLabel(row.created_at, performanceRange),
-    benchmarkReturnPct: Number(row.benchmark_return_pct ?? 0),
-    benchmarkReturnValue: Number(row.benchmark_return_value ?? 0),
-    activeReturnPct: Number(row.active_return_pct ?? 0),
-    activeReturnValue: Number(row.active_return_value ?? 0)
-  }));
-  const hasEnoughSnapshots = historyRows.length >= 2;
-  const riskMetrics = hasEnoughSnapshots ? await portfolioRiskMetrics.calculateRiskMetrics(totalValue, { benchmarkSymbol }) : portfolioRiskMetrics.getEmptyMetrics();
-  const benchmarkReturnPct = hasEnoughSnapshots ? (Number.parseFloat(String(riskMetrics.benchmarkReturnPct || '0').replace('%', '')) || 0) : 0;
-  const activeReturnPct = hasEnoughSnapshots ? (Number.parseFloat(String(riskMetrics.activeReturnPct || '0').replace('%', '')) || 0) : 0;
-  const benchmarkReturnValue = hasEnoughSnapshots ? benchmarkBaselineValue * (benchmarkReturnPct / 100) : 0;
-  const activeReturnValue = hasEnoughSnapshots ? (totalValue - baselineTotalValue - benchmarkReturnValue) : 0;
+  const benchmarkReturnPct = 0;
+  const activeReturnPct = 0;
+  const benchmarkReturnValue = 0;
+  const activeReturnValue = 0;
+  const benchmarkHistorySeries = [];
+  const riskMetrics = portfolioRiskMetrics.getEmptyMetrics();
   const etfRotationContext = await etfManager.getRotationAwareSummary().catch(() => ({ leading: [], lagging: [], availableETFs: [] }));
   const performanceSeries = (historyRows.length >= 2 ? historyRows : [])
     .map(row => ({
@@ -719,10 +740,6 @@ export async function buildPortfolioHubView(options = {}) {
   const upcomingEarnings = holdings.filter(row => row.nextEarningsDate).slice(0, 5);
   if (upcomingEarnings.length) insights.push(`Upcoming earnings to monitor: ${upcomingEarnings.map(row => `${row.symbol} (${row.nextEarningsDate})`).join(', ')}.`);
   if (sectorAllocation[0]) insights.push(`Top sector exposure is ${sectorAllocation[0].sector} at ${sectorAllocation[0].weightPct.toFixed(1)}% of portfolio value.`);
-  insights.push(`Benchmark ${benchmarkSymbol}: ${benchmarkReturnPct >= 0 ? '+' : ''}${benchmarkReturnPct.toFixed(2)}% over the selected range versus portfolio ${performancePct >= 0 ? '+' : ''}${performancePct.toFixed(2)}% (active ${activeReturnPct >= 0 ? '+' : ''}${activeReturnPct.toFixed(2)}%).`);
-  if (riskMetrics?.diversificationScore && riskMetrics.diversificationScore !== 'N/A') {
-    insights.push(`Diversification score ${riskMetrics.diversificationScore}/100 with ${riskMetrics.concentrationRisk}.`);
-  }
   if (etfRotationContext.leading?.length) {
     insights.push(`Leading ETF rotation groups: ${etfRotationContext.leading.slice(0, 3).map(item => `${item.sector} (${item.etf})`).join(', ')}.`);
   }
@@ -776,6 +793,22 @@ export async function buildPortfolioHubView(options = {}) {
       }))
     ).catch(() => {});
   }
+
+  await syncPortfolioHubRecommendationChanges(holdings, adviceHistoryByKey);
+  const recommendationChanges = (await db.listPortfolioHubRecommendationChanges().catch(() => []))
+    .map(row => ({
+      id: row.id,
+      symbol: row.symbol,
+      positionType: row.position_type,
+      actionLabel: row.recommendation,
+      changeType: String(row.change_key || '').split(':')[2] || 'shares',
+      summary: row.change_summary,
+      previous: row.change_previous_value,
+      createdAt: row.opus_review_created_at || row.created_at,
+      implemented: Boolean(row.implemented),
+      implementedAt: row.implemented_at || null
+    }))
+    .sort((a, b) => safeDateValue(b.createdAt) - safeDateValue(a.createdAt));
 
   return {
     accounts,

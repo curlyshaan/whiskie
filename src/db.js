@@ -302,6 +302,15 @@ export async function initDatabase() {
       ADD COLUMN IF NOT EXISTS etf_rotation_context JSONB;
     `);
 
+    await client.query(`
+      ALTER TABLE portfolio_hub_advice_history
+      ADD COLUMN IF NOT EXISTS change_key VARCHAR(255),
+      ADD COLUMN IF NOT EXISTS change_summary TEXT,
+      ADD COLUMN IF NOT EXISTS change_previous_value TEXT,
+      ADD COLUMN IF NOT EXISTS implemented BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS implemented_at TIMESTAMP;
+    `);
+
     // AI decisions - log all AI analysis and reasoning
     await client.query(`
       CREATE TABLE IF NOT EXISTS ai_decisions (
@@ -2584,6 +2593,99 @@ export async function recordPortfolioHubAdviceHistory(entries = []) {
       ]
     );
   }
+}
+
+export async function resetPortfolioHubRecommendationChanges() {
+  await pool.query(
+    `UPDATE portfolio_hub_advice_history
+     SET implemented = FALSE,
+         implemented_at = NULL
+     WHERE change_key IS NOT NULL`
+  );
+
+  await pool.query(
+    `DELETE FROM portfolio_hub_advice_history
+     WHERE change_key IS NOT NULL`
+  );
+}
+
+export async function savePortfolioHubRecommendationChange(entry = {}) {
+  const result = await pool.query(
+    `INSERT INTO portfolio_hub_advice_history (
+       symbol, position_type, recommendation, source_label, opus_review,
+       opus_review_created_at, change_key, change_summary, change_previous_value,
+       implemented, implemented_at
+     )
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, COALESCE($10, FALSE), $11
+     WHERE NOT EXISTS (
+       SELECT 1 FROM portfolio_hub_advice_history WHERE change_key = $7
+     )
+     RETURNING *`,
+    [
+      entry.symbol,
+      entry.positionType || null,
+      entry.recommendation || '',
+      entry.sourceLabel || 'opus_change',
+      entry.opusReview ? JSON.stringify(entry.opusReview) : null,
+      entry.opusReviewCreatedAt || null,
+      entry.changeKey || null,
+      entry.changeSummary || null,
+      entry.changePreviousValue || null,
+      entry.implemented ?? false,
+      entry.implementedAt || null
+    ]
+  );
+
+  return result.rows[0] || null;
+}
+
+export async function listPortfolioHubRecommendationChanges() {
+  const result = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_advice_history
+     WHERE change_key IS NOT NULL
+     ORDER BY created_at DESC, id DESC`
+  );
+  return result.rows || [];
+}
+
+export async function deletePortfolioHubRecommendationChangesNotInKeys(changeKeys = []) {
+  if (!Array.isArray(changeKeys) || !changeKeys.length) {
+    await pool.query(
+      `DELETE FROM portfolio_hub_advice_history
+       WHERE change_key IS NOT NULL`
+    );
+    return;
+  }
+
+  await pool.query(
+    `DELETE FROM portfolio_hub_advice_history
+     WHERE change_key IS NOT NULL
+       AND NOT (change_key = ANY($1))`,
+    [changeKeys]
+  );
+}
+
+export async function deleteLegacyPortfolioHubAdviceRowsBefore(date = null) {
+  if (!date) return;
+  await pool.query(
+    `DELETE FROM portfolio_hub_advice_history
+     WHERE change_key IS NULL
+       AND created_at < $1`,
+    [date]
+  );
+}
+
+export async function setPortfolioHubRecommendationChangeImplemented(id, implemented) {
+  const result = await pool.query(
+    `UPDATE portfolio_hub_advice_history
+     SET implemented = $2,
+         implemented_at = CASE WHEN $2 THEN NOW() ELSE NULL END
+     WHERE id = $1
+     RETURNING *`,
+    [id, Boolean(implemented)]
+  );
+  return result.rows[0] || null;
 }
 
 export async function upsertPortfolioHubBaseline(accountGroup, baselineDate, totalValue, positionsSnapshot) {

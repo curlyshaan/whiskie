@@ -347,9 +347,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         <div class="stat-card"><div class="stat-label">Cash %</div><div class="stat-value">${formatPercent(summary.cashPct || 0)}</div></div>
         <div class="stat-card"><div class="stat-label">Unrealized P/L</div><div class="stat-value ${Number(summary.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(summary.unrealizedPnL || 0)}<br>${formatPercent(summary.unrealizedPnLPct || 0)}</div></div>
         <div class="stat-card"><div class="stat-label">Accounts / Holdings</div><div class="stat-value">${accounts.length} / ${holdings.length}</div></div>
-        <div class="stat-card"><div class="stat-label">Range Performance</div><div class="stat-value ${Number(summary.performancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.performancePct || 0)}<br><span style="font-size:1rem;">${formatSignedMoney(summary.performanceValue || 0)}</span></div></div>
-        <div class="stat-card"><div class="stat-label">Benchmark vs Active</div><div class="stat-value"><span class="${Number(summary.benchmarkReturnPct || 0) >= 0 ? 'positive' : 'negative'}">${escapeHtml(summary.benchmarkSymbol || 'SPY')}: ${formatPercent(summary.benchmarkReturnPct || 0)} / ${formatSignedMoney(summary.benchmarkReturnValue || 0)}</span><br><span class="${Number(summary.activeReturnPct || 0) >= 0 ? 'positive' : 'negative'}">Active: ${formatPercent(summary.activeReturnPct || 0)} / ${formatSignedMoney(summary.activeReturnValue || 0)}</span></div></div>
-        <div class="stat-card"><div class="stat-label">Long / Short Range</div><div class="stat-value"><span class="${Number(summary.longPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.longPerformancePct || 0)} / ${formatSignedMoney(summary.longPerformanceValue || 0)}</span><br><span class="${Number(summary.shortPerformancePct || 0) >= 0 ? 'positive' : 'negative'}">${formatPercent(summary.shortPerformancePct || 0)} / ${formatSignedMoney(summary.shortPerformanceValue || 0)}</span></div></div>
       </div>
 
       <details style="margin-top:18px;">
@@ -390,64 +387,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
               </tbody>
             </table>
           ` : '<div class="no-data">No ETF rotation cache available yet.</div>'}
-        </div>
-      </details>
-
-      <details style="margin-top:18px;">
-        <summary>📈 Performance Chart</summary>
-        <div style="margin-top:14px;">
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
-            <button class="filter-btn" onclick="setPortfolioHubPerformance('week', '${performanceMetric}')" ${performanceRange === 'week' ? 'style="font-weight:700;"' : ''}>Week</button>
-            <button class="filter-btn" onclick="setPortfolioHubPerformance('month', '${performanceMetric}')" ${performanceRange === 'month' ? 'style="font-weight:700;"' : ''}>Month</button>
-            <button class="filter-btn" onclick="setPortfolioHubPerformance('${performanceRange}', 'pct')" ${performanceMetric === 'pct' ? 'style="font-weight:700;"' : ''}>P/L %</button>
-            <button class="filter-btn" onclick="setPortfolioHubPerformance('${performanceRange}', 'value')" ${performanceMetric === 'value' ? 'style="font-weight:700;"' : ''}>P/L $</button>
-          </div>
-          ${performanceSeries.length < 2 ? '<div class="no-data">Chart starts building from today and needs more than one snapshot to show movement.</div>' : `
-            <div class="position-summary-note" style="margin-bottom:10px;">Combined (${performanceMetric === 'value' ? 'P/L $' : 'P/L %'})</div>
-            <div style="display:flex; align-items:flex-end; gap:8px; min-height:180px; padding:16px; background:#0f1425; border-radius:10px; border:1px solid #2a2f4a;">
-              ${performanceSeries.map(point => {
-                const scale = performanceMetric === 'value' ? 0.08 : 12;
-                const height = Math.max(12, Math.min(140, Math.abs(point.combined) * scale + 12));
-                const color = Number(point.combined) >= 0 ? '#10b981' : '#ef4444';
-                const label = performanceMetric === 'value' ? formatSignedMoney(point.combined) : `${point.combined >= 0 ? '+' : ''}${Number(point.combined).toFixed(2)}%`;
-                return `<div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
-                  <div style="font-size:11px; color:${color};">${label}</div>
-                  <div style="width:22px; height:${height}px; background:${color}; border-radius:8px 8px 0 0;"></div>
-                  <div style="font-size:11px; color:#94a3b8;">${escapeHtml(point.label)}</div>
-                </div>`;
-              }).join('')}
-            </div>
-            <div class="position-summary-note" style="margin:14px 0 10px;">Long / Short</div>
-            <div class="detail-chips" style="margin-bottom:10px;">
-              <span class="detail-chip">Green = long</span>
-              <span class="detail-chip">Blue/Orange = short</span>
-            </div>
-            <div style="display:flex; align-items:flex-end; gap:8px; min-height:180px; padding:16px; background:#0f1425; border-radius:10px; border:1px solid #2a2f4a;">
-              ${performanceSeries.map(point => {
-                const scale = performanceMetric === 'value' ? 0.08 : 12;
-                const longHeight = Math.max(12, Math.min(140, Math.abs(point.long) * scale + 12));
-                const shortHeight = Math.max(12, Math.min(140, Math.abs(point.short) * scale + 12));
-                const longColor = Number(point.long) >= 0 ? '#10b981' : '#ef4444';
-                const shortColor = Number(point.short) >= 0 ? '#60a5fa' : '#f97316';
-                const longLabel = performanceMetric === 'value' ? formatSignedMoney(point.long) : `${point.long >= 0 ? '+' : ''}${Number(point.long).toFixed(2)}%`;
-                const shortLabel = performanceMetric === 'value' ? formatSignedMoney(point.short) : `${point.short >= 0 ? '+' : ''}${Number(point.short).toFixed(2)}%`;
-                return `<div style="display:flex; flex-direction:column; align-items:center; gap:6px;">
-                  <div style="font-size:11px; color:#94a3b8;">${escapeHtml(point.label)}</div>
-                  <div style="display:flex; align-items:flex-end; gap:4px;">
-                    <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
-                      <div style="font-size:10px; color:${longColor};">${longLabel}</div>
-                      <div style="width:14px; height:${longHeight}px; background:${longColor}; border-radius:6px 6px 0 0;"></div>
-                    </div>
-                    <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
-                      <div style="font-size:10px; color:${shortColor};">${shortLabel}</div>
-                      <div style="width:14px; height:${shortHeight}px; background:${shortColor}; border-radius:6px 6px 0 0;"></div>
-                    </div>
-                  </div>
-                </div>`;
-              }).join('')}
-            </div>
-            <div class="position-summary-note" style="margin-top:10px;">Baseline is the first captured snapshot in the selected range.</div>
-          `}
         </div>
       </details>
 
@@ -517,10 +456,13 @@ function renderPortfolioHubSection(portfolioHub = {}) {
 
       <div style="margin-top:18px;">
         <div class="detail-section-title">Latest Recommendation Changes</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
+          <button class="analyze-btn" onclick="resetPortfolioHubRecommendationChanges()">Reset Recommendation Changes</button>
+        </div>
         ${recommendationChanges.length === 0 ? '<div class="no-data">No new Whiskie recommendation changes saved yet.</div>' : `
           <table>
             <thead>
-              <tr><th>When</th><th>Symbol</th><th>Change</th><th>Details</th><th>Previous</th></tr>
+              <tr><th>When</th><th>Symbol</th><th>Change</th><th>Details</th><th>Implemented</th></tr>
             </thead>
             <tbody>
               ${recommendationChanges.map(item => `
@@ -528,8 +470,13 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <td>${formatDateTime(item.createdAt)}</td>
                   <td><strong>${escapeHtml(item.symbol || '-')}</strong><br><span class="timestamp">${escapeHtml(item.positionType || '-')}</span></td>
                   <td>${escapeHtml(item.changeType === 'shares' ? 'Shares' : item.changeType === 'target' ? 'Price Target' : 'Stop Loss')}</td>
-                  <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span></td>
-                  <td>${escapeHtml(item.previous || 'New')}</td>
+                  <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span>${item.previous ? `<br><span class="timestamp">Prior: ${escapeHtml(item.previous)}</span>` : ''}</td>
+                  <td>
+                    <label style="display:flex; align-items:center; gap:8px;">
+                      <input type="checkbox" ${item.implemented ? 'checked' : ''} onchange="setPortfolioHubRecommendationImplemented(${Number(item.id)}, this.checked)" />
+                      <span class="timestamp">${item.implemented ? `Saved${item.implementedAt ? ` ${escapeHtml(formatShortDate(item.implementedAt))}` : ''}` : 'Not yet'}</span>
+                    </label>
+                  </td>
                 </tr>
               `).join('')}
             </tbody>
@@ -942,17 +889,37 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       }
     }
 
+    async function resetPortfolioHubRecommendationChanges() {
+      if (!confirm('Reset all saved Portfolio Hub recommendation changes and start fresh?')) return;
+      try {
+        const response = await fetch('/api/portfolio-hub/recommendation-changes/reset', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to reset recommendation changes');
+        location.reload();
+      } catch (error) {
+        alert('Error resetting recommendation changes: ' + error.message);
+      }
+    }
+
+    async function setPortfolioHubRecommendationImplemented(id, implemented) {
+      try {
+        const response = await fetch('/api/portfolio-hub/recommendation-changes/' + id + '/implemented', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ implemented })
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save implemented state');
+      } catch (error) {
+        alert('Error saving implemented state: ' + error.message);
+        location.reload();
+      }
+    }
+
     function setPortfolioHubHoldingsSort(sortBy, sortDirection) {
       const params = new URLSearchParams(window.location.search);
       params.set('phSort', sortBy);
       params.set('phDir', sortDirection);
-      window.location.search = '?' + params.toString();
-    }
-
-    function setPortfolioHubPerformance(range, metric) {
-      const params = new URLSearchParams(window.location.search);
-      params.set('phRange', range);
-      params.set('phMetric', metric);
       window.location.search = '?' + params.toString();
     }
 
@@ -2356,6 +2323,10 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       <a href="/portfolio-hub" class="nav-card adhoc">
         <div class="nav-card-title">🧭 Portfolio Hub</div>
         <div class="nav-card-copy">Separate manual household portfolio dashboard kept distinct from the live bot.</div>
+      </a>
+      <a href="/gemma" class="nav-card options">
+        <div class="nav-card-title">⚾ Gemma</div>
+        <div class="nav-card-copy">MLB pregame betting dashboard with per-game Opus analysis and best-book odds views.</div>
       </a>
       <a href="/symbol/SPY" class="nav-card options">
         <div class="nav-card-title">🧩 Symbol Overview</div>
@@ -4057,6 +4028,27 @@ router.post('/api/portfolio-hub/opus-review', async (req, res) => {
   try {
     const result = await runPortfolioHubOpusReview();
     res.json({ success: true, result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/portfolio-hub/recommendation-changes/reset', async (req, res) => {
+  try {
+    await db.resetPortfolioHubRecommendationChanges();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/portfolio-hub/recommendation-changes/:id/implemented', async (req, res) => {
+  try {
+    const row = await db.setPortfolioHubRecommendationChangeImplemented(
+      Number(req.params.id),
+      Boolean(req.body?.implemented)
+    );
+    res.json({ success: true, row });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
