@@ -206,6 +206,36 @@ function buildChangeItems(currentRow, previousAdviceRow) {
   const currentTakeProfit = normalizeNumericField(currentReview.takeProfit);
   const previousTakeProfit = normalizeNumericField(previousReview?.takeProfit);
   const items = [];
+  const hasPreviousReview = Boolean(previousReview);
+  const currentHasAction = currentAction && currentAction.toLowerCase() !== 'hold';
+  const currentHasShares = Boolean(currentShareText);
+  const currentHasStopLoss = currentStopLoss != null;
+  const currentHasTakeProfit = currentTakeProfit != null;
+
+  if (!hasPreviousReview) {
+    if (currentHasAction || currentHasShares) {
+      items.push({
+        type: 'shares',
+        summary: currentShareText || currentReview.summary || `${currentAction} recommendation added`,
+        previous: null
+      });
+    }
+    if (currentHasStopLoss) {
+      items.push({
+        type: 'stop_loss',
+        summary: `Stop loss added at ${currentStopLoss.toFixed(2)}`,
+        previous: null
+      });
+    }
+    if (currentHasTakeProfit) {
+      items.push({
+        type: 'target',
+        summary: `Price target added at ${currentTakeProfit.toFixed(2)}`,
+        previous: null
+      });
+    }
+    return items;
+  }
 
   if (currentAction !== previousAction || currentShareText !== previousShareText) {
     items.push({
