@@ -1416,6 +1416,7 @@ export async function runPortfolioHubOpusReview() {
   if (!holdingsToReview.length) {
     return { reviewedAt: new Date().toISOString(), holdings: [] };
   }
+  const { technicalsMap } = await buildPortfolioHubSymbolContext(holdingsToReview.map(row => row.symbol));
   const profileBuildResults = await ensurePortfolioHubProfiles(holdingsToReview);
   const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
   const stockNewsContext = await buildPortfolioHubStockNewsContext(holdingsToReview, portfolioHub.sectorTrimCandidates || []);
@@ -1453,6 +1454,8 @@ Rules:
 - If the recommendation is really about ending share count, also provide targetPositionShares explicitly.
 - Never use plannedTotalShares to mean the final number of shares to hold.
 - Assume future runs may compare plannedTotalShares with executed shares logged after the review, so avoid repeating the same full trim as if nothing was done.
+- Use the supplied technical inputs explicitly when forming holdings guidance, especially for stop loss, take profit, trim/add timing, and whether the current setup is extended, constructive, weak, or breaking down.
+- Pay particular attention to SMA200, SMA50, distance from SMA200, RSI, volume ratio, trend, and slope fields when deciding if a holding deserves patience, tighter risk control, or an active trim/add recommendation.
 
 Portfolio summary:
 ${JSON.stringify(portfolioHub.summary, null, 2)}
@@ -1485,6 +1488,7 @@ ${JSON.stringify(holdingsToReview.map(row => ({
     whiskieNotes: row.whiskieNotes,
     whiskieCatalysts: row.whiskieCatalysts,
     whiskieHoldingPosture: row.whiskieHoldingPosture,
+    technicals: technicalsMap.get(row.symbol) || null,
     existingPolicyView: row.whiskieView,
     allocationBucketHint: row.whiskieHoldingPosture && /core|long/i.test(String(row.whiskieHoldingPosture)) ? 'core_long_term' : row.positionType === 'short' ? 'tactical_short' : 'tactical_or_unclear'
   })), null, 2)}`;

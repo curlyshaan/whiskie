@@ -132,12 +132,32 @@ Before prompting Opus, the system builds context for candidate symbols including
 - quotes
 - stock metadata
 - Whiskie context
+- FMP-backed technical context from the shared analysis engine
 - portfolio summary
 - sector allocation
 - current holdings
 - market context
 
 The market context is intended to include regime and macro/news overlays so Opus sees portfolio state plus environment, not just isolated ticker lists.
+
+### Technical inputs now included
+
+Portfolio Hub recommendation generation now explicitly passes the shared Whiskie technical bundle into Opus context for each candidate, including fields such as:
+
+- `sma50`
+- `sma200`
+- `distanceFrom200MA`
+- `sma200Slope`
+- `rsi`
+- `volumeRatio`
+- trend / above-below moving-average state
+
+This matters because the recommendation surface is expected to use technical posture when suggesting:
+
+- whether the setup is constructive or weak
+- whether a name is extended
+- how aggressive the entry should be
+- whether stop-loss and take-profit levels are sensible
 
 ## What Opus is asked to do
 
@@ -276,7 +296,8 @@ To reduce low-quality recommendations surfacing just because they ranked highest
 Current quality gate:
 
 - conviction must be `medium` or `high`
-- deterministic local score must be `>= 60`
+- `high` conviction ideas are allowed regardless of deterministic local score
+- `medium` conviction ideas must have deterministic local score `>= 60`
 
 This is now applied **after** local scoring and **before** final sorting/persistence.
 
@@ -285,7 +306,8 @@ This is now applied **after** local scoring and **before** final sorting/persist
 This means:
 
 - a low-conviction idea will not appear
-- a medium/high-conviction idea with score below 60 will not appear
+- a medium-conviction idea with score below 60 will not appear
+- a high-conviction idea can still appear even if its local heuristic score is below 60
 - a symbol can no longer survive just because it was “best among weak options”
 
 ## Final saved output
@@ -487,7 +509,8 @@ Reviewer question:
 The new gate uses:
 
 - conviction `medium/high`
-- score `>= 60`
+- `high` conviction bypasses the score threshold
+- `medium` conviction requires score `>= 60`
 
 Reviewer questions:
 
@@ -545,6 +568,7 @@ Portfolio Hub Recommended New Positions is a hybrid recommendation system:
 The most important recent policy change is:
 
 - only `medium` / `high` conviction ideas
-- with local score `>= 60`
+- with `high` conviction always allowed
+- and `medium` conviction requiring local score `>= 60`
 
 are now allowed to surface in the final Recommended New Positions output.

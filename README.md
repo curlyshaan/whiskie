@@ -10,6 +10,8 @@ Start every new session with these files:
 - `ARCHITECTURE.md` — technical implementation, pipelines, data flow, API routes, and persistence model
 - `FUNDAMENTAL_SCREENER_METRICS.md` — screening thresholds, pathways, and watchlist rules
 - `INIT.md` — concise onboarding notes for future coding sessions
+- `docs/PORTFOLIO_HUB_RECOMMENDATION_SYSTEM_REVIEW.md` — detailed Portfolio Hub recommendation business logic
+- `docs/DAILY_ANALYSIS_RULES_REVIEW.md` — detailed daily analysis business logic and rule review
 
 Everything else should be treated as supporting or archival context unless these files explicitly point to it.
 
@@ -313,6 +315,7 @@ Portfolio Hub UI behavior:
 - running Portfolio Hub Opus review can return either:
   - refreshed recommendations for only the holdings that currently need review
   - or a no-op message if no holdings are stale / materially changed / near earnings
+- Portfolio Hub holdings review and Recommended New Positions both now pass shared FMP-backed technical context into Opus, including SMA/RSI/volume-based posture data used for stops, targets, and trim/add timing
 
 Note: `MAX_DAILY_TRADES` is no longer part of the active configuration model.
 

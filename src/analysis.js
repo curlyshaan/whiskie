@@ -325,7 +325,9 @@ class AnalysisEngine {
 
       // Volume analysis from recent data
       const recentVolumes = sma200Data.slice(0, 20).map(d => d.volume);
-      const avgVolume20 = recentVolumes.reduce((a, b) => a + b, 0) / 20;
+      const avgVolume20 = recentVolumes.length
+        ? recentVolumes.reduce((a, b) => a + b, 0) / recentVolumes.length
+        : 0;
       const currentVolume = latest.volume;
       const volumeRatio = avgVolume20 > 0 ? currentVolume / avgVolume20 : null;
 
