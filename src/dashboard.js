@@ -1390,6 +1390,10 @@ function formatDashboardDateOnly(value) {
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
     return value.trim();
   }
+  if (typeof value === 'string') {
+    const isoDateMatch = value.trim().match(/^(\d{4}-\d{2}-\d{2})T/);
+    if (isoDateMatch) return isoDateMatch[1];
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
@@ -5065,6 +5069,10 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
       if (!value) return '-';
       if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
         return value.trim();
+      }
+      if (typeof value === 'string') {
+        const isoDateMatch = value.trim().match(/^(\d{4}-\d{2}-\d{2})T/);
+        if (isoDateMatch) return isoDateMatch[1];
       }
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return String(value);

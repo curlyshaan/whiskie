@@ -298,6 +298,7 @@ Whiskie now uses `earnings_calendar` as the source of truth for upcoming earning
 - saved official prediction details
 - sortable/filterable table
 - dark glassmorphism dashboard styling
+- date-only earnings values are rendered as literal calendar dates, not timezone-shifted timestamps
 
 ## Dashboard behavior
 

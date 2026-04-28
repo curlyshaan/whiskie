@@ -513,9 +513,13 @@ export async function syncAutoEarningsReminders(options = {}) {
 
   for (const item of upcoming) {
     try {
-      const existing = await db.getActiveEarningsReminder(item.symbol);
       const earningsDate = toIsoDate(item.earnings_date);
+      const existing = await db.getActiveEarningsReminder(item.symbol);
+      const existingMatchesSameEvent = existing && earningsDate
+        ? toIsoDate(existing.earnings_date) === earningsDate
+        : false;
       const shouldRefreshYahooTiming = !existing
+        || !existingMatchesSameEvent
         || existing.earnings_session === 'unknown'
         || (existing.earnings_date && earningsDate && toIsoDate(existing.earnings_date) !== earningsDate);
       const yahooTiming = shouldRefreshYahooTiming
@@ -523,16 +527,16 @@ export async function syncAutoEarningsReminders(options = {}) {
         : null;
       const saved = await saveEarningsReminder({
         symbol: item.symbol,
-        notes: existing?.notes || '',
+        notes: existingMatchesSameEvent ? (existing?.notes || '') : '',
         earningsSession: yahooTiming?.earningsSession && yahooTiming.earningsSession !== 'unknown'
           ? yahooTiming.earningsSession
-          : existing?.earnings_session || undefined,
-        earningsTimeRaw: yahooTiming?.earningsTimeRaw || existing?.earnings_time_raw || undefined,
+          : (existingMatchesSameEvent ? existing?.earnings_session : undefined),
+        earningsTimeRaw: yahooTiming?.earningsTimeRaw || (existingMatchesSameEvent ? existing?.earnings_time_raw : undefined),
         earningsSessionSource: yahooTiming?.earningsSession && yahooTiming.earningsSession !== 'unknown'
           ? yahooTiming.source
-          : existing?.earnings_session_source || undefined,
-        catalystSummary: existing?.catalyst_summary || undefined,
-        emailEnabled: existing?.email_enabled !== false
+          : (existingMatchesSameEvent ? existing?.earnings_session_source : undefined),
+        catalystSummary: existingMatchesSameEvent ? existing?.catalyst_summary : undefined,
+        emailEnabled: existingMatchesSameEvent ? existing?.email_enabled !== false : true
       });
       results.push(saved);
     } catch (error) {
