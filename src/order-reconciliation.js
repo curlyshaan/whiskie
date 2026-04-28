@@ -52,49 +52,9 @@ class OrderReconciliation {
   async reconcilePositions() {
     try {
       console.log('\n🔄 Reconciling positions with broker...');
-
-      // Get positions from database
-      const dbPositions = await db.getPositions();
-
-      // Get positions from broker
-      const brokerPositions = this.normalizeBrokerPositions(await tradier.getPositions());
-
-      const discrepancies = [];
+      const discrepancies = await this.collectDiscrepancies();
 
       // Check each DB position exists at broker
-      for (const dbPos of dbPositions) {
-        const brokerPos = brokerPositions.find(bp => bp.symbol === dbPos.symbol);
-
-        if (!brokerPos) {
-          discrepancies.push({
-            symbol: dbPos.symbol,
-            issue: 'Position in DB but not at broker',
-            dbQty: dbPos.quantity,
-            brokerQty: 0
-          });
-        } else if (Math.abs(dbPos.quantity) !== Math.abs(brokerPos.quantity)) {
-          discrepancies.push({
-            symbol: dbPos.symbol,
-            issue: 'Quantity mismatch',
-            dbQty: dbPos.quantity,
-            brokerQty: brokerPos.quantity
-          });
-        }
-      }
-
-      // Check for positions at broker not in DB
-      for (const brokerPos of brokerPositions) {
-        const dbPos = dbPositions.find(dp => dp.symbol === brokerPos.symbol);
-        if (!dbPos) {
-          discrepancies.push({
-            symbol: brokerPos.symbol,
-            issue: 'Position at broker but not in DB',
-            dbQty: 0,
-            brokerQty: brokerPos.quantity
-          });
-        }
-      }
-
       if (discrepancies.length > 0) {
         console.log(`⚠️ Found ${discrepancies.length} discrepancies`);
         await this.handleDiscrepancies(discrepancies);
@@ -108,6 +68,46 @@ class OrderReconciliation {
       console.error('Error reconciling positions:', error);
       return { discrepancies: [], error: error.message };
     }
+  }
+
+  async collectDiscrepancies() {
+    const dbPositions = await db.getPositions();
+    const brokerPositions = this.normalizeBrokerPositions(await tradier.getPositions());
+    const discrepancies = [];
+
+    for (const dbPos of dbPositions) {
+      const brokerPos = brokerPositions.find(bp => bp.symbol === dbPos.symbol);
+
+      if (!brokerPos) {
+        discrepancies.push({
+          symbol: dbPos.symbol,
+          issue: 'Position in DB but not at broker',
+          dbQty: Number(dbPos.quantity || 0),
+          brokerQty: 0
+        });
+      } else if (Math.abs(Number(dbPos.quantity || 0)) !== Math.abs(Number(brokerPos.quantity || 0))) {
+        discrepancies.push({
+          symbol: dbPos.symbol,
+          issue: 'Quantity mismatch',
+          dbQty: Number(dbPos.quantity || 0),
+          brokerQty: Number(brokerPos.quantity || 0)
+        });
+      }
+    }
+
+    for (const brokerPos of brokerPositions) {
+      const dbPos = dbPositions.find(dp => dp.symbol === brokerPos.symbol);
+      if (!dbPos) {
+        discrepancies.push({
+          symbol: brokerPos.symbol,
+          issue: 'Position at broker but not in DB',
+          dbQty: 0,
+          brokerQty: Number(brokerPos.quantity || 0)
+        });
+      }
+    }
+
+    return discrepancies;
   }
 
   async syncPositionsFromBroker() {
@@ -220,28 +220,50 @@ class OrderReconciliation {
    * Handle discrepancies
    */
   async handleDiscrepancies(discrepancies) {
-    const recheck = await this.recheckDiscrepancies(discrepancies);
-    const persistentDiscrepancies = recheck.filter(item => item.stillExists);
+    const initialDiscrepancies = Array.isArray(discrepancies) ? discrepancies : [];
 
-    // Log to database
+    // Log raw detection before any remediation attempt.
     await db.query(
       `INSERT INTO reconciliation_log (discrepancies, created_at)
        VALUES ($1, NOW())`,
-      [JSON.stringify(discrepancies)]
+      [JSON.stringify(initialDiscrepancies)]
     );
 
-    if (persistentDiscrepancies.length === 0) {
-      console.log('✅ Reconciliation discrepancies cleared on verification pass — skipping alert email');
+    console.log('📦 Attempting broker-authoritative sync before sending reconciliation alert...');
+    const syncResult = await this.syncPositionsFromBroker();
+    if (!syncResult?.success) {
+      console.warn(`⚠️ Broker sync failed during reconciliation: ${syncResult?.error || 'unknown error'}`);
+    }
+
+    const remainingDiscrepancies = await this.collectDiscrepancies();
+    if (remainingDiscrepancies.length === 0) {
+      const delayedFillSymbols = initialDiscrepancies.map(item => item.symbol).filter(Boolean);
+      if (delayedFillSymbols.length > 0) {
+        console.log(`✅ Reconciliation drift cleared after broker sync (${delayedFillSymbols.join(', ')}) — likely delayed fill or temporary local lag`);
+      } else {
+        console.log('✅ Reconciliation discrepancies cleared after broker sync');
+      }
       return;
     }
 
+    const persistentDiscrepancies = await this.recheckDiscrepancies(remainingDiscrepancies);
+    const unresolvedDiscrepancies = persistentDiscrepancies.filter(item => item.stillExists);
+
+    if (unresolvedDiscrepancies.length === 0) {
+      console.log('✅ Reconciliation discrepancies cleared on verification pass after broker sync — skipping alert email');
+      return;
+    }
+
+    console.warn(`⚠️ Reconciliation discrepancies persisted after broker sync (${unresolvedDiscrepancies.map(item => item.symbol).join(', ')}) — likely true local persistence or broker-state mismatch`);
+
     // Send alert email
     let message = 'Position discrepancies detected:\n\n';
-    for (const d of persistentDiscrepancies) {
+    for (const d of unresolvedDiscrepancies) {
       message += `${d.symbol}: ${d.issue}\n`;
       message += `  DB: ${d.dbQty} shares\n`;
       message += `  Broker: ${d.brokerQty} shares\n\n`;
     }
+    message += 'The system already attempted a broker-authoritative sync before sending this alert.\n';
     message += 'Please review and manually reconcile.';
 
     await email.sendAlert('Position Reconciliation Alert', message);
