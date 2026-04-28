@@ -1,6 +1,7 @@
 import * as db from './db.js';
 import fmp from './fmp.js';
 import quoteService from './services/quote-service.js';
+import analysisEngine from './analysis.js';
 
 function normalizePathway(value) {
   const text = String(value || '').trim();
@@ -59,11 +60,12 @@ export async function buildPortfolioHubSymbolContext(symbols = []) {
       earningsMap: new Map(),
       stockInfoMap: new Map(),
       quoteMap: new Map(),
-      whiskieContextMap: new Map()
+      whiskieContextMap: new Map(),
+      technicalsMap: new Map()
     };
   }
 
-  const [dailyStates, saturdayRows, earningsRows, stockInfoRows, quotes] = await Promise.all([
+  const [dailyStates, saturdayRows, earningsRows, stockInfoRows, quotes, technicals] = await Promise.all([
     db.getLatestDailySymbolStates ? db.getLatestDailySymbolStates(normalizedSymbols).catch(() => []) : Promise.resolve([]),
     db.getCanonicalSaturdayWatchlistRows ? db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => []) : Promise.resolve([]),
     db.query(
@@ -79,7 +81,8 @@ export async function buildPortfolioHubSymbolContext(symbols = []) {
        WHERE symbol = ANY($1)`,
       [normalizedSymbols]
     ).then(result => result.rows).catch(() => []),
-    Promise.all(normalizedSymbols.map(symbol => quoteService.getQuote(symbol).catch(() => null)))
+    Promise.all(normalizedSymbols.map(symbol => quoteService.getQuote(symbol).catch(() => null))),
+    Promise.all(normalizedSymbols.map(symbol => analysisEngine.getTechnicalIndicators(symbol).catch(() => null)))
   ]);
 
   const earningsMap = new Map(earningsRows.map(row => [row.symbol, row.earnings_date]));
@@ -88,6 +91,7 @@ export async function buildPortfolioHubSymbolContext(symbols = []) {
     sectorSource: 'stock_universe'
   }]));
   const quoteMap = new Map(normalizedSymbols.map((symbol, index) => [symbol, quotes[index] || null]));
+  const technicalsMap = new Map(normalizedSymbols.map((symbol, index) => [symbol, technicals[index] || null]));
   const dailyStateMap = new Map((dailyStates || []).map(row => [row.symbol, row]));
   const saturdayWatchlistMap = new Map(
     (saturdayRows || [])
@@ -120,6 +124,7 @@ export async function buildPortfolioHubSymbolContext(symbols = []) {
     earningsMap,
     stockInfoMap,
     quoteMap,
-    whiskieContextMap
+      whiskieContextMap,
+      technicalsMap
   };
 }

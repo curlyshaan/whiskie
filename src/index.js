@@ -1145,6 +1145,22 @@ class WhiskieBot {
       }
     });
 
+    app.post('/api/trigger-earnings-reminders-grade', async (req, res) => {
+      try {
+        console.log('📡 Manual earnings predictor grading triggered via API');
+        (async () => {
+          try {
+            await this.gradeEarningsReminders();
+          } catch (error) {
+            console.error('❌ Error in manual earnings predictor grading:', error);
+          }
+        })();
+        res.json({ success: true, message: 'Earnings predictor grading started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
 
     app.get('/status', (req, res) => {
       res.json({

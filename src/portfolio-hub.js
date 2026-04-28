@@ -1226,7 +1226,7 @@ export async function runPortfolioHubRecommendedPositions() {
   });
 
   const candidateSymbols = candidates.map(item => item.symbol);
-  const { quoteMap, whiskieContextMap, stockInfoMap } = await buildPortfolioHubSymbolContext(candidateSymbols);
+  const { quoteMap, whiskieContextMap, stockInfoMap, technicalsMap } = await buildPortfolioHubSymbolContext(candidateSymbols);
   const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
 
   const prompt = `You are generating Recommended New Positions for a household portfolio dashboard called Portfolio Hub. Return JSON only.
@@ -1292,6 +1292,7 @@ Candidates:
 ${JSON.stringify(candidates.map(item => ({
   ...item,
   quote: quoteMap.get(item.symbol) || null,
+  technicals: technicalsMap.get(item.symbol) || null,
   whiskieContext: whiskieContextMap.get(item.symbol) || null,
   stockInfo: stockInfoMap.get(item.symbol) || null
 })), null, 2)}`;

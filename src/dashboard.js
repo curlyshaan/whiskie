@@ -218,6 +218,24 @@ function renderRecommendationReasoning(item) {
     : '<div class="muted">No thesis details available.</div>';
 }
 
+function renderRecommendationTechnicalPanel(item) {
+  const technicals = item.technicals || item.technicals_snapshot || null;
+  if (!technicals || typeof technicals !== 'object') {
+    return '<div class="position-summary-note">Technical snapshot unavailable.</div>';
+  }
+
+  return renderKeyValueRows([
+    { label: 'Current price', value: technicals.currentPrice != null ? formatMoney(technicals.currentPrice) : '-' },
+    { label: 'SMA 200', value: technicals.sma200 != null ? formatMoney(technicals.sma200) : '-' },
+    { label: 'Distance vs 200 SMA', value: technicals.distanceFrom200MA != null ? `${Number(technicals.distanceFrom200MA).toFixed(2)}%` : '-' },
+    { label: 'Trend', value: technicals.trend || '-' },
+    { label: '200 SMA slope', value: technicals.sma200Slope != null ? Number(technicals.sma200Slope).toFixed(4) : '-' },
+    { label: 'RSI', value: technicals.rsi != null ? Number(technicals.rsi).toFixed(1) : '-' },
+    { label: 'Volume ratio', value: technicals.volumeRatio != null ? `${Number(technicals.volumeRatio).toFixed(2)}x` : '-' },
+    { label: 'Technical signal', value: technicals.technicalSignal?.signal || '-' }
+  ]);
+}
+
 function formatTargetType(value) {
   const normalized = normalizeText(value);
   if (!normalized) return '-';
@@ -375,7 +393,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
     holdingsSort.sortDirection
   );
   const accounts = portfolioHub.accounts || [];
-  const recommendationChanges = portfolioHub.recommendationChanges || [];
+  const recommendationChanges = (portfolioHub.recommendationChanges || []).filter(item => !item.implemented);
   const recommendedPositionsRun = portfolioHub.recommendedPositionsRun || null;
   const recommendedPositions = recommendedPositionsRun?.items || [];
   const transactions = portfolioHub.transactions || [];
@@ -584,8 +602,10 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                     </div>
                   </div>
                   <div class="recommended-position-layout">
-                    <div>
-                      ${renderKeyValueRows([
+                    <div class="recommended-position-primary-column">
+                      <div class="recommended-position-block">
+                        <div class="recommended-position-block-title">Setup</div>
+                        ${renderKeyValueRows([
                     { label: 'Entry zone', value: item.entry_zone || item.entryZone || '-' },
                     { label: 'Stop loss', value: (item.stop_loss ?? item.stopLoss) ? formatMoney(item.stop_loss ?? item.stopLoss) : '-' },
                     { label: 'Take profit', value: (item.take_profit ?? item.takeProfit) ? formatMoney(item.take_profit ?? item.takeProfit) : '-' },
@@ -594,10 +614,21 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                     { label: 'Sector impact', value: item.sector_impact || item.sectorImpact || '-' },
                     { label: 'Holding relationship action', value: item.related_holding_action || item.relatedHoldingAction || '-' }
                   ])}
+                      </div>
+                      <div class="recommended-position-block">
+                        <div class="recommended-position-block-title">Technical snapshot</div>
+                        ${renderRecommendationTechnicalPanel(item)}
+                      </div>
                     </div>
-                    <div>
-                      ${renderDetailSection('Recommendation summary', renderRecommendationReasoning(item))}
-                      ${renderDetailSection('Scoring breakdown', renderJsonValue(item.scoring_breakdown || item.scoringBreakdown || null))}
+                    <div class="recommended-position-secondary-column">
+                      <div class="recommended-position-block">
+                        <div class="recommended-position-block-title">Recommendation summary</div>
+                        ${renderRecommendationReasoning(item)}
+                      </div>
+                      <div class="recommended-position-block">
+                        <div class="recommended-position-block-title">Scoring breakdown</div>
+                        ${renderJsonValue(item.scoring_breakdown || item.scoringBreakdown || null)}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2532,6 +2563,23 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.25fr);
       gap: 16px;
       align-items: start;
+    }
+    .recommended-position-primary-column,
+    .recommended-position-secondary-column {
+      display: grid;
+      gap: 14px;
+    }
+    .recommended-position-block {
+      background: rgba(8, 15, 40, 0.48);
+      border: 1px solid rgba(42, 47, 74, 0.9);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .recommended-position-block-title {
+      color: #fff;
+      font-weight: 700;
+      margin-bottom: 10px;
+      font-size: 0.98rem;
     }
     .recommendation-text-grid {
       display: grid;
