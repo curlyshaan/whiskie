@@ -155,6 +155,69 @@ function renderKeyValueRows(items = []) {
   return rows ? `<div class="detail-kv-grid">${rows}</div>` : '';
 }
 
+function formatRecommendationDirection(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized) return '-';
+  if (normalized === 'LONG') return 'Long';
+  if (normalized === 'SHORT') return 'Short';
+  return normalized.charAt(0) + normalized.slice(1).toLowerCase();
+}
+
+function renderRecommendationBadgeList(item) {
+  const badges = [
+    item.horizon_label || item.horizonLabel,
+    item.conviction ? `Conviction: ${item.conviction}` : null,
+    item.pathway ? `Pathway: ${item.pathway}` : null,
+    (item.relationship_type || item.relationshipType) ? `Relationship: ${item.relationship_type || item.relationshipType}` : null,
+    (item.action_taxonomy || item.actionTaxonomy) ? `Taxonomy: ${item.action_taxonomy || item.actionTaxonomy}` : null,
+    (item.related_holding_symbol || item.relatedHoldingSymbol) ? `Related holding: ${item.related_holding_symbol || item.relatedHoldingSymbol}` : null
+  ].filter(Boolean);
+
+  return badges.length
+    ? `<div class="detail-chips" style="margin-top:8px;">${badges.map(badge => `<span class="detail-chip">${escapeHtml(badge)}</span>`).join('')}</div>`
+    : '';
+}
+
+function renderRecommendationScoringChips(item) {
+  const chips = [];
+  const rank = item.deterministic_rank ?? item.deterministicRank;
+  const score = item.deterministic_score ?? item.deterministicScore;
+  const direction = formatRecommendationDirection(item.direction);
+
+  if (direction && direction !== '-') chips.push(`Direction: ${direction}`);
+  if (rank != null && String(rank).trim() !== '') chips.push(`Rank: ${rank}`);
+  if (score != null && String(score).trim() !== '') chips.push(`Score: ${score}`);
+
+  return chips.length
+    ? `<div class="detail-chips" style="margin-top:10px;">${chips.map(chip => `<span class="detail-chip">${escapeHtml(chip)}</span>`).join('')}</div>`
+    : '';
+}
+
+function renderRecommendationReasoning(item) {
+  const structuredSections = [
+    { label: 'Thesis', value: item.thesis || '-' },
+    { label: 'Why now', value: item.why_now || item.whyNow || '-' },
+    { label: 'Portfolio fit', value: item.portfolio_fit || item.portfolioFit || '-' },
+    { label: 'Sector impact', value: item.sector_impact || item.sectorImpact || '-' },
+    { label: 'Invalidation', value: item.invalidation || '-' },
+    { label: 'Related holding action', value: item.related_holding_action || item.relatedHoldingAction || '-' },
+    { label: 'Target framework', value: item.target_framework || item.targetFramework || '-' },
+    { label: 'Entry zone', value: item.entry_zone || item.entryZone || '-' }
+  ]
+    .filter(section => normalizeText(section.value))
+    .map(section => `
+      <div class="recommendation-text-row">
+        <div class="recommendation-text-label">${escapeHtml(section.label)}</div>
+        <div class="recommendation-text-value">${formatStructuredText(section.value)}</div>
+      </div>
+    `)
+    .join('');
+
+  return structuredSections
+    ? `<div class="recommendation-text-grid">${structuredSections}</div>`
+    : '<div class="muted">No thesis details available.</div>';
+}
+
 function formatTargetType(value) {
   const normalized = normalizeText(value);
   if (!normalized) return '-';
@@ -457,83 +520,92 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         </div>
       </details>
 
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Latest Recommendation Changes</div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
-          <button class="analyze-btn" onclick="resetPortfolioHubRecommendationChanges()">Reset Recommendation Changes</button>
+      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;">
+        <summary>Latest Recommendation Changes</summary>
+        <div style="margin-top:12px;">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
+            <button class="analyze-btn" onclick="resetPortfolioHubRecommendationChanges()">Reset Recommendation Changes</button>
+          </div>
+          ${recommendationChanges.length === 0 ? '<div class="no-data">No new Whiskie recommendation changes saved yet.</div>' : `
+            <table>
+              <thead>
+                <tr><th>When</th><th>Symbol</th><th>Change</th><th>Details</th><th>Implemented</th></tr>
+              </thead>
+              <tbody>
+                ${recommendationChanges.map(item => `
+                  <tr>
+                    <td>${formatDateTime(item.createdAt)}</td>
+                    <td><strong>${escapeHtml(item.symbol || '-')}</strong><br><span class="timestamp">${escapeHtml(item.positionType || '-')}</span></td>
+                    <td>${escapeHtml(item.changeType === 'shares' ? 'Shares' : item.changeType === 'target' ? 'Price Target' : 'Stop Loss')}</td>
+                    <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span>${item.actionTaxonomy ? `<br><span class="timestamp">Taxonomy: ${escapeHtml(item.actionTaxonomy)}</span>` : ''}${item.deterministicScore != null ? `<br><span class="timestamp">Score: ${escapeHtml(String(item.deterministicScore))}</span>` : ''}${item.previous ? `<br><span class="timestamp">Prior: ${escapeHtml(item.previous)}</span>` : ''}</td>
+                    <td>
+                      <label style="display:flex; align-items:center; gap:8px;">
+                        <input type="checkbox" ${item.implemented ? 'checked' : ''} onchange="setPortfolioHubRecommendationImplemented(${Number(item.id)}, this.checked)" />
+                        <span class="timestamp">${item.implemented ? `Saved${item.implementedAt ? ` ${escapeHtml(formatShortDate(item.implementedAt))}` : ''}` : 'Not yet'}</span>
+                      </label>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `}
         </div>
-        ${recommendationChanges.length === 0 ? '<div class="no-data">No new Whiskie recommendation changes saved yet.</div>' : `
-          <table>
-            <thead>
-              <tr><th>When</th><th>Symbol</th><th>Change</th><th>Details</th><th>Implemented</th></tr>
-            </thead>
-            <tbody>
-              ${recommendationChanges.map(item => `
-                <tr>
-                  <td>${formatDateTime(item.createdAt)}</td>
-                  <td><strong>${escapeHtml(item.symbol || '-')}</strong><br><span class="timestamp">${escapeHtml(item.positionType || '-')}</span></td>
-                  <td>${escapeHtml(item.changeType === 'shares' ? 'Shares' : item.changeType === 'target' ? 'Price Target' : 'Stop Loss')}</td>
-                  <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span>${item.actionTaxonomy ? `<br><span class="timestamp">Taxonomy: ${escapeHtml(item.actionTaxonomy)}</span>` : ''}${item.deterministicScore != null ? `<br><span class="timestamp">Score: ${escapeHtml(String(item.deterministicScore))}</span>` : ''}${item.previous ? `<br><span class="timestamp">Prior: ${escapeHtml(item.previous)}</span>` : ''}</td>
-                  <td>
-                    <label style="display:flex; align-items:center; gap:8px;">
-                      <input type="checkbox" ${item.implemented ? 'checked' : ''} onchange="setPortfolioHubRecommendationImplemented(${Number(item.id)}, this.checked)" />
-                      <span class="timestamp">${item.implemented ? `Saved${item.implementedAt ? ` ${escapeHtml(formatShortDate(item.implementedAt))}` : ''}` : 'Not yet'}</span>
-                    </label>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `}
-      </div>
+      </details>
 
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Recommended New Positions</div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
-          <button class="analyze-btn" onclick="refreshPortfolioHubRecommendedPositions()" id="portfolioHubRecommendedBtn">Refresh Recommendations</button>
-        </div>
-        <div class="position-summary-note" style="margin-bottom:12px;">Last generated: ${recommendedPositionsRun?.generated_at ? escapeHtml(formatDateTime(recommendedPositionsRun.generated_at)) : 'Not run yet'}${recommendedPositionsRun?.freshness?.label ? ` • ${escapeHtml(recommendedPositionsRun.freshness.label)}` : ''}</div>
-        ${recommendedPositions.length === 0 ? '<div class="no-data">No recommended new positions yet. Run a refresh to generate long-term and medium-term ideas.</div>' : `
-          <div style="display:grid; gap:14px;">
-            ${recommendedPositions.map(item => `
-              <div style="background:#0f1425; border:1px solid #2a2f4a; border-radius:12px; padding:16px;">
-                <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
-                  <div>
-                    <div style="font-size:1.15rem; font-weight:700;">${escapeHtml(item.symbol || '-')} <span class="timestamp">${escapeHtml(item.direction || '-')}</span></div>
-                    <div class="detail-chips" style="margin-top:8px;">
-                      <span class="detail-chip">${escapeHtml(item.horizon_label || item.horizonLabel || '-')}</span>
-                      <span class="detail-chip">Conviction: ${escapeHtml(item.conviction || '-')}</span>
-                      <span class="detail-chip">Pathway: ${escapeHtml(item.pathway || '-')}</span>
-                      <span class="detail-chip">Relationship: ${escapeHtml(item.relationship_type || item.relationshipType || '-')}</span>
-                      <span class="detail-chip">Taxonomy: ${escapeHtml(item.action_taxonomy || item.actionTaxonomy || '-')}</span>
-                      <span class="detail-chip">Rank: ${escapeHtml(String(item.deterministic_rank || item.deterministicRank || '-'))}</span>
-                      <span class="detail-chip">Score: ${escapeHtml(String(item.deterministic_score || item.deterministicScore || '-'))}</span>
-                      ${(item.related_holding_symbol || item.relatedHoldingSymbol) ? `<span class="detail-chip">Related holding: ${escapeHtml(item.related_holding_symbol || item.relatedHoldingSymbol)}</span>` : ''}
+      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;" open>
+        <summary>Recommended New Positions</summary>
+        <div style="margin-top:12px;">
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
+            <button class="analyze-btn" onclick="refreshPortfolioHubRecommendedPositions()" id="portfolioHubRecommendedBtn">Refresh Recommendations</button>
+          </div>
+          <div class="position-summary-note" style="margin-bottom:12px;">Last generated: ${recommendedPositionsRun?.generated_at ? escapeHtml(formatDateTime(recommendedPositionsRun.generated_at)) : 'Not run yet'}${recommendedPositionsRun?.freshness?.label ? ` • ${escapeHtml(recommendedPositionsRun.freshness.label)}` : ''}</div>
+          ${recommendedPositions.length === 0 ? '<div class="no-data">No recommended new positions yet. Run a refresh to generate long-term and medium-term ideas.</div>' : `
+            <div style="display:grid; gap:14px;">
+              ${recommendedPositions.map(item => `
+                <div class="recommended-position-card">
+                  <div class="recommended-position-header">
+                    <div>
+                      <div class="recommended-position-symbol-row">
+                        <div class="recommended-position-symbol">${escapeHtml(item.symbol || '-')}</div>
+                        <span class="recommended-position-direction ${String(item.direction || '').toUpperCase() === 'SHORT' ? 'is-short' : 'is-long'}">${escapeHtml(formatRecommendationDirection(item.direction))}</span>
+                      </div>
+                      ${renderRecommendationBadgeList(item)}
+                      ${renderRecommendationScoringChips(item)}
+                    </div>
+                    <div class="recommended-position-sizing">
+                      <div class="recommended-position-size-card">
+                        <div class="metric-label">Starter shares</div>
+                        <div class="recommended-position-size-value">${escapeHtml(String(item.starter_shares ?? item.starterShares ?? '-'))}</div>
+                      </div>
+                      <div class="recommended-position-size-card">
+                        <div class="metric-label">Starter value</div>
+                        <div class="recommended-position-size-value">${item.starter_position_value != null || item.starterPositionValue != null ? formatMoney(item.starter_position_value ?? item.starterPositionValue) : '-'}</div>
+                      </div>
                     </div>
                   </div>
-                  <div style="text-align:right;">
-                    <div><strong>Starter Shares:</strong> ${item.starter_shares ?? item.starterShares ?? '-'}</div>
-                    <div><strong>Starter Value:</strong> ${item.starter_position_value != null || item.starterPositionValue != null ? formatMoney(item.starter_position_value ?? item.starterPositionValue) : '-'}</div>
+                  <div class="recommended-position-layout">
+                    <div>
+                      ${renderKeyValueRows([
+                    { label: 'Entry zone', value: item.entry_zone || item.entryZone || '-' },
+                    { label: 'Stop loss', value: (item.stop_loss ?? item.stopLoss) ? formatMoney(item.stop_loss ?? item.stopLoss) : '-' },
+                    { label: 'Take profit', value: (item.take_profit ?? item.takeProfit) ? formatMoney(item.take_profit ?? item.takeProfit) : '-' },
+                    { label: 'Target framework', value: item.target_framework || item.targetFramework || '-' },
+                    { label: 'Portfolio fit', value: item.portfolio_fit || item.portfolioFit || '-' },
+                    { label: 'Sector impact', value: item.sector_impact || item.sectorImpact || '-' },
+                    { label: 'Holding relationship action', value: item.related_holding_action || item.relatedHoldingAction || '-' }
+                  ])}
+                    </div>
+                    <div>
+                      ${renderDetailSection('Recommendation summary', renderRecommendationReasoning(item))}
+                      ${renderDetailSection('Scoring breakdown', renderJsonValue(item.scoring_breakdown || item.scoringBreakdown || null))}
+                    </div>
                   </div>
                 </div>
-                ${renderKeyValueRows([
-                  { label: 'Entry zone', value: item.entry_zone || item.entryZone || '-' },
-                  { label: 'Stop loss', value: (item.stop_loss ?? item.stopLoss) ? formatMoney(item.stop_loss ?? item.stopLoss) : '-' },
-                  { label: 'Take profit', value: (item.take_profit ?? item.takeProfit) ? formatMoney(item.take_profit ?? item.takeProfit) : '-' },
-                  { label: 'Target framework', value: item.target_framework || item.targetFramework || '-' },
-                  { label: 'Portfolio fit', value: item.portfolio_fit || item.portfolioFit || '-' },
-                  { label: 'Sector impact', value: item.sector_impact || item.sectorImpact || '-' },
-                  { label: 'Holding relationship action', value: item.related_holding_action || item.relatedHoldingAction || '-' }
-                ])}
-                ${renderDetailSection('Thesis', formatStructuredText(item.thesis || '-'))}
-                ${renderDetailSection('Why now', formatStructuredText(item.why_now || item.whyNow || '-'))}
-                ${renderDetailSection('Invalidation', formatStructuredText(item.invalidation || '-'))}
-                ${renderDetailSection('Scoring breakdown', renderJsonValue(item.scoring_breakdown || item.scoringBreakdown || null))}
-              </div>
-            `).join('')}
-          </div>
-        `}
-      </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      </details>
 
       <details id="portfolioHubAdminPanel" style="margin-top:18px; display:none;">
         <summary>Admin / Debug State</summary>
@@ -542,80 +614,82 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         </div>
       </details>
 
-      <div style="margin-top:18px;">
-        <div class="detail-section-title">Combined Holdings</div>
-        ${holdings.length === 0 ? '<div class="no-data">No Portfolio Hub holdings yet.</div>' : `
-          <table>
-            <thead>
-              <tr>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('symbol', '${nextSortDirection('symbol')}')">Symbol${sortIndicator('symbol')}</button></th>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('shares', '${nextSortDirection('shares')}')">Shares${sortIndicator('shares')}</button></th>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('avgCost', '${nextSortDirection('avgCost')}')">Avg Cost${sortIndicator('avgCost')}</button></th>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('currentPrice', '${nextSortDirection('currentPrice')}')">Current${sortIndicator('currentPrice')}</button></th>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('marketValue', '${nextSortDirection('marketValue')}')">Value${sortIndicator('marketValue')}</button></th>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('weightPct', '${nextSortDirection('weightPct')}')">Weight${sortIndicator('weightPct')}</button></th>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('unrealizedPnLPct', '${nextSortDirection('unrealizedPnLPct')}')">P/L${sortIndicator('unrealizedPnLPct')}</button></th>
-                <th>Earnings</th>
-                <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('whiskiePathway', '${nextSortDirection('whiskiePathway')}')">Whiskie Pathway${sortIndicator('whiskiePathway')}</button></th>
-                <th>Stop</th>
-                <th>Target</th>
-                <th>Whiskie View</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${holdings.map(row => `
+      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;" open>
+        <summary>Combined Holdings</summary>
+        <div style="margin-top:12px;">
+          ${holdings.length === 0 ? '<div class="no-data">No Portfolio Hub holdings yet.</div>' : `
+            <table>
+              <thead>
                 <tr>
-                  <td><strong>${escapeHtml(row.symbol)}</strong><br><span class="timestamp">${escapeHtml(row.positionType)}</span></td>
-                  <td>${Math.abs(Number(row.shares || 0)).toFixed(2)}</td>
-                  <td>${formatMoney(row.avgCost)}</td>
-                  <td>${formatMoney(row.currentPrice)}</td>
-                  <td>${formatMoney(row.marketValue)}</td>
-                  <td>${formatPercent(row.weightPct)}</td>
-                  <td class="${Number(row.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(row.unrealizedPnL)}<br>${formatPercent(row.unrealizedPnLPct)}</td>
-                  <td>${formatShortDate(row.nextEarningsDate)}</td>
-                  <td>${escapeHtml(row.whiskiePathway || '-')}</td>
-                  <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
-                  <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
-                  <td><strong>${escapeHtml(row.whiskieActionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(row.whiskieView || '-')}</span>${row.whiskieShareCountText ? `<br><span class="timestamp">${escapeHtml(row.whiskieShareCountText)}</span>` : ''}${row.whiskiePlanProgressText ? `<br><span class="timestamp">${escapeHtml(row.whiskiePlanProgressText)}</span>` : ''}</td>
-                  <td>
-                    <a class="analyze-btn" style="display:inline-block; text-decoration:none; margin-bottom:8px;" href="/adhoc-analyzer?ticker=${encodeURIComponent(row.symbol)}&intent=${row.positionType === 'short' ? 'SHORT' : 'LONG'}&costBasis=${encodeURIComponent(row.avgCost || '')}">Analyze</a>
-                    <br>
-                    <a class="analyze-btn" style="display:inline-block; text-decoration:none;" href="/options-analyzer?symbol=${encodeURIComponent(row.symbol)}">Options</a>
-                  </td>
+                  <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('symbol', '${nextSortDirection('symbol')}')">Symbol${sortIndicator('symbol')}</button></th>
+                  <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('shares', '${nextSortDirection('shares')}')">Shares${sortIndicator('shares')}</button></th>
+                  <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('avgCost', '${nextSortDirection('avgCost')}')">Avg Cost${sortIndicator('avgCost')}</button></th>
+                  <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('currentPrice', '${nextSortDirection('currentPrice')}')">Current${sortIndicator('currentPrice')}</button></th>
+                  <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('marketValue', '${nextSortDirection('marketValue')}')">Value${sortIndicator('marketValue')}</button></th>
+                  <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('weightPct', '${nextSortDirection('weightPct')}')">Weight${sortIndicator('weightPct')}</button></th>
+                  <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('unrealizedPnLPct', '${nextSortDirection('unrealizedPnLPct')}')">P/L${sortIndicator('unrealizedPnLPct')}</button></th>
+                  <th>Earnings</th>
+                  <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('whiskiePathway', '${nextSortDirection('whiskiePathway')}')">Whiskie Pathway${sortIndicator('whiskiePathway')}</button></th>
+                  <th>Stop</th>
+                  <th>Target</th>
+                  <th>Whiskie View</th>
+                  <th>Actions</th>
                 </tr>
-                <tr>
-                  <td colspan="13" style="background:#131a30;">
-                    <details>
-                      <summary>Whiskie details for ${escapeHtml(row.symbol)}</summary>
-                      <div style="margin-top:12px; display:grid; gap:12px;">
-                        <div class="detail-chips">
-                          <span class="detail-chip">Pathway: ${escapeHtml(row.whiskiePathway || '-')}</span>
-                          <span class="detail-chip">Sector source: ${escapeHtml(row.sectorSource || '-')}</span>
-                          <span class="detail-chip">Last action: ${escapeHtml(row.whiskieLastAction || '-')}</span>
-                          <span class="detail-chip">Holding posture: ${escapeHtml(row.whiskieHoldingPosture || '-')}</span>
-                          <span class="detail-chip">Guidance source: ${escapeHtml(row.whiskieSource || '-')}</span>
-                          <span class="detail-chip">Confidence: ${escapeHtml(row.whiskieConfidence || '-')}</span>
+              </thead>
+              <tbody>
+                ${holdings.map(row => `
+                  <tr>
+                    <td><strong>${escapeHtml(row.symbol)}</strong><br><span class="timestamp">${escapeHtml(row.positionType)}</span></td>
+                    <td>${Math.abs(Number(row.shares || 0)).toFixed(2)}</td>
+                    <td>${formatMoney(row.avgCost)}</td>
+                    <td>${formatMoney(row.currentPrice)}</td>
+                    <td>${formatMoney(row.marketValue)}</td>
+                    <td>${formatPercent(row.weightPct)}</td>
+                    <td class="${Number(row.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(row.unrealizedPnL)}<br>${formatPercent(row.unrealizedPnLPct)}</td>
+                    <td>${formatShortDate(row.nextEarningsDate)}</td>
+                    <td>${escapeHtml(row.whiskiePathway || '-')}</td>
+                    <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
+                    <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
+                    <td><strong>${escapeHtml(row.whiskieActionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(row.whiskieView || '-')}</span>${row.whiskieShareCountText ? `<br><span class="timestamp">${escapeHtml(row.whiskieShareCountText)}</span>` : ''}${row.whiskiePlanProgressText ? `<br><span class="timestamp">${escapeHtml(row.whiskiePlanProgressText)}</span>` : ''}</td>
+                    <td>
+                      <a class="analyze-btn" style="display:inline-block; text-decoration:none; margin-bottom:8px;" href="/adhoc-analyzer?ticker=${encodeURIComponent(row.symbol)}&intent=${row.positionType === 'short' ? 'SHORT' : 'LONG'}&costBasis=${encodeURIComponent(row.avgCost || '')}">Analyze</a>
+                      <br>
+                      <a class="analyze-btn" style="display:inline-block; text-decoration:none;" href="/options-analyzer?symbol=${encodeURIComponent(row.symbol)}">Options</a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td colspan="13" style="background:#131a30;">
+                      <details>
+                        <summary>Whiskie details for ${escapeHtml(row.symbol)}</summary>
+                        <div style="margin-top:12px; display:grid; gap:12px;">
+                          <div class="detail-chips">
+                            <span class="detail-chip">Pathway: ${escapeHtml(row.whiskiePathway || '-')}</span>
+                            <span class="detail-chip">Sector source: ${escapeHtml(row.sectorSource || '-')}</span>
+                            <span class="detail-chip">Last action: ${escapeHtml(row.whiskieLastAction || '-')}</span>
+                            <span class="detail-chip">Holding posture: ${escapeHtml(row.whiskieHoldingPosture || '-')}</span>
+                            <span class="detail-chip">Guidance source: ${escapeHtml(row.whiskieSource || '-')}</span>
+                            <span class="detail-chip">Confidence: ${escapeHtml(row.whiskieConfidence || '-')}</span>
+                          </div>
+                          ${renderKeyValueRows([
+                            { label: 'Portfolio Hub guidance', value: row.whiskieView || '-' },
+                            { label: 'Share guidance', value: row.whiskieShareCountText || '-' },
+                            { label: 'Plan progress', value: row.whiskiePlanProgressText || '-' },
+                            { label: 'Opus review saved', value: row.opusReviewCreatedAt ? formatShortDate(row.opusReviewCreatedAt) : '-' }
+                          ])}
+                          ${renderDetailSection('Detail', formatStructuredText(row.whiskieDetail || '-'))}
+                          ${renderDetailSection('Thesis summary', formatStructuredText(row.whiskieNotes || '-'))}
+                          ${renderDetailSection('Catalyst summary', formatStructuredText(row.whiskieCatalysts || '-'))}
+                          ${renderDetailSection('Source reasons', renderList((row.whiskieSourceReasons || []).map(item => normalizeText(item)).filter(Boolean)))}
                         </div>
-                        ${renderKeyValueRows([
-                          { label: 'Portfolio Hub guidance', value: row.whiskieView || '-' },
-                          { label: 'Share guidance', value: row.whiskieShareCountText || '-' },
-                          { label: 'Plan progress', value: row.whiskiePlanProgressText || '-' },
-                          { label: 'Opus review saved', value: row.opusReviewCreatedAt ? formatShortDate(row.opusReviewCreatedAt) : '-' }
-                        ])}
-                        ${renderDetailSection('Detail', formatStructuredText(row.whiskieDetail || '-'))}
-                        ${renderDetailSection('Thesis summary', formatStructuredText(row.whiskieNotes || '-'))}
-                        ${renderDetailSection('Catalyst summary', formatStructuredText(row.whiskieCatalysts || '-'))}
-                        ${renderDetailSection('Source reasons', renderList((row.whiskieSourceReasons || []).map(item => normalizeText(item)).filter(Boolean)))}
-                      </div>
-                    </details>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `}
-      </div>
+                      </details>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `}
+        </div>
+      </details>
 
       <details style="margin-top:18px;">
         <summary>Position Mix</summary>
@@ -1281,6 +1355,9 @@ function formatDashboardSession(value) {
 
 function formatDashboardDateOnly(value) {
   if (!value) return '-';
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+    return value.trim();
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
@@ -2382,6 +2459,141 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       text-decoration: none;
       font-size: 0.9rem;
       word-break: break-all;
+    }
+    .recommended-position-card {
+      background: linear-gradient(180deg, #0f1425 0%, #0c1220 100%);
+      border: 1px solid #2a2f4a;
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: 0 8px 24px rgba(2, 6, 23, 0.28);
+    }
+    .recommended-position-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .recommended-position-symbol-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .recommended-position-symbol {
+      color: #fff;
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .recommended-position-direction {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border: 1px solid rgba(96, 165, 250, 0.35);
+      background: rgba(37, 99, 235, 0.18);
+      color: #bfdbfe;
+    }
+    .recommended-position-direction.is-short {
+      border-color: rgba(248, 113, 113, 0.35);
+      background: rgba(127, 29, 29, 0.22);
+      color: #fecaca;
+    }
+    .recommended-position-direction.is-long {
+      border-color: rgba(74, 222, 128, 0.35);
+      background: rgba(20, 83, 45, 0.22);
+      color: #bbf7d0;
+    }
+    .recommended-position-sizing {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(120px, 1fr));
+      gap: 10px;
+      min-width: min(100%, 280px);
+    }
+    .recommended-position-size-card {
+      background: #11182b;
+      border: 1px solid #2a2f4a;
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .recommended-position-size-value {
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+    .recommended-position-layout {
+      display: grid;
+      grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.25fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .recommendation-text-grid {
+      display: grid;
+      gap: 10px;
+    }
+    .recommendation-text-row {
+      background: #0b1120;
+      border: 1px solid #1f2937;
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .recommendation-text-label {
+      color: #93c5fd;
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .recommendation-text-value {
+      color: #e2e8f0;
+      line-height: 1.6;
+    }
+    .recommendation-text-value > div + div {
+      margin-top: 4px;
+    }
+    @media (max-width: 900px) {
+      .recommended-position-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+    .portfolio-hub-collapsible-section {
+      border: 1px solid #2a2f4a;
+      border-radius: 12px;
+      background: rgba(15, 20, 37, 0.78);
+      overflow: hidden;
+    }
+    .portfolio-hub-collapsible-section > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 14px 16px;
+      font-weight: 700;
+      color: #fff;
+      background: rgba(17, 24, 43, 0.92);
+      border-bottom: 1px solid rgba(42, 47, 74, 0.9);
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .portfolio-hub-collapsible-section > summary::-webkit-details-marker {
+      display: none;
+    }
+    .portfolio-hub-collapsible-section > summary::after {
+      content: '▾';
+      color: #93c5fd;
+      font-size: 0.95rem;
+      transition: transform 0.18s ease;
+    }
+    .portfolio-hub-collapsible-section:not([open]) > summary::after {
+      transform: rotate(-90deg);
     }
     .news-link:hover {
       border-color: #667eea;
@@ -4546,6 +4758,8 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
     actualReactionPct: reminder.actual_reaction_pct ?? null
   }));
   const pendingGradeRows = Array.isArray(pendingGrades) ? pendingGrades : [];
+  const predictedCount = reminderRows.filter(row => row.direction !== '-' && row.direction).length;
+  const gradedCount = reminderRows.filter(row => row.grade && row.grade !== '-').length;
   return `
 <!DOCTYPE html>
 <html>
@@ -4704,8 +4918,8 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
       ${reminders.length === 0 ? '<div class="helper">No earnings rows found for yesterday, today, or tomorrow.</div>' : `
       <div class="metric-row">
         <div class="metric-card"><div class="label">Tracked Symbols</div><div class="value">${reminderRows.length}</div></div>
-        <div class="metric-card"><div class="label">Predicted</div><div class="value">${reminderRows.filter(row => row.status === 'predicted').length}</div></div>
-        <div class="metric-card"><div class="label">Graded</div><div class="value">${reminderRows.filter(row => row.status === 'graded').length}</div></div>
+        <div class="metric-card"><div class="label">Predicted</div><div class="value">${predictedCount}</div></div>
+        <div class="metric-card"><div class="label">Graded</div><div class="value">${gradedCount}</div></div>
         <div class="metric-card"><div class="label">Pending Grade</div><div class="value">${pendingGradeRows.length}</div></div>
       </div>
       <div class="table-toolbar">
@@ -4790,6 +5004,9 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
 
     function formatIsoDate(value) {
       if (!value) return '-';
+      if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
+        return value.trim();
+      }
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return String(value);
       return date.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });

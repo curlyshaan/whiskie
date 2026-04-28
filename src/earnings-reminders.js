@@ -10,6 +10,7 @@ import { ensureFreshStockProfile } from './stock-profiles.js';
 const EASTERN_TIMEZONE = 'America/New_York';
 const TIMING_RAW_LIMIT = 10;
 const SESSION_SOURCE_LIMIT = 20;
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -22,6 +23,9 @@ function escapeHtml(value) {
 
 function toIsoDate(value) {
   if (!value) return null;
+  if (typeof value === 'string' && DATE_ONLY_PATTERN.test(value.trim())) {
+    return value.trim();
+  }
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString().split('T')[0];
@@ -510,12 +514,10 @@ export async function syncAutoEarningsReminders(options = {}) {
   for (const item of upcoming) {
     try {
       const existing = await db.getActiveEarningsReminder(item.symbol);
-      const earningsDate = item.earnings_date
-        ? new Date(item.earnings_date).toISOString().split('T')[0]
-        : null;
+      const earningsDate = toIsoDate(item.earnings_date);
       const shouldRefreshYahooTiming = !existing
         || existing.earnings_session === 'unknown'
-        || (existing.earnings_date && earningsDate && new Date(existing.earnings_date).toISOString().split('T')[0] !== earningsDate);
+        || (existing.earnings_date && earningsDate && toIsoDate(existing.earnings_date) !== earningsDate);
       const yahooTiming = shouldRefreshYahooTiming
         ? await enrichEarningsWhispersTiming(item.symbol)
         : null;
@@ -696,11 +698,18 @@ export async function gradeEarningsReminder(reminder) {
     return null;
   }
 
-  const nextSessionDate = nextTradingDay(reminder.earnings_date);
+  const normalizedEarningsDate = toIsoDate(reminder.earnings_date);
+  if (!normalizedEarningsDate) {
+    return null;
+  }
+
+  const session = String(reminder.earnings_session || '').toLowerCase();
+  const referenceSessionDate = session === 'pre_market'
+    ? normalizedEarningsDate
+    : nextTradingDay(normalizedEarningsDate);
   const quote = await fmp.getQuote(reminder.symbol).catch(() => null);
 
   const preferredReferencePrice = (() => {
-    const session = String(reminder.earnings_session || '').toLowerCase();
     if (session === 'post_market') {
       return Number(quote?.previousClose ?? quote?.close ?? null);
     }
@@ -726,7 +735,7 @@ export async function gradeEarningsReminder(reminder) {
     actualReactionPct,
     gradeResult,
     gradedAt: new Date(),
-    referenceSessionDate: nextSessionDate,
+    referenceSessionDate,
     referencePrice: preferredReferencePrice
   });
 }

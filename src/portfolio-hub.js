@@ -10,6 +10,7 @@ import newsCacheService from './services/news-cache-service.js';
 import profileBuildService from './services/profile-build-service.js';
 import portfolioRiskMetrics from './portfolio-risk-metrics.js';
 import etfManager from './etf-manager.js';
+import email from './email.js';
 
 export const DEFAULT_PORTFOLIO_HUB_ACCOUNTS = [
   'Sai-Webull-Cash',
@@ -25,6 +26,23 @@ const PORTFOLIO_HUB_LOCKS = {
   opusReview: 'portfolio_hub_opus_review',
   recommendedPositions: 'portfolio_hub_recommended_positions'
 };
+
+const PORTFOLIO_HUB_RECOMMENDATION_MIN_SCORE = 60;
+const PORTFOLIO_HUB_RECOMMENDATION_ALLOWED_CONVICTIONS = new Set(['medium', 'high']);
+const PORTFOLIO_HUB_RECOMMENDATION_DIFF_FIELDS = [
+  'direction',
+  'conviction',
+  'starterShares',
+  'starterPositionValue',
+  'entryZone',
+  'stopLoss',
+  'takeProfit',
+  'targetFramework',
+  'relationshipType',
+  'relatedHoldingSymbol',
+  'relatedHoldingAction',
+  'pathway'
+];
 
 function normalizeDirectionalLevels(positionType, currentPrice, stopLoss, takeProfit) {
   const normalizedStop = Number(stopLoss);
@@ -236,6 +254,79 @@ function scoreRecommendedPositionItem(item = {}, portfolioHub = {}, stockInfoMap
 
   const score = Object.values(breakdown).reduce((sum, value) => sum + Number(value || 0), 0);
   return { score, breakdown };
+}
+
+function passesRecommendedPositionQualityGate(item = {}) {
+  const conviction = String(item.conviction || '').toLowerCase();
+  const score = Number(item.deterministicScore || 0);
+  return PORTFOLIO_HUB_RECOMMENDATION_ALLOWED_CONVICTIONS.has(conviction) && score >= PORTFOLIO_HUB_RECOMMENDATION_MIN_SCORE;
+}
+
+function normalizeRecommendedPositionAlertShape(item = {}) {
+  return {
+    symbol: String(item.symbol || '').toUpperCase(),
+    direction: item.direction || null,
+    conviction: item.conviction || null,
+    starterShares: item.starterShares ?? item.starter_shares ?? null,
+    starterPositionValue: item.starterPositionValue ?? item.starter_position_value ?? null,
+    entryZone: item.entryZone ?? item.entry_zone ?? null,
+    stopLoss: item.stopLoss ?? item.stop_loss ?? null,
+    takeProfit: item.takeProfit ?? item.take_profit ?? null,
+    targetFramework: item.targetFramework ?? item.target_framework ?? null,
+    relationshipType: item.relationshipType ?? item.relationship_type ?? null,
+    relatedHoldingSymbol: item.relatedHoldingSymbol ?? item.related_holding_symbol ?? null,
+    relatedHoldingAction: item.relatedHoldingAction ?? item.related_holding_action ?? null,
+    pathway: item.pathway ?? null,
+    deterministicScore: item.deterministicScore ?? item.deterministic_score ?? null,
+    deterministicRank: item.deterministicRank ?? item.deterministic_rank ?? null
+  };
+}
+
+function diffRecommendedPositionRuns(previousRun = null, currentRun = null) {
+  const previousItems = Array.isArray(previousRun?.items) ? previousRun.items.map(normalizeRecommendedPositionAlertShape) : [];
+  const currentItems = Array.isArray(currentRun?.items) ? currentRun.items.map(normalizeRecommendedPositionAlertShape) : [];
+  const previousMap = new Map(previousItems.map(item => [item.symbol, item]));
+  const currentMap = new Map(currentItems.map(item => [item.symbol, item]));
+
+  const added = currentItems.filter(item => !previousMap.has(item.symbol));
+  const removed = previousItems.filter(item => !currentMap.has(item.symbol));
+  const changed = [];
+
+  for (const item of currentItems) {
+    const previous = previousMap.get(item.symbol);
+    if (!previous) continue;
+
+    const changedFields = PORTFOLIO_HUB_RECOMMENDATION_DIFF_FIELDS.filter(field => {
+      return JSON.stringify(previous[field] ?? null) !== JSON.stringify(item[field] ?? null);
+    });
+
+    if (changedFields.length) {
+      changed.push({
+        symbol: item.symbol,
+        changedFields,
+        previous,
+        current: item
+      });
+    }
+  }
+
+  return {
+    added,
+    removed,
+    changed,
+    previousRun: previousRun ? { id: previousRun.id, generated_at: previousRun.generated_at } : null,
+    currentRun: currentRun ? { id: currentRun.id, generated_at: currentRun.generated_at } : null
+  };
+}
+
+async function sendPortfolioHubRecommendationDiffEmail(previousRun, currentRun) {
+  const diff = diffRecommendedPositionRuns(previousRun, currentRun);
+  if (!diff.added.length && !diff.changed.length) {
+    return diff;
+  }
+
+  await email.sendPortfolioHubRecommendationAlert(diff);
+  return diff;
 }
 
 function scoreReviewItem(item = {}, holding = {}) {
@@ -1121,6 +1212,7 @@ export async function runPortfolioHubRecommendedPositions() {
     return db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null);
   }
   try {
+  const previousRun = await db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null);
   const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
   const [dailyStates, saturdayRows] = await Promise.all([
     db.getLatestDailySymbolStates().catch(() => []),
@@ -1247,6 +1339,7 @@ ${JSON.stringify(candidates.map(item => ({
         scoringBreakdown: scoring.breakdown
       };
     })
+    .filter(item => passesRecommendedPositionQualityGate(item))
     .sort((a, b) => Number(b.deterministicScore || 0) - Number(a.deterministicScore || 0))
     .map((item, index) => ({
       ...item,
@@ -1268,10 +1361,18 @@ ${JSON.stringify(candidates.map(item => ({
 
   await db.replacePortfolioHubRecommendedPositionItems(run.id, items);
 
-  return {
+  const currentRun = {
     ...run,
     items
   };
+
+  try {
+    await sendPortfolioHubRecommendationDiffEmail(previousRun, currentRun);
+  } catch (error) {
+    console.error('❌ Failed to send Portfolio Hub recommendation diff email:', error);
+  }
+
+  return currentRun;
   } finally {
     await db.releasePortfolioHubAdvisoryLock(PORTFOLIO_HUB_LOCKS.recommendedPositions).catch(() => null);
   }

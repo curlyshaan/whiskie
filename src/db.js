@@ -3746,8 +3746,15 @@ export async function getActiveEarningsReminder(symbol) {
          LIMIT 1
        ) sw ON TRUE
        WHERE er.symbol = $1
-         AND er.status = 'active'
-       ORDER BY er.updated_at DESC
+         AND er.status IN ('active', 'predicted', 'graded')
+       ORDER BY CASE er.status
+                  WHEN 'predicted' THEN 0
+                  WHEN 'active' THEN 1
+                  WHEN 'graded' THEN 2
+                  ELSE 3
+                END,
+                er.earnings_date ASC,
+                er.updated_at DESC
        LIMIT 1`,
       [symbol]
     );
@@ -3761,7 +3768,8 @@ export async function getActiveEarningsReminder(symbol) {
 export async function getAllActiveEarningsReminders() {
   try {
     const result = await pool.query(
-      `SELECT er.*,
+      `SELECT DISTINCT ON (er.symbol, er.earnings_date)
+              er.*,
               sw.primary_pathway,
               sw.secondary_pathways,
               sw.analysis_ready,
@@ -3778,10 +3786,17 @@ export async function getAllActiveEarningsReminders() {
                   added_date DESC
          LIMIT 1
        ) sw ON TRUE
-       WHERE er.status = 'active'
+       WHERE er.status IN ('active', 'predicted')
          AND er.earnings_date >= CURRENT_DATE
          AND er.earnings_date <= CURRENT_DATE + INTERVAL '7 days'
-       ORDER BY er.scheduled_send_at ASC NULLS LAST, er.earnings_date ASC, er.symbol ASC`
+       ORDER BY er.symbol,
+                er.earnings_date ASC,
+                CASE er.status
+                  WHEN 'predicted' THEN 0
+                  WHEN 'active' THEN 1
+                  ELSE 2
+                END,
+                er.updated_at DESC`
     );
     return result.rows;
   } catch (error) {
@@ -3930,10 +3945,12 @@ export async function expireStaleEarningsReminders() {
 export async function getSentEarningsRemindersPendingGrade() {
   try {
     const result = await pool.query(
-      `SELECT *
+      `SELECT DISTINCT ON (symbol, earnings_date)
+              *
        FROM earnings_reminders
-       WHERE status = 'predicted'
+       WHERE status IN ('predicted', 'active')
          AND predicted_direction IS NOT NULL
+         AND predictor_snapshot_price IS NOT NULL
          AND grade_result IS NULL
          AND (
            (earnings_session = 'pre_market' AND (NOW() AT TIME ZONE 'America/New_York') >= ((earnings_date::timestamp) + INTERVAL '11 hours'))
@@ -3946,7 +3963,10 @@ export async function getSentEarningsRemindersPendingGrade() {
              END
            ) + INTERVAL '11 hours')
          )
-       ORDER BY predictor_run_at ASC NULLS LAST, symbol ASC`
+       ORDER BY symbol ASC,
+                earnings_date ASC,
+                predictor_run_at DESC NULLS LAST,
+                updated_at DESC`
     );
     return result.rows;
   } catch (error) {
@@ -3969,12 +3989,32 @@ export async function upsertEarningsReminder(payload) {
   } = payload;
 
   try {
-    const existing = await getActiveEarningsReminder(symbol);
+    const existingResult = await pool.query(
+      `SELECT *
+       FROM earnings_reminders
+       WHERE symbol = $1
+         AND earnings_date = $2
+       ORDER BY CASE status
+                  WHEN 'predicted' THEN 0
+                  WHEN 'active' THEN 1
+                  WHEN 'graded' THEN 2
+                  ELSE 3
+                END,
+                updated_at DESC
+       LIMIT 1`,
+      [symbol, earningsDate]
+    );
+    const existing = existingResult.rows[0] || null;
 
     if (existing) {
       const result = await pool.query(
         `UPDATE earnings_reminders
-         SET earnings_date = $2,
+         SET status = CASE
+               WHEN status = 'graded' AND grade_result IS NOT NULL THEN 'graded'
+               WHEN predicted_direction IS NOT NULL THEN 'predicted'
+               ELSE 'active'
+             END,
+             earnings_date = $2,
              earnings_time_raw = $3,
              earnings_session = $4,
              earnings_session_source = $5,
@@ -3997,6 +4037,18 @@ export async function upsertEarningsReminder(payload) {
           emailEnabled
         ]
       );
+
+      await pool.query(
+        `UPDATE earnings_reminders
+         SET status = 'expired',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE symbol = $1
+           AND earnings_date = $2
+           AND id <> $3
+           AND status IN ('active', 'predicted')`,
+        [symbol, earningsDate, existing.id]
+      );
+
       return result.rows[0];
     }
 
@@ -4124,7 +4176,20 @@ export async function markEarningsReminderPredicted(id, predictedAt, predictionD
         predictionData.keyRisk || null
       ]
     );
-    return result.rows[0] || null;
+    const updated = result.rows[0] || null;
+    if (updated) {
+      await pool.query(
+        `UPDATE earnings_reminders
+         SET status = 'expired',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE symbol = $1
+           AND earnings_date = $2
+           AND id <> $3
+           AND status IN ('active', 'predicted')`,
+        [updated.symbol, updated.earnings_date, updated.id]
+      );
+    }
+    return updated;
   } catch (error) {
     console.error(`Error marking earnings reminder ${id} as predicted:`, error);
     throw error;

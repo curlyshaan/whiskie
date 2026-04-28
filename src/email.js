@@ -286,6 +286,90 @@ class EmailAlerts {
       throw error;
     }
   }
+
+  async sendPortfolioHubRecommendationAlert(diff = {}) {
+    const added = Array.isArray(diff.added) ? diff.added : [];
+    const changed = Array.isArray(diff.changed) ? diff.changed : [];
+    const currentRun = diff.currentRun || null;
+    const previousRun = diff.previousRun || null;
+
+    if (!added.length && !changed.length) {
+      return;
+    }
+
+    const subjectParts = [];
+    if (added.length) subjectParts.push(`${added.length} new`);
+    if (changed.length) subjectParts.push(`${changed.length} changed`);
+    const subject = `🧭 Portfolio Hub Recommendations: ${subjectParts.join(', ')}`;
+
+    const renderIdeaCard = item => `
+      <div style="margin-bottom:12px; padding:14px; border-radius:12px; background:#0b1220; border:1px solid #1f2937;">
+        <div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px;">
+          <div>
+            <div style="font-size:18px; font-weight:800; color:#fff;">${item.symbol || '-'}</div>
+            <div style="color:#cbd5e1; margin-top:4px;">${item.direction || '-'} • ${item.conviction || '-'} conviction • score ${item.deterministicScore ?? item.deterministic_score ?? '-'}</div>
+          </div>
+          <div style="color:#94a3b8;">
+            Rank ${item.deterministicRank ?? item.deterministic_rank ?? '-'}
+          </div>
+        </div>
+        <div style="color:#dbe4f0; line-height:1.6;">
+          <div><strong>Pathway:</strong> ${item.pathway || '-'}</div>
+          <div><strong>Starter shares:</strong> ${item.starterShares ?? item.starter_shares ?? '-'}</div>
+          <div><strong>Starter value:</strong> ${item.starterPositionValue ?? item.starter_position_value ?? '-'}</div>
+          <div><strong>Entry zone:</strong> ${item.entryZone || item.entry_zone || '-'}</div>
+          <div><strong>Relationship:</strong> ${item.relationshipType || item.relationship_type || '-'}</div>
+          ${(item.relatedHoldingSymbol || item.related_holding_symbol) ? `<div><strong>Related holding:</strong> ${item.relatedHoldingSymbol || item.related_holding_symbol}</div>` : ''}
+          ${(item.relatedHoldingAction || item.related_holding_action) ? `<div><strong>Related action:</strong> ${item.relatedHoldingAction || item.related_holding_action}</div>` : ''}
+        </div>
+      </div>
+    `;
+
+    const renderChangedCard = entry => `
+      <div style="margin-bottom:12px; padding:14px; border-radius:12px; background:#0b1220; border:1px solid #1f2937;">
+        <div style="font-size:18px; font-weight:800; color:#fff; margin-bottom:8px;">${entry.symbol}</div>
+        <div style="color:#dbe4f0; margin-bottom:10px;"><strong>Changed fields:</strong> ${entry.changedFields.join(', ') || 'None listed'}</div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px;">
+          <div style="padding:12px; border-radius:10px; background:#111827; border:1px solid #1f2937;">
+            <div style="color:#93c5fd; font-size:12px; text-transform:uppercase; margin-bottom:6px;">Previous</div>
+            <pre style="margin:0; white-space:pre-wrap; color:#cbd5e1; font-family:Menlo, Monaco, Consolas, 'Courier New', monospace;">${JSON.stringify(entry.previous, null, 2)}</pre>
+          </div>
+          <div style="padding:12px; border-radius:10px; background:#111827; border:1px solid #1f2937;">
+            <div style="color:#93c5fd; font-size:12px; text-transform:uppercase; margin-bottom:6px;">Current</div>
+            <pre style="margin:0; white-space:pre-wrap; color:#cbd5e1; font-family:Menlo, Monaco, Consolas, 'Courier New', monospace;">${JSON.stringify(entry.current, null, 2)}</pre>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const html = `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; color:#e2e8f0; background:#0f172a; padding:24px;">
+        <div style="max-width:920px; margin:0 auto; background:#111827; border:1px solid #1f2937; border-radius:16px; overflow:hidden;">
+          <div style="padding:24px; background:linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color:white;">
+            <h2 style="margin:0 0 8px; font-size:28px;">Portfolio Hub Recommendation Alert</h2>
+            <div style="font-size:15px; opacity:0.95;">Detected changes in the final qualified Recommended New Positions list.</div>
+          </div>
+          <div style="padding:24px;">
+            <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:20px;">
+              <div style="padding:12px 14px; border-radius:12px; background:#0b1220; border:1px solid #1f2937;"><strong>${added.length}</strong> new</div>
+              <div style="padding:12px 14px; border-radius:12px; background:#0b1220; border:1px solid #1f2937;"><strong>${changed.length}</strong> changed</div>
+            </div>
+
+            <div style="color:#cbd5e1; margin-bottom:20px;">
+              <div><strong>Current run:</strong> ${currentRun?.generated_at || currentRun?.generatedAt || 'unknown'}</div>
+              <div><strong>Previous run:</strong> ${previousRun?.generated_at || previousRun?.generatedAt || 'none'}</div>
+            </div>
+
+            ${added.length ? `<h3 style="color:#fff; margin:0 0 12px;">New recommendations</h3>${added.map(renderIdeaCard).join('')}` : ''}
+            ${changed.length ? `<h3 style="color:#fff; margin:24px 0 12px;">Changed recommendations</h3>${changed.map(renderChangedCard).join('')}` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+
+    await this.sendEmail(this.alertEmail, subject, html);
+    console.log('📧 Portfolio Hub recommendation alert sent');
+  }
 }
 
 export default new EmailAlerts();

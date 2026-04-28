@@ -340,8 +340,34 @@ class PreRanking {
   async rankUniverses() {
     const ranked = await this.rankStocks();
 
-    const analysisLongs = ranked.longs.filter(candidate => candidate.source === 'watchlist');
-    const analysisShorts = ranked.shorts.filter(candidate => candidate.source === 'watchlist');
+    const activeWatchlistRows = await db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true });
+    const earningsMap = await this.getEarningsMap();
+    const analysisLongs = activeWatchlistRows
+      .filter(row => row.intent !== 'short')
+      .filter(row => {
+        const earningsInfo = earningsMap.get(row.symbol);
+        return !(earningsInfo && earningsInfo.daysUntil >= 0 && earningsInfo.daysUntil <= 3);
+      })
+      .map(row => ({
+        symbol: row.symbol,
+        pathway: row.primary_pathway || row.pathway || null,
+        score: Number(row.opus_conviction || row.score || 100),
+        source: 'watchlist',
+        sourceReasons: ['active saturday_watchlist'],
+        timestamp: new Date().toISOString()
+      }));
+
+    const analysisShorts = activeWatchlistRows
+      .filter(row => row.intent === 'short')
+      .map(row => ({
+        symbol: row.symbol,
+        pathway: row.primary_pathway || row.pathway || null,
+        score: Number(row.opus_conviction || row.score || 100),
+        source: 'watchlist',
+        sourceReasons: ['active saturday_watchlist'],
+        timestamp: new Date().toISOString()
+      }));
+
     const discoveryLongs = ranked.longs.filter(candidate => candidate.source !== 'watchlist');
     const discoveryShorts = ranked.shorts.filter(candidate => candidate.source !== 'watchlist');
 
