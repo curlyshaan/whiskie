@@ -166,6 +166,17 @@ function sumExecutedAdviceShares(symbol, positionType, adviceRows = []) {
   }, 0);
 }
 
+function getLatestUnimplementedAdviceRow(symbol, positionType, adviceRows = []) {
+  const normalizedSymbol = String(symbol || '').toUpperCase();
+  const normalizedPositionType = String(positionType || '').toLowerCase();
+
+  return (adviceRows || []).find(row => {
+    if (String(row.symbol || '').toUpperCase() !== normalizedSymbol) return false;
+    if (String(row.position_type || '').toLowerCase() !== normalizedPositionType) return false;
+    return !Boolean(row.implemented);
+  }) || null;
+}
+
 function inferTargetPositionShares(row, opusReview) {
   const explicitTarget = Number(opusReview?.targetPositionShares);
   if (Number.isFinite(explicitTarget) && explicitTarget >= 0) {
@@ -904,7 +915,8 @@ export async function buildPortfolioHubView(options = {}) {
       null,
       null
     );
-    const latestAdvice = latestAdviceMap.get(buildAdviceKey(symbol, row.positionType))
+    const latestAdvice = getLatestUnimplementedAdviceRow(symbol, row.positionType, latestAdviceRows)
+      || latestAdviceMap.get(buildAdviceKey(symbol, row.positionType))
       || pickDirectionalAdvice(row, latestAdviceRows)
       || null;
     const persistedOpusReview = buildPersistedOpusReview(latestAdvice?.opus_review);
