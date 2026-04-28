@@ -601,6 +601,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                       </div>
                     </div>
                   </div>
+                  <div class="recommended-position-why-now-banner">${escapeHtml(item.why_now || item.whyNow || item.portfolio_fit || 'No concise why-now summary available.')}</div>
                   <div class="recommended-position-layout">
                     <div class="recommended-position-primary-column">
                       <div class="recommended-position-block">
@@ -2563,6 +2564,16 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       grid-template-columns: minmax(260px, 0.95fr) minmax(320px, 1.25fr);
       gap: 16px;
       align-items: start;
+    }
+    .recommended-position-why-now-banner {
+      margin: 0 0 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(30, 64, 175, 0.18) 0%, rgba(12, 18, 32, 0.72) 100%);
+      border: 1px solid rgba(96, 165, 250, 0.28);
+      color: #dbeafe;
+      line-height: 1.55;
+      font-size: 0.95rem;
     }
     .recommended-position-primary-column,
     .recommended-position-secondary-column {

@@ -259,7 +259,13 @@ function scoreRecommendedPositionItem(item = {}, portfolioHub = {}, stockInfoMap
 function passesRecommendedPositionQualityGate(item = {}) {
   const conviction = String(item.conviction || '').toLowerCase();
   const score = Number(item.deterministicScore || 0);
-  return PORTFOLIO_HUB_RECOMMENDATION_ALLOWED_CONVICTIONS.has(conviction) && score >= PORTFOLIO_HUB_RECOMMENDATION_MIN_SCORE;
+  if (!PORTFOLIO_HUB_RECOMMENDATION_ALLOWED_CONVICTIONS.has(conviction)) {
+    return false;
+  }
+  if (conviction === 'high') {
+    return true;
+  }
+  return score >= PORTFOLIO_HUB_RECOMMENDATION_MIN_SCORE;
 }
 
 function normalizeRecommendedPositionAlertShape(item = {}) {

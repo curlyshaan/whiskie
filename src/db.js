@@ -3162,10 +3162,10 @@ export async function getPortfolioHubAdviceHistorySince(date) {
 export async function getLatestPortfolioHubAdviceHistory(symbols = []) {
   if (!Array.isArray(symbols) || !symbols.length) return [];
   const result = await pool.query(
-    `SELECT DISTINCT ON (symbol, COALESCE(position_type, 'unknown')) *
+    `SELECT *
      FROM portfolio_hub_advice_history
      WHERE symbol = ANY($1)
-     ORDER BY symbol, COALESCE(position_type, 'unknown'), created_at DESC, id DESC`,
+     ORDER BY symbol ASC, COALESCE(position_type, 'unknown') ASC, created_at DESC, id DESC`,
     [symbols]
   );
   return result.rows || [];
