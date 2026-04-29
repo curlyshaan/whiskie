@@ -15,6 +15,34 @@ class TavilyAPI {
     this.baseURL = 'https://api.tavily.com';
     this.defaultTTL = Number(process.env.TAVILY_CACHE_TTL_MS || 10 * 60 * 1000);
     this.cache = new Map();
+    this.cooldownUntil = 0;
+  }
+
+  isNonFatalAvailabilityError(error) {
+    const status = Number(error?.response?.status || 0);
+    return [401, 429, 432, 433].includes(status);
+  }
+
+  getCooldownMs(status) {
+    if (status === 429) return 15 * 60 * 1000;
+    if (status === 432 || status === 433) return 60 * 60 * 1000;
+    if (status === 401) return 60 * 60 * 1000;
+    return 10 * 60 * 1000;
+  }
+
+  getErrorDetail(error) {
+    const responseBody = error?.response?.data;
+    return typeof responseBody?.detail?.error === 'string'
+      ? responseBody.detail.error
+      : (typeof responseBody?.detail === 'string' ? responseBody.detail : null);
+  }
+
+  shouldShortCircuit() {
+    return this.cooldownUntil > Date.now();
+  }
+
+  activateCooldown(status) {
+    this.cooldownUntil = Date.now() + this.getCooldownMs(status);
   }
 
   normalizeSymbolToken(symbol) {
@@ -67,6 +95,16 @@ class TavilyAPI {
   async search(query, options = {}) {
     const normalizedQuery = String(query || '').trim();
     if (!normalizedQuery) return [];
+
+    if (!TAVILY_API_KEY) {
+      console.warn('Tavily API key missing; skipping Tavily search.');
+      return [];
+    }
+
+    if (this.shouldShortCircuit()) {
+      console.warn(`Tavily search skipped during cooldown for query: ${normalizedQuery}`);
+      return [];
+    }
 
     const cacheTtlMs = options.cacheTtlMs ?? this.defaultTTL;
     const useCache = options.useCache !== false;
@@ -126,10 +164,7 @@ class TavilyAPI {
       return results;
     } catch (error) {
       const responseStatus = error?.response?.status;
-      const responseBody = error?.response?.data;
-      const responseDetail = typeof responseBody?.detail?.error === 'string'
-        ? responseBody.detail.error
-        : (typeof responseBody?.detail === 'string' ? responseBody.detail : null);
+      const responseDetail = this.getErrorDetail(error);
       console.error('Tavily search error:', {
         message: error.message,
         query: normalizedQuery,
@@ -144,6 +179,13 @@ class TavilyAPI {
         responseStatus,
         responseDetail
       });
+
+      if (this.isNonFatalAvailabilityError(error)) {
+        this.activateCooldown(responseStatus);
+        console.warn(`Tavily unavailable (status ${responseStatus}); returning empty results for now.`);
+        return [];
+      }
+
       throw error;
     }
   }
@@ -162,6 +204,9 @@ class TavilyAPI {
         return await this.search(nextQuery, nextOptions);
       } catch (error) {
         lastError = error;
+        if (this.isNonFatalAvailabilityError(error)) {
+          return [];
+        }
         if (error?.response?.status !== 400) {
           throw error;
         }
