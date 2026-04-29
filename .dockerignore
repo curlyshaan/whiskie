@@ -1,0 +1,11 @@
+node_modules
+.git
+.env
+logs
+*.log
+tmp
+temp
+.DS_Store
+*.png
+*.zip
+*.csv
