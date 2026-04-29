@@ -194,6 +194,35 @@ function renderRecommendationScoringChips(item) {
     : '';
 }
 
+function renderRecommendationDecisionBar(item) {
+  const starterShares = item.starter_shares ?? item.starterShares;
+  const starterValue = item.starter_position_value ?? item.starterPositionValue;
+  const entryZone = item.entry_zone || item.entryZone || '-';
+  const stopLoss = item.stop_loss ?? item.stopLoss;
+  const takeProfit = item.take_profit ?? item.takeProfit;
+  const recommendedAccount = item.recommended_account_type || item.recommendedAccountType || '-';
+
+  const cells = [
+    { label: 'Best account', value: recommendedAccount },
+    { label: 'Starter shares', value: starterShares != null && starterShares !== '' ? escapeHtml(String(starterShares)) : '-' },
+    { label: 'Starter value', value: starterValue != null && starterValue !== '' ? formatMoney(starterValue) : '-' },
+    { label: 'Entry zone', value: escapeHtml(entryZone) },
+    { label: 'Stop', value: stopLoss ? formatMoney(stopLoss) : '-' },
+    { label: 'Target', value: takeProfit ? formatMoney(takeProfit) : '-' }
+  ];
+
+  return `
+    <div class="recommended-position-decision-bar">
+      ${cells.map(cell => `
+        <div class="recommended-position-decision-cell">
+          <div class="recommended-position-decision-label">${escapeHtml(cell.label)}</div>
+          <div class="recommended-position-decision-value">${cell.value}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
 function renderRecommendationReasoning(item) {
   const structuredSections = [
     { label: 'Thesis', value: item.thesis || '-' },
@@ -557,29 +586,17 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                       ${renderRecommendationBadgeList(item)}
                       ${renderRecommendationScoringChips(item)}
                     </div>
-                    <div class="recommended-position-sizing">
-                      <div class="recommended-position-size-card">
-                        <div class="metric-label">Starter shares</div>
-                        <div class="recommended-position-size-value">${escapeHtml(String(item.starter_shares ?? item.starterShares ?? '-'))}</div>
-                      </div>
-                      <div class="recommended-position-size-card">
-                        <div class="metric-label">Starter value</div>
-                        <div class="recommended-position-size-value">${item.starter_position_value != null || item.starterPositionValue != null ? formatMoney(item.starter_position_value ?? item.starterPositionValue) : '-'}</div>
-                      </div>
-                    </div>
                   </div>
                   <div class="recommended-position-why-now-banner">${escapeHtml(item.why_now || item.whyNow || item.portfolio_fit || 'No concise why-now summary available.')}</div>
+                  ${renderRecommendationDecisionBar(item)}
                   <div class="recommended-position-layout">
                     <div class="recommended-position-primary-column">
                       <div class="recommended-position-block">
-                        <div class="recommended-position-block-title">Setup</div>
+                        <div class="recommended-position-block-title">Trade plan</div>
                         ${renderKeyValueRows([
-                    { label: 'Entry zone', value: item.entry_zone || item.entryZone || '-' },
-                    { label: 'Stop loss', value: (item.stop_loss ?? item.stopLoss) ? formatMoney(item.stop_loss ?? item.stopLoss) : '-' },
-                    { label: 'Take profit', value: (item.take_profit ?? item.takeProfit) ? formatMoney(item.take_profit ?? item.takeProfit) : '-' },
                     { label: 'Target framework', value: item.target_framework || item.targetFramework || '-' },
-                    { label: 'Portfolio fit', value: item.portfolio_fit || item.portfolioFit || '-' },
-                    { label: 'Sector impact', value: item.sector_impact || item.sectorImpact || '-' },
+                    { label: 'Recommended account', value: item.recommended_account_type || item.recommendedAccountType || '-' },
+                    { label: 'Account reason', value: item.recommended_account_reason || item.recommendedAccountReason || '-' },
                     { label: 'Holding relationship action', value: item.related_holding_action || item.relatedHoldingAction || '-' }
                   ])}
                       </div>
@@ -593,10 +610,10 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                         <div class="recommended-position-block-title">Recommendation summary</div>
                         ${renderRecommendationReasoning(item)}
                       </div>
-                      <div class="recommended-position-block">
-                        <div class="recommended-position-block-title">Scoring breakdown</div>
-                        ${renderJsonValue(item.scoring_breakdown || item.scoringBreakdown || null)}
-                      </div>
+                      <details class="recommended-position-block">
+                        <summary class="recommended-position-block-title" style="cursor:pointer; margin-bottom:0;">Scoring breakdown</summary>
+                        <div style="margin-top:12px;">${renderJsonValue(item.scoring_breakdown || item.scoringBreakdown || null)}</div>
+                      </details>
                     </div>
                   </div>
                 </div>
@@ -690,7 +707,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         </div>
       </details>
 
-      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;" open>
+      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;">
         <summary>Symbol Account Breakdown</summary>
         <div style="margin-top:12px;">
           ${holdingsAccountBreakdown.length === 0 ? '<div class="no-data">No account-level holdings breakdown yet.</div>' : `
@@ -2525,6 +2542,33 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       font-size: 1rem;
       font-weight: 700;
       line-height: 1.4;
+    }
+    .recommended-position-decision-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin: 0 0 14px;
+    }
+    .recommended-position-decision-cell {
+      background: #11182b;
+      border: 1px solid #2a2f4a;
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .recommended-position-decision-label {
+      color: #93c5fd;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+    }
+    .recommended-position-decision-value {
+      color: #fff;
+      font-size: 0.98rem;
+      font-weight: 700;
+      line-height: 1.35;
+      word-break: break-word;
     }
     .recommended-position-layout {
       display: grid;
