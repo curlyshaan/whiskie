@@ -1387,6 +1387,9 @@ function formatDashboardSession(value) {
 
 function formatDashboardDateOnly(value) {
   if (!value) return '-';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, '0')}-${String(value.getUTCDate()).padStart(2, '0')}`;
+  }
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
     return value.trim();
   }
@@ -5067,6 +5070,9 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
 
     function formatIsoDate(value) {
       if (!value) return '-';
+      if (value instanceof Date && !Number.isNaN(value.getTime())) {
+        return value.getUTCFullYear() + '-' + String(value.getUTCMonth() + 1).padStart(2, '0') + '-' + String(value.getUTCDate()).padStart(2, '0');
+      }
       if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim())) {
         return value.trim();
       }
