@@ -3,6 +3,8 @@ LD_LIBRARY_PATH = "/nix/var/nix/profiles/default/lib:/nix/var/nix/profiles/defau
 
 [phases.build]
 cmds = []
+dependsOn = ["install"]
+onlyIncludeFiles = []
 
 [phases.setup]
 nixPkgs = ['nodejs_20', 'postgresql', 'python311', 'stdenv.cc.cc.lib']
