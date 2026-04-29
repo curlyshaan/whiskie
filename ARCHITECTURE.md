@@ -28,6 +28,7 @@ Primary code areas:
 - `src/portfolio-hub.js` — Portfolio Hub recomputation, review, and recommendation logic
 - `src/earnings-reminders.js` — earnings prediction, lifecycle, and grading logic
 - `src/analysis.js` and related modules — daily market/trade analysis pipeline
+- `src/serper.js` and `src/news-search.js` — news discovery, article extraction, and Quatarly summarization pipeline
 
 ## Runtime model
 
@@ -49,7 +50,7 @@ External providers:
 
 - Quatarly / Claude-family models for reasoning and structured generation
 - FMP for fundamentals, quotes, technicals, and earnings data
-- Tavily for news and web context
+- Serper for news and web context
 - Tradier for brokerage state, order placement, and market-hours checks
 - Resend for email alerts
 

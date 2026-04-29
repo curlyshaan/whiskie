@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import claude, { MODELS } from './claude.js';
 import fmp from './fmp.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 import email from './email.js';
 
 /**
@@ -213,7 +213,7 @@ class WeeklyOpusReview {
       ]);
 
       // Structured recent news/context
-      const news = await tavily.searchStructuredStockContext(stock.symbol, { maxResults: 5 });
+      const news = await newsSearch.searchStructuredStockContext(stock.symbol, { maxResults: 5 });
 
       // Build Opus prompt
       const prompt = this.buildAnalysisPrompt(stock, pathway, profile, ratios, keyMetrics, quote, news, bundle);

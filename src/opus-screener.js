@@ -179,7 +179,7 @@ class OpusScreener {
     const prompt = `You are analyzing ${sortedStocks.length} pre-screened stocks from Saturday's fundamental screening to refine and rank them.
 
 **Context:** These stocks were already identified by fundamental metrics screening with specific pathways (deepValue, highGrowth, overvalued, etc.). Your job is to:
-1. Use current news/catalysts (via Tavily) to validate or invalidate the fundamental thesis
+1. Use current news/catalysts (via Serper) to validate or invalidate the fundamental thesis
 2. Reference stock profiles to understand business context and recent changes
 3. Rank and refine the list to identify the TOP 15 quality longs and TOP 15 overvalued shorts
 

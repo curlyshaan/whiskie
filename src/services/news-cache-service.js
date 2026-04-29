@@ -1,4 +1,4 @@
-import tavily from '../tavily.js';
+import newsSearch from '../news-search.js';
 
 class NewsCacheService {
   constructor() {
@@ -12,8 +12,6 @@ class NewsCacheService {
       symbol: normalizedSymbol,
       maxResults: options.maxResults || 5,
       timeRange: options.timeRange || 'month',
-      depth: options.depth || 'basic',
-      topic: options.topic || 'news',
       context: options.context || null
     });
 
@@ -22,7 +20,7 @@ class NewsCacheService {
       return cached.data;
     }
 
-    const data = await tavily.searchStructuredStockContext(normalizedSymbol, options);
+    const data = await newsSearch.searchStructuredStockContext(normalizedSymbol, options);
     this.cache.set(key, { data, timestamp: Date.now() });
     return data;
   }
@@ -34,7 +32,7 @@ class NewsCacheService {
       return cached.data;
     }
 
-    const data = await tavily.searchStructuredMacroContext(options);
+    const data = await newsSearch.searchStructuredMacroContext(options);
     this.cache.set(key, { data, timestamp: Date.now() });
     return data;
   }

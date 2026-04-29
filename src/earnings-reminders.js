@@ -2,7 +2,7 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import * as db from './db.js';
 import fmp from './fmp.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 import claude, { MODELS } from './claude.js';
 import { resolveMarketPrice } from './utils.js';
 import { ensureFreshStockProfile } from './stock-profiles.js';
@@ -429,8 +429,8 @@ export async function enrichEarningsWhispersTiming(symbol) {
 export async function buildEarningsCatalystSummary(symbol, options = {}) {
   const companyName = options.companyName || '';
   const [earningsContext, stockContext] = await Promise.all([
-    tavily.searchStructuredEarningsContext(symbol, { maxResults: 4, companyName }).catch(() => []),
-    tavily.searchStructuredStockContext(symbol, { maxResults: 3, companyName, timeRange: 'week' }).catch(() => [])
+    newsSearch.searchStructuredEarningsContext(symbol, { maxResults: 4, companyName }).catch(() => []),
+    newsSearch.searchStructuredStockContext(symbol, { maxResults: 3, companyName, timeRange: 'week' }).catch(() => [])
   ]);
 
   const filtered = filterResultsForSymbolIdentity(symbol, companyName, [...earningsContext, ...stockContext]);
@@ -610,7 +610,7 @@ export async function runOfficialReminderPrediction(reminder) {
     Promise.resolve(reminder.catalyst_summary || '').then(async existing => existing || buildEarningsCatalystSummary(symbol, {
       companyName: stockInfo?.company_name
     })),
-    tavily.searchStructuredStockContext(symbol, {
+    newsSearch.searchStructuredStockContext(symbol, {
       maxResults: 4,
       companyName: stockInfo?.company_name,
       timeRange: 'week'

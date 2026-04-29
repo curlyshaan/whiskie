@@ -1,5 +1,5 @@
 import fmp from './fmp.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 import * as db from './db.js';
 
 /**
@@ -77,8 +77,8 @@ export async function runPreMarketScan() {
       // Fetch quick news for significant gaps (>3%)
       if (Math.abs(gapPct) > 3) {
         try {
-          const news = await tavily.searchStructuredPremarketContext(normalizedSymbol, { maxResults: 2 });
-          gapInfo.newsHeadlines = tavily.formatResults(news);
+          const news = await newsSearch.searchStructuredPremarketContext(normalizedSymbol, { maxResults: 2 });
+          gapInfo.newsHeadlines = newsSearch.formatResults(news);
         } catch (e) {
           gapInfo.newsHeadlines = 'News unavailable';
         }

@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import fmp from './fmp.js';
 import claude from './claude.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 import email from './email.js';
 import performanceAnalyzer from './performance-analyzer.js';
 import trendLearning from './trend-learning.js';
@@ -128,8 +128,8 @@ export async function reviewPosition(symbol, lots) {
       : 'No upcoming earnings';
 
     // Get structured recent news/context
-    const news = await tavily.searchStructuredStockContext(symbol, { maxResults: 5 });
-    const newsText = tavily.formatResults(news);
+    const news = await newsSearch.searchStructuredStockContext(symbol, { maxResults: 5 });
+    const newsText = newsSearch.formatResults(news);
 
     // Build lot details
     let lotDetails = '';

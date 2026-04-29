@@ -769,7 +769,7 @@ router.post('/analyze', async (req, res) => {
     try {
       news = await newsCacheService.getStructuredStockContext(symbol, { maxResults: 5 });
     } catch (error) {
-      console.warn(`   ⚠️ Tavily structured search failed for ${symbol}: ${error.message}`);
+      console.warn(`   ⚠️ Serper structured search failed for ${symbol}: ${error.message}`);
       news = [];
     }
 

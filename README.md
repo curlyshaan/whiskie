@@ -21,7 +21,7 @@ Whiskie currently does the following:
 
 - builds and maintains a curated `stock_universe` from FMP
 - runs weekly screening into `saturday_watchlist`
-- builds stock profiles for watchlist names using FMP + Tavily + Gemini
+- builds stock profiles for watchlist names using FMP + Serper + Gemini
 - runs weekday daily analysis using a 4-phase pipeline
 - queues trades into `trade_approvals` for manual approval
 - executes approved trades and monitors exits during market hours
@@ -61,7 +61,7 @@ Whiskie currently does the following:
 
 Stock profiles are operationally important and currently work like this:
 
-- source inputs: **FMP fundamentals + FMP historical price data + Tavily news + Gemini generation**
+- source inputs: **FMP fundamentals + FMP historical price data + Serper news + Gemini generation**
 - profile build path is intentionally **Yahoo-free**
 - profile generation is split into 3 Gemini calls:
   - `core-business`
@@ -111,7 +111,7 @@ The goal of this section is that a future session should not need you to restate
 | --- | --- | --- | --- | --- |
 | Quatarly | Claude/Opus/Gemini gateway | `https://www.quatarly.cloud/docs` | `QUATARLY_API_KEY`, `QUATARLY_BASE_URL` | Current base URL is `https://api.quatarly.cloud/` |
 | FMP | Fundamentals, quotes, historical prices, earnings, core market data | `https://site.financialmodelingprep.com/developer/docs/stable` | `FMP_API_KEY_1` | Current code assumes a paid single-key setup and `/stable` endpoints |
-| Tavily | Structured company/news context | `https://docs.tavily.com/welcome` and `https://docs.tavily.com/documentation/api-reference/introduction` | `TAVILY_API_KEY` | Prefer structured helper usage in `src/tavily.js` |
+| Serper | Google-style discovery for structured search/news retrieval | `https://serper.dev` | `SERPER_API_KEY` | `src/serper.js` finds URLs and `src/news-search.js` fetches + summarizes top articles via Quatarly |
 | Tradier | Brokerage, market open state, order/account actions | `https://documentation.tradier.com/brokerage-api` | `TRADIER_API_KEY`, `TRADIER_BASE_URL`, `TRADIER_SANDBOX_API_KEY`, `TRADIER_SANDBOX_URL`, `TRADIER_ACCOUNT_ID`, `TRADIER_SANDBOX_ACCOUNT_ID` | Supports live and sandbox/paper flows |
 | Resend | Email delivery | `https://resend.com/docs` | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `ALERT_EMAIL` | Used for alerts and reminder email delivery |
 | FRED | Macro calendar/economic support | `https://fred.stlouisfed.org/docs/api/fred/` | `FRED_API_KEY` | Present in env for macro/economic data support |
@@ -217,7 +217,8 @@ Current important variables:
 - `QUATARLY_API_KEY`
 - `QUATARLY_BASE_URL`
 - `FMP_API_KEY_1`
-- `TAVILY_API_KEY`
+- `SERPER_API_KEY`
+- `NEWS_SUMMARY_MODEL`
 - `TRADIER_API_KEY`
 - `TRADIER_BASE_URL`
 - `TRADIER_SANDBOX_API_KEY`
@@ -249,7 +250,7 @@ Recent reliability/performance updates:
 - circuit breaker now checks both weekly loss and daily drawdown
 - options analyzer keeps low-conviction options ideas as warnings instead of force-converting them to `no_trade`
 - earnings trim lot changes now execute inside a DB transaction
-- shared services now provide reusable profile-build coordination, Tavily/news caching, quote caching, and Opus-response caching
+- shared services now provide reusable profile-build coordination, Serper/news caching, quote caching, and Opus-response caching
 
 Paper/sandbox deployments should always set:
 
@@ -300,9 +301,9 @@ Whiskie now uses `earnings_calendar` as the source of truth for upcoming earning
 - dark glassmorphism dashboard styling
 - date-only earnings values are rendered as literal calendar dates, not timezone-shifted timestamps
 
-Tavily/news-provider behavior:
+Serper/news-provider behavior:
 
-- selected Tavily provider/account failures that surface as soft HTTP 432 responses now degrade to empty news context in major workflows instead of automatically failing the full job
+- selected Serper provider/account failures that surface as soft HTTP 432 responses now degrade to empty news context in major workflows instead of automatically failing the full job
 
 ## Dashboard behavior
 

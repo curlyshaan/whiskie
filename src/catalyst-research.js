@@ -1,4 +1,4 @@
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 
 const SEARCH_DOMAINS = [
   'seekingalpha.com',
@@ -31,17 +31,13 @@ export function detectCatalysts(news = []) {
 
 export async function researchCatalysts(symbol, pathway) {
   const [catalystResults, positioningResults] = await Promise.allSettled([
-    tavily.searchStructuredStockContext(symbol, {
+    newsSearch.searchStructuredStockContext(symbol, {
       maxResults: 4,
-      depth: 'advanced',
-      topic: 'news',
       timeRange: 'month',
       includeDomains: SEARCH_DOMAINS
     }),
-    tavily.searchStructuredMonitoringContext(symbol, {
+    newsSearch.searchStructuredMonitoringContext(symbol, {
       maxResults: 3,
-      depth: 'basic',
-      topic: 'news',
       timeRange: 'month',
       includeDomains: SEARCH_DOMAINS
     })

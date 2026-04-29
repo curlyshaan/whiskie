@@ -60,3 +60,10 @@ Before closing work:
 - Portfolio Hub persistence
 - earnings reminders
 - live trading workflows
+
+
+## News retrieval
+
+- `SERPER_API_KEY` powers URL discovery via Serper
+- `NEWS_SUMMARY_MODEL` selects the Quatarly model used to summarize fetched article text (default: `claude-sonnet-4-6-thinking`)
+- `src/news-search.js` fetches top result pages, extracts readable article text with Cheerio, and produces structured bullets for downstream prompts

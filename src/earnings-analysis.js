@@ -1,7 +1,7 @@
 import * as db from './db.js';
 import fmp from './fmp.js';
 import claude from './claude.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 import email from './email.js';
 import tradier from './tradier.js';
 import thesisManager from './thesis-manager.js';
@@ -32,7 +32,7 @@ async function getEarningsSurpriseHistory(symbol) {
 
 async function getPostEarningsContext(symbol) {
   const [news, quote, surpriseHistory] = await Promise.all([
-    tavily.searchStructuredEarningsContext(symbol, { maxResults: 3 }).catch(() => []),
+    newsSearch.searchStructuredEarningsContext(symbol, { maxResults: 3 }).catch(() => []),
     fmp.getQuote(symbol).catch(() => null),
     getEarningsSurpriseHistory(symbol).catch(() => null)
   ]);
@@ -107,8 +107,8 @@ export async function analyzeBeforeEarnings(position) {
     console.log(`   Days until: ${position.daysUntil}`);
 
     // Get latest news
-    const news = await tavily.searchStructuredEarningsContext(position.symbol, { maxResults: 3 });
-    const newsText = tavily.formatResults(news);
+    const news = await newsSearch.searchStructuredEarningsContext(position.symbol, { maxResults: 3 });
+    const newsText = newsSearch.formatResults(news);
 
     // Get current price
     const quote = await fmp.getQuote(position.symbol);
@@ -411,7 +411,7 @@ export async function analyzeAfterEarnings(symbol) {
   ]);
 
   const currentPrice = Number(resolveMarketPrice(context.quote, { marketOpen: false, fallback: 0 }));
-  const newsText = tavily.formatResults(context.news || []);
+  const newsText = newsSearch.formatResults(context.news || []);
   const prompt = `
 You are reviewing ${normalizedSymbol} immediately after an earnings event.
 

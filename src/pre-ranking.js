@@ -502,7 +502,7 @@ class PreRanking {
         return null;
       }
       // Note: Stocks with earnings -1 to -3 days (just reported) are ALLOWED
-      // Tavily news in daily analysis will catch "good earnings but stock down" opportunities
+      // Serper news in daily analysis will catch "good earnings but stock down" opportunities
 
       // Check if meets sector-adjusted momentum threshold
       const meetsThreshold = allowOffHoursBypass || allowWatchlistVolumeFallback || bypassMomentum || (

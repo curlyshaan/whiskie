@@ -1807,13 +1807,12 @@ export async function initDatabase() {
     `);
 
     await client.query(`
-      CREATE TABLE IF NOT EXISTS tavily_usage_events (
+      CREATE TABLE IF NOT EXISTS serper_usage_events (
         id SERIAL PRIMARY KEY,
         activity VARCHAR(100) NOT NULL,
         symbol VARCHAR(10),
         query TEXT NOT NULL,
-        topic VARCHAR(30),
-        search_depth VARCHAR(20),
+        search_type VARCHAR(20),
         max_results INTEGER,
         result_count INTEGER DEFAULT 0,
         cache_hit BOOLEAN DEFAULT FALSE,
@@ -1823,15 +1822,29 @@ export async function initDatabase() {
     `);
 
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_tavily_usage_events_activity ON tavily_usage_events(activity);
+      CREATE INDEX IF NOT EXISTS idx_serper_usage_events_activity ON serper_usage_events(activity);
     `);
 
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_tavily_usage_events_symbol ON tavily_usage_events(symbol);
+      CREATE INDEX IF NOT EXISTS idx_serper_usage_events_symbol ON serper_usage_events(symbol);
     `);
 
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_tavily_usage_events_created_at ON tavily_usage_events(created_at);
+      CREATE INDEX IF NOT EXISTS idx_serper_usage_events_created_at ON serper_usage_events(created_at);
+    `);
+
+    await client.query(`
+      ALTER TABLE IF EXISTS tavily_usage_events RENAME TO serper_usage_events;
+    `);
+
+    await client.query(`
+      ALTER TABLE serper_usage_events
+      RENAME COLUMN topic TO search_type;
+    `).catch(() => {});
+
+    await client.query(`
+      ALTER TABLE serper_usage_events
+      DROP COLUMN IF EXISTS search_depth;
     `);
 
     await client.query(`
@@ -4615,13 +4628,12 @@ export async function logCronJobComplete(jobId, success, errorMessage = null) {
   }
 }
 
-export async function logTavilyUsageEvent(payload = {}) {
+export async function logSerperUsageEvent(payload = {}) {
   const {
     activity = 'unknown',
     symbol = null,
     query = '',
-    topic = null,
-    searchDepth = null,
+    searchType = null,
     maxResults = null,
     resultCount = 0,
     cacheHit = false,
@@ -4630,15 +4642,14 @@ export async function logTavilyUsageEvent(payload = {}) {
 
   try {
     await pool.query(
-      `INSERT INTO tavily_usage_events (
-        activity, symbol, query, topic, search_depth, max_results, result_count, cache_hit, context
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+      `INSERT INTO serper_usage_events (
+        activity, symbol, query, search_type, max_results, result_count, cache_hit, context
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
       [
         String(activity || 'unknown'),
         symbol ? String(symbol).toUpperCase() : null,
         String(query || ''),
-        topic || null,
-        searchDepth || null,
+        searchType || null,
         Number.isFinite(Number(maxResults)) ? Number(maxResults) : null,
         Number.isFinite(Number(resultCount)) ? Number(resultCount) : 0,
         Boolean(cacheHit),
@@ -4646,7 +4657,7 @@ export async function logTavilyUsageEvent(payload = {}) {
       ]
     );
   } catch (error) {
-    console.error('Error logging Tavily usage event:', error);
+    console.error('Error logging Serper usage event:', error);
   }
 }
 

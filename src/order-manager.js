@@ -1,6 +1,6 @@
 import tradier from './tradier.js';
 import claude from './claude.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 import * as db from './db.js';
 
 /**
@@ -306,8 +306,8 @@ class OrderManager {
       console.log(`\n🔍 Analyzing orders for ${symbol}...`);
 
       // Get recent news
-      const news = await tavily.searchStructuredMonitoringContext(symbol, { maxResults: 5 });
-      const formattedNews = tavily.formatResults(news);
+      const news = await newsSearch.searchStructuredMonitoringContext(symbol, { maxResults: 5 });
+      const formattedNews = newsSearch.formatResults(news);
 
       // Get order info
       const orderInfo = this.activeOrders.get(symbol);

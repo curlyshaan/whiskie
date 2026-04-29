@@ -2,7 +2,7 @@ import * as db from './db.js';
 import claude, { MODELS } from './claude.js';
 import fmp from './fmp.js';
 import tradier from './tradier.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 
 const profileBuildControllers = new Map();
 
@@ -468,10 +468,8 @@ export async function buildStockProfile(symbol, options = {}) {
     throwIfProfileBuildCancelled(symbol);
 
     console.log('  📰 Fetching recent news...');
-    const news = await tavily.searchStructuredStockContext(symbol, {
+    const news = await newsSearch.searchStructuredStockContext(symbol, {
       maxResults: 5,
-      depth: 'advanced',
-      topic: 'news',
       timeRange: 'month'
     });
     timer.step('fetch-news');
@@ -537,7 +535,7 @@ async function updateStockProfile(symbol, existingProfile = null, options = {}) 
     throwIfProfileBuildCancelled(symbol);
 
     console.log('  📰 Fetching recent news...');
-    const news = await tavily.searchStructuredStockContext(symbol, { maxResults: 3 });
+    const news = await newsSearch.searchStructuredStockContext(symbol, { maxResults: 3 });
     timer.step('fetch-news');
     throwIfProfileBuildCancelled(symbol);
 

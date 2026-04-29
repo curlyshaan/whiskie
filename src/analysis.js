@@ -1,7 +1,7 @@
 import tradier from './tradier.js';
 import fmp from './fmp.js';
 import claude from './claude.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 import riskManager from './risk-manager.js';
 import { resolveMarketPrice } from './utils.js';
 import * as db from './db.js';
@@ -746,8 +746,8 @@ class AnalysisEngine {
       const technicals = await this.getTechnicalIndicators(symbol);
 
       // Get news
-      const news = await tavily.searchStructuredMonitoringContext(symbol, { maxResults: 3 });
-      const formattedNews = tavily.formatResults(news);
+      const news = await newsSearch.searchStructuredMonitoringContext(symbol, { maxResults: 3 });
+      const formattedNews = newsSearch.formatResults(news);
 
       // Get fundamentals (if available)
       let fundamentals = null;
@@ -796,8 +796,8 @@ class AnalysisEngine {
       const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
 
       // Get news
-      const news = await tavily.searchStructuredMonitoringContext(position.symbol, { maxResults: 3 });
-      const formattedNews = tavily.formatResults(news);
+      const news = await newsSearch.searchStructuredMonitoringContext(position.symbol, { maxResults: 3 });
+      const formattedNews = newsSearch.formatResults(news);
 
       // Ask Claude to evaluate
       const analysis = await claude.evaluateSell(

@@ -459,7 +459,7 @@ class OptionsAnalyzer {
       db.getLatestSaturdayWatchlistEntry(normalizedSymbol),
       db.getLatestPendingApprovalForSymbol(normalizedSymbol),
       db.getPositions(),
-      newsCacheService.getStructuredStockContext(normalizedSymbol, { maxResults: 5, depth: 'advanced', topic: 'news', timeRange: 'month' }).catch(() => []),
+      newsCacheService.getStructuredStockContext(normalizedSymbol, { maxResults: 5, timeRange: 'month' }).catch(() => []),
       tradier.getOptionsExpirations(normalizedSymbol)
     ]);
 

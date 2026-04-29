@@ -6,7 +6,7 @@ import adhocAnalyzer from './adhoc-analyzer.js';
 import tradier from './tradier.js';
 import claude from './claude.js';
 import fmp from './fmp.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 import email from './email.js';
 import riskManager from './risk-manager.js';
 import tradeSafeguard from './trade-safeguard.js';
@@ -1216,7 +1216,7 @@ class WhiskieBot {
       }
     });
 
-    // Chat endpoint with Tavily integration
+    // Chat endpoint with Serper integration
     app.post('/chat', async (req, res) => {
       try {
         const { question } = req.body;
@@ -1230,8 +1230,8 @@ class WhiskieBot {
         // Get current portfolio state
         const portfolio = await analysisEngine.getPortfolioState();
 
-        // Search for relevant market news/data with Tavily
-        const searchResults = await tavily.search(question, { maxResults: 5 });
+        // Search for relevant market news/data with Serper
+        const searchResults = await newsSearch.search(question, { maxResults: 5, engine: 'search', fetchFullArticles: 2 });
         const newsContext = searchResults.map(r => `${r.title}: ${r.content}`).join('\n\n');
 
         // Get real-time market data for portfolio positions
@@ -1507,10 +1507,10 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
 
       // Get enriched news
       console.log('📰 Fetching enriched news...');
-      const marketNews = await tavily.searchMarketNews(8);
-      const techNews = await tavily.searchSectorNews('technology', 3);
-      const healthNews = await tavily.searchSectorNews('healthcare', 3);
-      const macroResults = await tavily.searchStructuredMacroContext({ maxResults: 5 });
+      const marketNews = await newsSearch.searchMarketNews(8);
+      const techNews = await newsSearch.searchSectorNews('technology', 3);
+      const healthNews = await newsSearch.searchSectorNews('healthcare', 3);
+      const macroResults = await newsSearch.searchStructuredMacroContext({ maxResults: 5 });
       const allNews = [...marketNews, ...techNews, ...healthNews, ...macroResults];
 
       // Sanitize news content to prevent prompt injection
@@ -1520,7 +1520,7 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
         content: sanitizeNewsContent(article.content)
       }));
 
-      const formattedNews = tavily.formatResults(sanitizedNews);
+      const formattedNews = newsSearch.formatResults(sanitizedNews);
       const wrappedNews = wrapNewsForPrompt(formattedNews);
       console.log(`   Found ${allNews.length} articles (sanitized)\n`);
 
@@ -1682,7 +1682,7 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
 
         // Brief news scan for major market events
         console.log('📰 Scanning for major market events...');
-        const majorNews = await tavily.searchMarketNews(3);
+        const majorNews = await newsSearch.searchMarketNews(3);
         if (majorNews.length > 0) {
           console.log(`   Found ${majorNews.length} recent market headlines`);
         }
@@ -2349,7 +2349,7 @@ ${assetClassContext}
 1. Growth Potential: Can this stock 2x-3x over 12-24 months? Addressable market, acceleration, margin expansion, moat
 2. Fundamental Analysis: Business quality, revenue/earnings growth, valuation, balance sheet, management
 3. Technical Analysis: Price vs moving averages, support/resistance, volume, RSI/MACD, chart patterns
-4. Catalyst Analysis: Use the provided Tavily results to identify dated catalysts, probability, and impact
+4. Catalyst Analysis: Use the provided Serper results to identify dated catalysts, probability, and impact
 5. Risk/Reward: Entry price, stop loss, target price, R/R ratio (minimum 2:1), position size
 
 **Decision Criteria:**

@@ -3,7 +3,7 @@ import { buildPortfolioHubRecommendation } from './portfolio-hub-advisor.js';
 import { buildPortfolioHubSymbolContext } from './portfolio-hub-context.js';
 import { PORTFOLIO_HUB_POLICY } from './portfolio-hub-policy.js';
 import claude from './claude.js';
-import tavily from './tavily.js';
+import newsSearch from './news-search.js';
 import vixRegime from './vix-regime.js';
 import riskManager from './risk-manager.js';
 import newsCacheService from './services/news-cache-service.js';
@@ -865,7 +865,7 @@ async function buildPortfolioHubMarketContext(portfolioHub) {
   const [regime, spyRegime, macroNews] = await Promise.all([
     vixRegime.getRegime().catch(() => null),
     riskManager.getMarketRegime().catch(() => 'unknown'),
-    tavily.searchStructuredMacroContext({ maxResults: 5, timeRange: 'week' }).catch(() => [])
+    newsSearch.searchStructuredMacroContext({ maxResults: 5, timeRange: 'week' }).catch(() => [])
   ]);
 
   const allocationGuide = riskManager.getTargetAllocation(spyRegime || 'unknown');
@@ -899,7 +899,7 @@ async function buildPortfolioHubMarketContext(portfolioHub) {
 
   return {
     summary,
-    formattedMacroNews: tavily.formatResults(macroNews)
+    formattedMacroNews: newsSearch.formatResults(macroNews)
   };
 }
 
@@ -941,7 +941,7 @@ async function buildPortfolioHubStockNewsContext(holdings = [], sectorTrimCandid
         positionType: row.positionType,
         actionLabel: row.whiskieActionLabel,
         weightPct: row.weightPct,
-        formattedNews: tavily.formatResults(results),
+        formattedNews: newsSearch.formatResults(results),
         items: results.map(item => ({
           title: item.title,
           url: item.url,
@@ -1716,10 +1716,10 @@ ${JSON.stringify(marketContext.summary, null, 2)}
 Account strategy context:
 ${JSON.stringify(portfolioHub.accountStrategyContext || {}, null, 2)}
 
-Structured Tavily macro context:
+Structured Serper macro context:
 ${marketContext.formattedMacroNews}
 
-Structured Tavily stock context for highest-priority holdings only:
+Structured Serper stock context for highest-priority holdings only:
 ${JSON.stringify(stockNewsContext, null, 2)}
 
 Profile build results for holdings that were missing a Whiskie stock profile:
