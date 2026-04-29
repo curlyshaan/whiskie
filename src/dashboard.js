@@ -386,12 +386,13 @@ function formatPortfolioHubTransactionType(value) {
 
 function renderPortfolioHubSection(portfolioHub = {}) {
   const summary = portfolioHub.summary || {};
-  const holdingsSort = portfolioHub.holdingsSort || { sortBy: 'marketValue', sortDirection: 'desc' };
+  const holdingsSort = portfolioHub.holdingsSort || { sortBy: 'symbol', sortDirection: 'asc' };
   const holdings = sortPortfolioHubHoldings(
     portfolioHub.holdings || [],
     holdingsSort.sortBy,
     holdingsSort.sortDirection
   );
+  const holdingsAccountBreakdown = portfolioHub.holdingsAccountBreakdown || [];
   const accounts = portfolioHub.accounts || [];
   const recommendationChanges = (portfolioHub.recommendationChanges || []).filter(item => !item.implemented);
   const recommendedPositionsRun = portfolioHub.recommendedPositionsRun || null;
@@ -432,47 +433,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         <div class="stat-card"><div class="stat-label">Unrealized P/L</div><div class="stat-value ${Number(summary.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(summary.unrealizedPnL || 0)}<br>${formatPercent(summary.unrealizedPnLPct || 0)}</div></div>
         <div class="stat-card"><div class="stat-label">Accounts / Holdings</div><div class="stat-value">${accounts.length} / ${holdings.length}</div></div>
       </div>
-
-      <details style="margin-top:18px;">
-        <summary>⚠️ Risk Metrics & Correlation</summary>
-        <div style="margin-top:12px;">
-          ${portfolioHub.riskMetrics ? `
-            <table>
-              <thead><tr><th>Metric</th><th>Value</th><th>Metric</th><th>Value</th></tr></thead>
-              <tbody>
-                <tr><td>Volatility</td><td>${escapeHtml(portfolioHub.riskMetrics.volatility || 'N/A')}</td><td>Sharpe</td><td>${escapeHtml(portfolioHub.riskMetrics.sharpeRatio || 'N/A')}</td></tr>
-                <tr><td>Sortino</td><td>${escapeHtml(portfolioHub.riskMetrics.sortinoRatio || 'N/A')}</td><td>Beta</td><td>${escapeHtml(portfolioHub.riskMetrics.beta || 'N/A')}</td></tr>
-                <tr><td>Max Drawdown</td><td>${escapeHtml(portfolioHub.riskMetrics.maxDrawdown || 'N/A')}</td><td>VaR 95%</td><td>${escapeHtml(portfolioHub.riskMetrics.valueAtRisk95 || 'N/A')} ${portfolioHub.riskMetrics.valueAtRisk95Value != null ? `(${formatSignedMoney(portfolioHub.riskMetrics.valueAtRisk95Value)})` : ''}</td></tr>
-                <tr><td>Diversification</td><td>${escapeHtml(portfolioHub.riskMetrics.diversificationScore || 'N/A')}</td><td>Concentration</td><td>${escapeHtml(portfolioHub.riskMetrics.concentrationRisk || 'N/A')}</td></tr>
-              </tbody>
-            </table>
-            <div class="position-summary-note" style="margin:12px 0 8px;">Highest correlation pairs</div>
-            ${(portfolioHub.riskMetrics.correlationMatrix || []).length ? `
-              <table>
-                <thead><tr><th>Pair</th><th>Correlation</th></tr></thead>
-                <tbody>
-                  ${(portfolioHub.riskMetrics.correlationMatrix || []).map(row => `<tr><td>${escapeHtml(`${row.left} / ${row.right}`)}</td><td>${escapeHtml(String(row.correlation))}</td></tr>`).join('')}
-                </tbody>
-              </table>
-            ` : '<div class="no-data">Not enough overlapping history yet for a correlation matrix.</div>'}
-          ` : '<div class="no-data">Risk metrics unavailable.</div>'}
-        </div>
-      </details>
-
-      <details style="margin-top:18px;">
-        <summary>🔄 ETF Rotation Overlay</summary>
-        <div style="margin-top:12px;">
-          ${portfolioHub.etfRotationContext?.leading?.length || portfolioHub.etfRotationContext?.lagging?.length ? `
-            <table>
-              <thead><tr><th>Signal</th><th>Sector</th><th>ETF</th><th>4w RS</th><th>12w RS</th><th>Purpose</th></tr></thead>
-              <tbody>
-                ${(portfolioHub.etfRotationContext?.leading || []).map(item => `<tr><td>Leading</td><td>${escapeHtml(item.sector)}</td><td>${escapeHtml(item.etf)}</td><td>${escapeHtml(String(item.relativeStrength4w || '-'))}</td><td>${escapeHtml(String(item.relativeStrength12w || '-'))}</td><td>${escapeHtml(item.purpose || '-')}</td></tr>`).join('')}
-                ${(portfolioHub.etfRotationContext?.lagging || []).map(item => `<tr><td>Lagging</td><td>${escapeHtml(item.sector)}</td><td>${escapeHtml(item.etf)}</td><td>${escapeHtml(String(item.relativeStrength4w || '-'))}</td><td>${escapeHtml(String(item.relativeStrength12w || '-'))}</td><td>${escapeHtml(item.purpose || '-')}</td></tr>`).join('')}
-              </tbody>
-            </table>
-          ` : '<div class="no-data">No ETF rotation cache available yet.</div>'}
-        </div>
-      </details>
 
       <details style="margin-top:18px;">
         <summary>✏️ Edit Portfolio Hub</summary>
@@ -570,7 +530,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         </div>
       </details>
 
-      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;" open>
+      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;">
         <summary>Recommended New Positions</summary>
         <div style="margin-top:12px;">
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
@@ -646,7 +606,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         </div>
       </details>
 
-      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;" open>
+      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;">
         <summary>Combined Holdings</summary>
         <div style="margin-top:12px;">
           ${holdings.length === 0 ? '<div class="no-data">No Portfolio Hub holdings yet.</div>' : `
@@ -664,7 +624,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('whiskiePathway', '${nextSortDirection('whiskiePathway')}')">Whiskie Pathway${sortIndicator('whiskiePathway')}</button></th>
                   <th>Stop</th>
                   <th>Target</th>
-                  <th>Whiskie View</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -682,7 +641,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                     <td>${escapeHtml(row.whiskiePathway || '-')}</td>
                     <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
                     <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
-                    <td><strong>${escapeHtml(row.whiskieActionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(row.whiskieView || '-')}</span>${row.whiskieShareCountText ? `<br><span class="timestamp">${escapeHtml(row.whiskieShareCountText)}</span>` : ''}${row.whiskiePlanProgressText ? `<br><span class="timestamp">${escapeHtml(row.whiskiePlanProgressText)}</span>` : ''}</td>
                     <td>
                       <a class="analyze-btn" style="display:inline-block; text-decoration:none; margin-bottom:8px;" href="/adhoc-analyzer?ticker=${encodeURIComponent(row.symbol)}&intent=${row.positionType === 'short' ? 'SHORT' : 'LONG'}&costBasis=${encodeURIComponent(row.avgCost || '')}">Analyze</a>
                       <br>
@@ -690,7 +648,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                     </td>
                   </tr>
                   <tr>
-                    <td colspan="13" style="background:#131a30;">
+                    <td colspan="12" style="background:#131a30;">
                       <details>
                         <summary>Whiskie details for ${escapeHtml(row.symbol)}</summary>
                         <div style="margin-top:12px; display:grid; gap:12px;">
@@ -715,6 +673,26 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                         </div>
                       </details>
                     </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `}
+        </div>
+      </details>
+
+      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;" open>
+        <summary>Symbol Account Breakdown</summary>
+        <div style="margin-top:12px;">
+          ${holdingsAccountBreakdown.length === 0 ? '<div class="no-data">No account-level holdings breakdown yet.</div>' : `
+            <table>
+              <thead><tr><th>Symbol</th><th>Position Type</th><th>Accounts / Shares</th></tr></thead>
+              <tbody>
+                ${holdingsAccountBreakdown.map(row => `
+                  <tr>
+                    <td><strong>${escapeHtml(row.symbol || '-')}</strong></td>
+                    <td>${escapeHtml(row.positionType || '-')}</td>
+                    <td>${row.entries.length ? row.entries.map(entry => `${escapeHtml(entry.accountName)} (${Number(entry.shares).toFixed(2)} shares)`).join('<br>') : '-'}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -811,34 +789,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
               </tbody>
             </table>
           `}
-        </div>
-      </details>
-
-      <details style="margin-top:18px;">
-        <summary>Sector Reduction Plan</summary>
-        <div style="margin-top:12px;">
-          ${sectorTrimCandidates.length === 0 ? '<div class="no-data">No sector concentration currently exceeds the reduction threshold.</div>' : `
-            <table>
-              <thead><tr><th>Sector</th><th>Weight</th><th>Preferred names to reduce</th></tr></thead>
-              <tbody>
-                ${sectorTrimCandidates.map(item => `
-                  <tr>
-                    <td>${escapeHtml(item.sector)}</td>
-                    <td>${formatPercent(item.sectorWeightPct)}</td>
-                    <td><div class="detail-chips">${item.candidates.map(candidate => `<span class="detail-chip">${escapeHtml(`${candidate.symbol}: ${candidate.action} (${candidate.rationale})`)}</span>`).join('')}</div></td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          `}
-        </div>
-      </details>
-
-      <details style="margin-top:18px;">
-        <summary>Portfolio Insights</summary>
-        <div style="margin-top:12px;">
-          ${insights.length === 0 ? '<div class="no-data">No portfolio insights yet.</div>' : `<ul>${insights.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`}
-          <div class="position-summary-note" style="margin-top:12px;">Portfolio Hub guidance is advisory only. It uses Whiskie research context, earnings timing, and recent news, but does not place trades or alter live Whiskie positions.</div>
         </div>
       </details>
 
@@ -1775,8 +1725,8 @@ router.get('/portfolio-hub', async (req, res) => {
       performanceMetric: req.query.phMetric
     });
     portfolioHub.holdingsSort = {
-      sortBy: String(req.query.phSort || 'marketValue'),
-      sortDirection: String(req.query.phDir || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc'
+      sortBy: String(req.query.phSort || 'symbol'),
+      sortDirection: String(req.query.phDir || 'asc').toLowerCase() === 'desc' ? 'desc' : 'asc'
     };
     res.send(generatePortfolioHubHTML(portfolioHub));
   } catch (error) {

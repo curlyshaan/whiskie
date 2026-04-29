@@ -215,6 +215,48 @@ function buildRecommendationChangeKey(symbol, positionType, changeType, summary)
   ].join(':');
 }
 
+function buildPortfolioHubAccountBreakdown(holdings = [], accounts = []) {
+  const accountNameById = new Map((accounts || []).map(account => [account.id, account.name]));
+  const grouped = new Map();
+
+  for (const holding of holdings || []) {
+    const symbol = String(holding.symbol || '').toUpperCase();
+    if (!symbol) continue;
+    const positionType = String(holding.positionType || 'long').toLowerCase();
+    const accountEntries = Array.isArray(holding.accountBreakdown) ? holding.accountBreakdown : [];
+    const key = `${symbol}:${positionType}`;
+
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        symbol,
+        positionType,
+        entries: []
+      });
+    }
+
+    const row = grouped.get(key);
+    for (const entry of accountEntries) {
+      const shares = Math.abs(Number(entry.shares || 0));
+      if (!Number.isFinite(shares) || shares <= 0) continue;
+      row.entries.push({
+        accountName: entry.accountName || accountNameById.get(entry.accountId) || 'Unknown',
+        shares
+      });
+    }
+  }
+
+  return [...grouped.values()]
+    .map(row => ({
+      ...row,
+      entries: row.entries.sort((a, b) => (
+        a.accountName.localeCompare(b.accountName) || a.shares - b.shares
+      ))
+    }))
+    .sort((a, b) => (
+      a.symbol.localeCompare(b.symbol) || a.positionType.localeCompare(b.positionType)
+    ));
+}
+
 function confidenceScore(value) {
   const normalized = String(value || '').toLowerCase();
   if (normalized === 'high') return 15;
@@ -845,7 +887,14 @@ export async function buildPortfolioHubView(options = {}) {
     const positionType = type === 'short' || type === 'cover' ? 'short' : 'long';
     const groupKey = `${symbol}:${positionType}`;
     if (!grouped.has(groupKey)) {
-      grouped.set(groupKey, { symbol, shares: 0, totalCost: 0, accounts: [], positionType });
+      grouped.set(groupKey, {
+        symbol,
+        shares: 0,
+        totalCost: 0,
+        accounts: [],
+        accountBreakdown: new Map(),
+        positionType
+      });
     }
 
     const row = grouped.get(groupKey);
@@ -862,6 +911,15 @@ export async function buildPortfolioHubView(options = {}) {
       row.totalCost = Math.max(0, Number(row.totalCost || 0) - (Math.abs(signedShares) * avgCostBeforeTrade));
     }
     row.accounts.push(tx.account_name);
+    const accountKey = tx.account_id || tx.account_name || 'unknown';
+    const accountEntry = row.accountBreakdown.get(accountKey) || {
+      accountId: tx.account_id || null,
+      accountName: tx.account_name || 'Unknown',
+      shares: 0
+    };
+    accountEntry.shares += signedShares;
+    accountEntry.accountName = tx.account_name || accountEntry.accountName;
+    row.accountBreakdown.set(accountKey, accountEntry);
   }
 
   for (const [groupKey, row] of grouped.entries()) {
@@ -956,6 +1014,9 @@ export async function buildPortfolioHubView(options = {}) {
       symbol,
       shares: row.shares,
       positionType: row.positionType,
+      accountBreakdown: [...(row.accountBreakdown?.values() || [])]
+        .filter(entry => Math.abs(Number(entry.shares || 0)) >= 0.0001)
+        .sort((a, b) => String(a.accountName || '').localeCompare(String(b.accountName || ''))),
       avgCost,
       currentPrice,
       marketValue,
@@ -981,6 +1042,7 @@ export async function buildPortfolioHubView(options = {}) {
 
   const cash = [...cashByAccount.values()].reduce((sum, value) => sum + value, 0);
   const totalValue = investedValue + cash;
+  const holdingsAccountBreakdown = buildPortfolioHubAccountBreakdown(holdings, accounts);
 
   holdings.sort((a, b) => b.marketValue - a.marketValue);
   holdings.forEach(row => {
@@ -1182,6 +1244,7 @@ export async function buildPortfolioHubView(options = {}) {
   return {
     accounts,
     holdings,
+    holdingsAccountBreakdown,
     transactions,
     sectorAllocation,
     shortSectorExposure,
