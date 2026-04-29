@@ -1,7 +1,6 @@
 {
   "build": {
-    "builder": "NIXPACKS",
-    "buildCommand": ""
+    "builder": "NIXPACKS"
   },
   "deploy": {
     "startCommand": "PYTHON_BIN=/app/.venv/bin/python node src/index.js",
