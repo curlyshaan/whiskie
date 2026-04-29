@@ -394,6 +394,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   );
   const holdingsAccountBreakdown = portfolioHub.holdingsAccountBreakdown || [];
   const accounts = portfolioHub.accounts || [];
+  const accountTypeSummary = portfolioHub.accountTypeSummary || [];
   const recommendationChanges = (portfolioHub.recommendationChanges || []).filter(item => !item.implemented);
   const recommendedPositionsRun = portfolioHub.recommendedPositionsRun || null;
   const recommendedPositions = recommendedPositionsRun?.items || [];
@@ -407,6 +408,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   const performanceMetric = portfolioHub.performanceMetric || 'pct';
   const latestFullReviewAt = portfolioHub.latestFullReviewAt || null;
   const accountOptions = DEFAULT_PORTFOLIO_HUB_ACCOUNTS;
+  const accountTypeOptions = ['Taxable Cash', 'Taxable Margin', 'IRA', 'HSA', 'Other'];
   const nextSortDirection = column => (
     holdingsSort.sortBy === column && holdingsSort.sortDirection === 'desc' ? 'asc' : 'desc'
   );
@@ -440,6 +442,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
           <div class="detail-section-title">Account Cash Override</div>
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
             <select id="phAccountName">${accountOptions.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}</select>
+            <select id="phAccountType">${accountTypeOptions.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`).join('')}</select>
             <input id="phCashBalance" type="number" step="0.01" placeholder="Set broker cash to exact current balance" />
             <button class="analyze-btn" onclick="savePortfolioHubAccount()">Override Cash Balance</button>
           </div>
@@ -475,7 +478,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         <div style="margin-top:12px;">
           ${accounts.length === 0 ? '<div class="no-data">No Portfolio Hub accounts yet.</div>' : `
             <table>
-              <thead><tr><th>Account</th><th>Cash Available</th><th>% of Total Cash</th><th>% of Total Portfolio</th><th>Last Synced</th></tr></thead>
+              <thead><tr><th>Account</th><th>Type</th><th>Cash Available</th><th>% of Total Cash</th><th>% of Total Portfolio</th><th>Last Synced</th></tr></thead>
               <tbody>
                 ${accounts.map(account => {
                   const cashBalance = Number(account.cash_balance || 0);
@@ -484,6 +487,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   return `
                     <tr>
                       <td>${escapeHtml(account.account_name || '-')}</td>
+                      <td>${escapeHtml(account.account_type || 'Other')}</td>
                       <td>${formatMoney(cashBalance)}</td>
                       <td>${formatPercent(cashSharePct)}</td>
                       <td>${formatPercent(portfolioSharePct)}</td>
@@ -692,7 +696,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <tr>
                     <td><strong>${escapeHtml(row.symbol || '-')}</strong></td>
                     <td>${escapeHtml(row.positionType || '-')}</td>
-                    <td>${row.entries.length ? row.entries.map(entry => `${escapeHtml(entry.accountName)} (${Number(entry.shares).toFixed(2)} shares)`).join('<br>') : '-'}</td>
+                    <td>${row.entries.length ? row.entries.map(entry => `${escapeHtml(entry.accountName)} (${Number(entry.shares).toFixed(2)} shares${entry.accountType ? `, ${escapeHtml(entry.accountType)}` : ''})`).join('<br>') : '-'}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -909,6 +913,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
 
       const payload = {
         account_name: document.getElementById('phAccountName').value,
+        account_type: document.getElementById('phAccountType').value,
         cash_balance: normalizedCash
       };
 

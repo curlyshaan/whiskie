@@ -85,6 +85,13 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
   const upcomingEarnings = Boolean(row.nextEarningsDate);
   const policy = row.positionType === 'short' ? PORTFOLIO_HUB_POLICY.short : PORTFOLIO_HUB_POLICY.long;
   const opusReview = context.opusReview || null;
+  const accountContext = row.accountContext || {};
+  const taxableShares = Number(accountContext.taxableShares || 0);
+  const taxAdvantagedShares = Number(accountContext.taxAdvantagedShares || 0);
+  const hasMostlyTaxableExposure = taxableShares > 0 && taxableShares >= taxAdvantagedShares;
+  const taxAwarenessText = hasMostlyTaxableExposure
+    ? ' Taxable exposure exists, so favor patience when the thesis is intact and avoid unnecessary short-horizon churn.'
+    : '';
 
   if (opusReview && typeof opusReview.actionLabel === 'string') {
     const remainingShares = Number(opusReview.remainingShares);
@@ -125,7 +132,7 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
         return {
           actionLabel,
           summary: `Cover about ${pctRangeLabel(policy.lossCoverMinPct, policy.lossCoverMaxPct)} now.`,
-          detail: `Short loss is ${safePct(pnlPct)}% and squeeze risk is elevated for a ${safePct(weightPct)}% weight position.`,
+          detail: `Short loss is ${safePct(pnlPct)}% and squeeze risk is elevated for a ${safePct(weightPct)}% weight position.${taxAwarenessText}`,
           shareCountText: shareGuidance ? `Cover about ${formatShareCount(shareGuidance.shares)}.` : null,
           source: 'policy'
         };
@@ -133,7 +140,7 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
       return {
         actionLabel,
         summary: `Cover about ${pctRangeLabel(policy.eventCoverMinPct, policy.eventCoverMaxPct)} before earnings.`,
-        detail: 'Keep remaining short size controlled into the event.',
+        detail: `Keep remaining short size controlled into the event.${taxAwarenessText}`,
         shareCountText: shareGuidance ? `Cover about ${formatShareCount(shareGuidance.shares)}.` : null,
         source: 'policy'
       };
@@ -144,7 +151,7 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
       return {
         actionLabel,
         summary: `Reduce short exposure by about ${pctRangeLabel(policy.concentrationTrimMinPct, policy.concentrationTrimMaxPct)}.`,
-        detail: `Current short weight is ${safePct(weightPct)}% and sector concentration is ${safePct(sectorWeightPct)}%, which is getting stretched rather than acting as a hard cap.`,
+        detail: `Current short weight is ${safePct(weightPct)}% and sector concentration is ${safePct(sectorWeightPct)}%, which is getting stretched rather than acting as a hard cap.${taxAwarenessText}`,
         shareCountText: shareGuidance ? `Reduce about ${formatShareCount(shareGuidance.shares)}.` : null,
         source: 'policy'
       };
@@ -175,7 +182,7 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
       return {
         actionLabel,
         summary: `Trim about ${pctRangeLabel(policy.winnerTrimMinPct, policy.winnerTrimMaxPct)}.`,
-        detail: `Winner is ${safePct(pnlPct)}% with ${safePct(weightPct)}% portfolio weight.`,
+        detail: `Winner is ${safePct(pnlPct)}% with ${safePct(weightPct)}% portfolio weight.${taxAwarenessText}`,
         shareCountText: shareGuidance ? `Trim about ${formatShareCount(shareGuidance.shares)}.` : null,
         source: 'policy'
       };
@@ -184,7 +191,7 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
       return {
         actionLabel,
         summary: `Trim about ${pctRangeLabel(policy.earningsTrimMinPct, policy.earningsTrimMaxPct)} before earnings.`,
-        detail: `Avoid increasing above current ${safePct(weightPct)}% weight into the event.`,
+        detail: `Avoid increasing above current ${safePct(weightPct)}% weight into the event.${taxAwarenessText}`,
         shareCountText: shareGuidance ? `Trim about ${formatShareCount(shareGuidance.shares)}.` : null,
         source: 'policy'
       };
@@ -192,7 +199,7 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
     return {
       actionLabel,
       summary: `Trim about ${pctRangeLabel(policy.sectorConcentrationTrimMinPct, policy.sectorConcentrationTrimMaxPct)}.`,
-      detail: `Sector exposure is ${safePct(sectorWeightPct)}% and concentration is getting high without being treated as a hard cap.`,
+      detail: `Sector exposure is ${safePct(sectorWeightPct)}% and concentration is getting high without being treated as a hard cap.${taxAwarenessText}`,
       shareCountText: shareGuidance ? `Trim about ${formatShareCount(shareGuidance.shares)}.` : null,
       source: 'policy'
     };
@@ -203,7 +210,7 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
     return {
       actionLabel,
       summary: 'Reduce by 15-20%.',
-      detail: `Bring position closer to a 10-${policy.maxTargetWeightPct}% target weight.`,
+      detail: `Bring position closer to a 10-${policy.maxTargetWeightPct}% target weight.${taxAwarenessText}`,
       shareCountText: shareGuidance ? `Reduce about ${formatShareCount(shareGuidance.shares)}.` : null,
       source: 'policy'
     };
@@ -214,7 +221,7 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
     return {
       actionLabel,
       summary: `Can add about ${pctRangeLabel(policy.addRangeMinPct, policy.addRangeMaxPct)} more.`,
-      detail: `Target roughly 8% to ${policy.maxTargetWeightPct}% weight if conviction remains high, and expect this guidance to shrink after you log additional shares.`,
+      detail: `Target roughly 8% to ${policy.maxTargetWeightPct}% weight if conviction remains high, and expect this guidance to shrink after you log additional shares.${taxAdvantagedShares > taxableShares ? ' Tax-advantaged exposure makes medium-term adds less tax-sensitive.' : ''}`,
       shareCountText: shareGuidance ? `Add about ${formatShareCount(shareGuidance.shares)}.` : null,
       source: 'policy'
     };
@@ -226,8 +233,8 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
       ? 'Hold only if thesis is intact.'
       : `Hold current size near ${safePct(weightPct)}% weight.`,
     detail: pnlPct < policy.lossReviewThresholdPct
-      ? 'Avoid adding until Whiskie context improves and the thesis is re-validated.'
-      : 'Reassess only if pathway, earnings, or sector context changes.',
+      ? `Avoid adding until Whiskie context improves and the thesis is re-validated.${taxAwarenessText}`
+      : `Reassess only if pathway, earnings, or sector context changes.${taxAwarenessText}`,
     source: 'policy'
   };
 }

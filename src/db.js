@@ -3029,45 +3029,58 @@ export async function getPortfolioHubOperationalLocks() {
   return result.rows || [];
 }
 
-export async function acquirePortfolioHubAdvisoryLock(lockName, ownerId = null, metadata = null) {
+export async function withPortfolioHubAdvisoryLock(lockName, ownerId = null, metadata = null, callback = null) {
+  if (typeof callback !== 'function') {
+    throw new Error('withPortfolioHubAdvisoryLock requires a callback');
+  }
+
   const lockKey = `portfolio_hub:${String(lockName || 'default')}`;
-  const advisoryResult = await pool.query(
-    `SELECT pg_try_advisory_lock(hashtext($1)) AS acquired`,
-    [lockKey]
-  );
-  const acquired = Boolean(advisoryResult.rows?.[0]?.acquired);
-  if (!acquired) return false;
+  const normalizedLockName = String(lockName || 'default');
+  const client = await pool.connect();
+  let acquired = false;
 
-  await pool.query(
-    `INSERT INTO portfolio_hub_operational_locks (
-       lock_name, owner_id, acquired_at, last_heartbeat_at, metadata
-     ) VALUES ($1, $2, NOW(), NOW(), $3)
-     ON CONFLICT (lock_name) DO UPDATE
-     SET owner_id = EXCLUDED.owner_id,
-         acquired_at = NOW(),
-         last_heartbeat_at = NOW(),
-         metadata = EXCLUDED.metadata`,
-    [
-      String(lockName || 'default'),
-      ownerId || null,
-      metadata ? JSON.stringify(metadata) : null
-    ]
-  );
+  try {
+    const advisoryResult = await client.query(
+      `SELECT pg_try_advisory_lock(hashtext($1)) AS acquired`,
+      [lockKey]
+    );
+    acquired = Boolean(advisoryResult.rows?.[0]?.acquired);
+    if (!acquired) return null;
 
-  return true;
-}
+    await client.query(
+      `INSERT INTO portfolio_hub_operational_locks (
+         lock_name, owner_id, acquired_at, last_heartbeat_at, metadata
+       ) VALUES ($1, $2, NOW(), NOW(), $3)
+       ON CONFLICT (lock_name) DO UPDATE
+       SET owner_id = EXCLUDED.owner_id,
+           acquired_at = NOW(),
+           last_heartbeat_at = NOW(),
+           metadata = EXCLUDED.metadata`,
+      [
+        normalizedLockName,
+        ownerId || null,
+        metadata ? JSON.stringify(metadata) : null
+      ]
+    );
 
-export async function releasePortfolioHubAdvisoryLock(lockName) {
-  const lockKey = `portfolio_hub:${String(lockName || 'default')}`;
-  await pool.query(
-    `DELETE FROM portfolio_hub_operational_locks
-     WHERE lock_name = $1`,
-    [String(lockName || 'default')]
-  );
-  await pool.query(
-    `SELECT pg_advisory_unlock(hashtext($1))`,
-    [lockKey]
-  );
+    return await callback();
+  } finally {
+    try {
+      if (acquired) {
+        await client.query(
+          `DELETE FROM portfolio_hub_operational_locks
+           WHERE lock_name = $1`,
+          [normalizedLockName]
+        );
+        await client.query(
+          `SELECT pg_advisory_unlock(hashtext($1))`,
+          [lockKey]
+        );
+      }
+    } finally {
+      client.release();
+    }
+  }
 }
 
 export async function upsertPortfolioHubBaseline(accountGroup, baselineDate, totalValue, positionsSnapshot) {
@@ -3104,24 +3117,36 @@ export async function getPortfolioHubBaseline(accountGroup, baselineDate) {
 }
 
 export async function recordPortfolioHubExecution(symbol, positionType, shares, actionLabel) {
-  const result = await pool.query(
-    `UPDATE portfolio_hub_advice_history
-     SET executed_shares = COALESCE(executed_shares, 0) + $1,
-         execution_date = NOW()
-     WHERE id = (
-       SELECT id
-       FROM portfolio_hub_advice_history
-       WHERE symbol = $2
-         AND COALESCE(position_type, 'unknown') = COALESCE($3, 'unknown')
-         AND COALESCE(opus_review->>'actionLabel', '') = COALESCE($4, '')
-       ORDER BY created_at DESC
-       LIMIT 1
-     )
-     RETURNING *`,
-    [shares, symbol, positionType, actionLabel]
-  );
+  const actionAliases = (() => {
+    const normalizedAction = String(actionLabel || '').trim();
+    if (normalizedAction === 'Trim') return ['Trim', 'Reduce'];
+    return [normalizedAction];
+  })();
 
-  return result.rows[0] || null;
+  for (const candidateAction of actionAliases) {
+    const result = await pool.query(
+      `UPDATE portfolio_hub_advice_history
+       SET executed_shares = COALESCE(executed_shares, 0) + $1,
+           execution_date = NOW()
+       WHERE id = (
+         SELECT id
+         FROM portfolio_hub_advice_history
+         WHERE symbol = $2
+           AND COALESCE(position_type, 'unknown') = COALESCE($3, 'unknown')
+           AND COALESCE(opus_review->>'actionLabel', '') = COALESCE($4, '')
+         ORDER BY created_at DESC
+         LIMIT 1
+       )
+       RETURNING *`,
+      [shares, symbol, positionType, candidateAction]
+    );
+
+    if (result.rows[0]) {
+      return result.rows[0];
+    }
+  }
+
+  return null;
 }
 
 export async function insertExitAuditLog(entry) {

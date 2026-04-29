@@ -257,6 +257,65 @@ function buildPortfolioHubAccountBreakdown(holdings = [], accounts = []) {
     ));
 }
 
+function normalizePortfolioHubAccountBucket(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'ira') return 'IRA';
+  if (normalized === 'hsa') return 'HSA';
+  if (normalized === 'taxable margin') return 'Taxable Margin';
+  if (normalized === 'taxable cash') return 'Taxable Cash';
+  return 'Other';
+}
+
+function isTaxAdvantagedAccountType(value) {
+  return ['IRA', 'HSA'].includes(normalizePortfolioHubAccountBucket(value));
+}
+
+function isTaxableAccountType(value) {
+  return ['Taxable Cash', 'Taxable Margin'].includes(normalizePortfolioHubAccountBucket(value));
+}
+
+function buildHoldingAccountContext(accountBreakdown = [], accounts = []) {
+  const accountMap = new Map((accounts || []).map(account => [String(account.id), account]));
+  const entries = (accountBreakdown || [])
+    .map(entry => {
+      const account = accountMap.get(String(entry.accountId)) || null;
+      const accountType = normalizePortfolioHubAccountBucket(account?.account_type || null);
+      const shares = Math.abs(Number(entry.shares || 0));
+      if (!Number.isFinite(shares) || shares <= 0) return null;
+      return {
+        accountId: entry.accountId || null,
+        accountName: entry.accountName || account?.account_name || 'Unknown',
+        accountType,
+        shares
+      };
+    })
+    .filter(Boolean);
+
+  const taxableShares = entries
+    .filter(entry => isTaxableAccountType(entry.accountType))
+    .reduce((sum, entry) => sum + entry.shares, 0);
+  const taxAdvantagedShares = entries
+    .filter(entry => isTaxAdvantagedAccountType(entry.accountType))
+    .reduce((sum, entry) => sum + entry.shares, 0);
+
+  return {
+    entries,
+    taxableShares,
+    taxAdvantagedShares,
+    primaryAccountType: entries[0]?.accountType || null,
+    hasTaxableExposure: taxableShares > 0,
+    hasTaxAdvantagedExposure: taxAdvantagedShares > 0
+  };
+}
+
+function buildPortfolioHubAccountTypeSummary(accounts = []) {
+  return (accounts || []).map(account => ({
+    name: account.account_name,
+    type: normalizePortfolioHubAccountBucket(account.account_type),
+    cashBalance: Number(account.cash_balance || 0)
+  }));
+}
+
 function confidenceScore(value) {
   const normalized = String(value || '').toLowerCase();
   if (normalized === 'high') return 15;
@@ -876,6 +935,7 @@ export async function buildPortfolioHubView(options = {}) {
   }
 
   const grouped = new Map();
+  const accountTypeSummary = buildPortfolioHubAccountTypeSummary(accounts);
   const cashByAccount = new Map(accounts.map(account => [account.id, Number(account.cash_balance || 0)]));
 
   for (const tx of [...transactions].reverse()) {
@@ -1017,6 +1077,7 @@ export async function buildPortfolioHubView(options = {}) {
       accountBreakdown: [...(row.accountBreakdown?.values() || [])]
         .filter(entry => Math.abs(Number(entry.shares || 0)) >= 0.0001)
         .sort((a, b) => String(a.accountName || '').localeCompare(String(b.accountName || ''))),
+      accountContext: buildHoldingAccountContext([...(row.accountBreakdown?.values() || [])], accounts),
       avgCost,
       currentPrice,
       marketValue,
@@ -1154,6 +1215,11 @@ export async function buildPortfolioHubView(options = {}) {
   const benchmarkHistorySeries = [];
   const riskMetrics = portfolioRiskMetrics.getEmptyMetrics();
   const etfRotationContext = await etfManager.getRotationAwareSummary().catch(() => ({ leading: [], lagging: [], availableETFs: [] }));
+  const accountStrategyContext = {
+    accounts: accountTypeSummary,
+    taxAdvantagedAccounts: accountTypeSummary.filter(account => isTaxAdvantagedAccountType(account.type)),
+    taxableAccounts: accountTypeSummary.filter(account => isTaxableAccountType(account.type))
+  };
   const performanceSeries = (historyRows.length >= 2 ? historyRows : [])
     .map(row => ({
       label: formatPerformancePointLabel(row.created_at, performanceRange),
@@ -1243,6 +1309,8 @@ export async function buildPortfolioHubView(options = {}) {
 
   return {
     accounts,
+    accountTypeSummary,
+    accountStrategyContext,
     holdings,
     holdingsAccountBreakdown,
     transactions,
@@ -1284,33 +1352,29 @@ export async function buildPortfolioHubView(options = {}) {
 }
 
 export async function runPortfolioHubRecommendedPositions() {
-  const acquired = await db.acquirePortfolioHubAdvisoryLock(
+  const run = await db.withPortfolioHubAdvisoryLock(
     PORTFOLIO_HUB_LOCKS.recommendedPositions,
     `pid-${process.pid}-recommended`,
-    { type: 'recommended_positions' }
-  ).catch(() => false);
-  if (!acquired) {
-    return db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null);
-  }
-  try {
-  const previousRun = await db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null);
-  const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
-  const [dailyStates, saturdayRows] = await Promise.all([
-    db.getLatestDailySymbolStates().catch(() => []),
-    db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => [])
-  ]);
+    { type: 'recommended_positions' },
+    async () => {
+      const previousRun = await db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null);
+      const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
+      const [dailyStates, saturdayRows] = await Promise.all([
+        db.getLatestDailySymbolStates().catch(() => []),
+        db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => [])
+      ]);
 
-  const candidates = buildRecommendedPositionCandidates({
-    holdings: portfolioHub.holdings || [],
-    saturdayRows,
-    dailyStates
-  });
+      const candidates = buildRecommendedPositionCandidates({
+        holdings: portfolioHub.holdings || [],
+        saturdayRows,
+        dailyStates
+      });
 
-  const candidateSymbols = candidates.map(item => item.symbol);
-  const { quoteMap, whiskieContextMap, stockInfoMap, technicalsMap } = await buildPortfolioHubSymbolContext(candidateSymbols);
-  const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
+      const candidateSymbols = candidates.map(item => item.symbol);
+      const { quoteMap, whiskieContextMap, stockInfoMap, technicalsMap } = await buildPortfolioHubSymbolContext(candidateSymbols);
+      const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
 
-  const prompt = `You are generating Recommended New Positions for a household portfolio dashboard called Portfolio Hub. Return JSON only.
+      const prompt = `You are generating Recommended New Positions for a household portfolio dashboard called Portfolio Hub. Return JSON only.
 
 Goal:
 - find long-term holdings and medium-term swing opportunities
@@ -1358,6 +1422,9 @@ ${JSON.stringify(portfolioHub.sectorAllocation || [], null, 2)}
 Market context:
 ${JSON.stringify(marketContext.summary, null, 2)}
 
+Account strategy context:
+${JSON.stringify(portfolioHub.accountStrategyContext || {}, null, 2)}
+
 Current holdings:
 ${JSON.stringify((portfolioHub.holdings || []).map(row => ({
   symbol: row.symbol,
@@ -1366,7 +1433,8 @@ ${JSON.stringify((portfolioHub.holdings || []).map(row => ({
   marketValue: row.marketValue,
   sector: row.sector,
   whiskiePathway: row.whiskiePathway,
-  whiskieHoldingPosture: row.whiskieHoldingPosture
+  whiskieHoldingPosture: row.whiskieHoldingPosture,
+  accountContext: row.accountContext || null
 })), null, 2)}
 
 Candidates:
@@ -1378,113 +1446,114 @@ ${JSON.stringify(candidates.map(item => ({
   stockInfo: stockInfoMap.get(item.symbol) || null
 })), null, 2)}`;
 
-  const response = await claude.analyze(prompt, { model: 'opus' });
-  const rawText = String(response?.analysis || '').trim();
-  const startIndex = rawText.search(/[\[{]/);
-  const endIndex = Math.max(rawText.lastIndexOf('}'), rawText.lastIndexOf(']'));
-  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
-    throw new Error('Portfolio Hub recommended positions did not return JSON');
-  }
+      const response = await claude.analyze(prompt, { model: 'opus' });
+      const rawText = String(response?.analysis || '').trim();
+      const startIndex = rawText.search(/[\[{]/);
+      const endIndex = Math.max(rawText.lastIndexOf('}'), rawText.lastIndexOf(']'));
+      if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+        throw new Error('Portfolio Hub recommended positions did not return JSON');
+      }
 
-  const parsed = JSON.parse(rawText.slice(startIndex, endIndex + 1));
-  const rawItems = (Array.isArray(parsed) ? parsed : parsed.items || [])
-    .slice(0, 5)
-    .map(item => ({
-      symbol: String(item.symbol || '').toUpperCase(),
-      direction: String(item.direction || 'LONG').toUpperCase(),
-      horizonLabel: item.horizonLabel || null,
-      conviction: item.conviction || null,
-      starterShares: Number.isFinite(Number(item.starterShares)) ? Number(item.starterShares) : null,
-      starterPositionValue: Number.isFinite(Number(item.starterPositionValue)) ? Number(item.starterPositionValue) : null,
-      entryZone: item.entryZone || null,
-      stopLoss: Number.isFinite(Number(item.stopLoss)) ? Number(item.stopLoss) : null,
-      takeProfit: Number.isFinite(Number(item.takeProfit)) ? Number(item.takeProfit) : null,
-      targetFramework: item.targetFramework || null,
-      pathway: item.pathway || null,
-      thesis: item.thesis || null,
-      whyNow: item.whyNow || null,
-      portfolioFit: item.portfolioFit || null,
-      sectorImpact: item.sectorImpact || null,
-      invalidation: item.invalidation || null,
-      modelReasoning: item.modelReasoning || null,
-      rawModelPayload: item
-    }))
-    .filter(item => item.symbol);
+      const parsed = JSON.parse(rawText.slice(startIndex, endIndex + 1));
+      const rawItems = (Array.isArray(parsed) ? parsed : parsed.items || [])
+        .slice(0, 5)
+        .map(item => ({
+          symbol: String(item.symbol || '').toUpperCase(),
+          direction: String(item.direction || 'LONG').toUpperCase(),
+          horizonLabel: item.horizonLabel || null,
+          conviction: item.conviction || null,
+          starterShares: Number.isFinite(Number(item.starterShares)) ? Number(item.starterShares) : null,
+          starterPositionValue: Number.isFinite(Number(item.starterPositionValue)) ? Number(item.starterPositionValue) : null,
+          entryZone: item.entryZone || null,
+          stopLoss: Number.isFinite(Number(item.stopLoss)) ? Number(item.stopLoss) : null,
+          takeProfit: Number.isFinite(Number(item.takeProfit)) ? Number(item.takeProfit) : null,
+          targetFramework: item.targetFramework || null,
+          pathway: item.pathway || null,
+          thesis: item.thesis || null,
+          whyNow: item.whyNow || null,
+          portfolioFit: item.portfolioFit || null,
+          sectorImpact: item.sectorImpact || null,
+          invalidation: item.invalidation || null,
+          modelReasoning: item.modelReasoning || null,
+          rawModelPayload: item
+        }))
+        .filter(item => item.symbol);
 
-  const items = enforceRecommendedPositionConstraints(rawItems, portfolioHub, stockInfoMap)
-    .map(item => {
-      const scoring = scoreRecommendedPositionItem(item, portfolioHub, stockInfoMap);
-      return {
-        ...item,
-        actionTaxonomy: classifyRecommendedPositionTaxonomy(item),
-        deterministicScore: scoring.score,
-        scoringBreakdown: scoring.breakdown
+      const items = enforceRecommendedPositionConstraints(rawItems, portfolioHub, stockInfoMap)
+        .map(item => {
+          const scoring = scoreRecommendedPositionItem(item, portfolioHub, stockInfoMap);
+          return {
+            ...item,
+            actionTaxonomy: classifyRecommendedPositionTaxonomy(item),
+            deterministicScore: scoring.score,
+            scoringBreakdown: scoring.breakdown
+          };
+        })
+        .filter(item => passesRecommendedPositionQualityGate(item))
+        .sort((a, b) => Number(b.deterministicScore || 0) - Number(a.deterministicScore || 0))
+        .map((item, index) => ({
+          ...item,
+          deterministicRank: index + 1
+        }))
+        .slice(0, 5);
+
+      const savedRun = await db.createPortfolioHubRecommendedPositionRun({
+        sourceLabel: 'opus',
+        marketContext: marketContext.summary,
+        portfolioSnapshot: {
+          summary: portfolioHub.summary,
+          sectorAllocation: portfolioHub.sectorAllocation,
+          holdingsCount: (portfolioHub.holdings || []).length
+        },
+        notes: `Generated ${items.length} recommended position ideas`,
+        rawModelPayload: parsed
+      });
+
+      await db.replacePortfolioHubRecommendedPositionItems(savedRun.id, items);
+
+      const currentRun = {
+        ...savedRun,
+        items
       };
-    })
-    .filter(item => passesRecommendedPositionQualityGate(item))
-    .sort((a, b) => Number(b.deterministicScore || 0) - Number(a.deterministicScore || 0))
-    .map((item, index) => ({
-      ...item,
-      deterministicRank: index + 1
-    }))
-    .slice(0, 5);
 
-  const run = await db.createPortfolioHubRecommendedPositionRun({
-    sourceLabel: 'opus',
-    marketContext: marketContext.summary,
-    portfolioSnapshot: {
-      summary: portfolioHub.summary,
-      sectorAllocation: portfolioHub.sectorAllocation,
-      holdingsCount: (portfolioHub.holdings || []).length
-    },
-    notes: `Generated ${items.length} recommended position ideas`,
-    rawModelPayload: parsed
-  });
+      try {
+        await sendPortfolioHubRecommendationDiffEmail(previousRun, currentRun);
+      } catch (error) {
+        console.error('❌ Failed to send Portfolio Hub recommendation diff email:', error);
+      }
 
-  await db.replacePortfolioHubRecommendedPositionItems(run.id, items);
+      return currentRun;
+    }
+  ).catch(() => null);
 
-  const currentRun = {
-    ...run,
-    items
-  };
-
-  try {
-    await sendPortfolioHubRecommendationDiffEmail(previousRun, currentRun);
-  } catch (error) {
-    console.error('❌ Failed to send Portfolio Hub recommendation diff email:', error);
+  if (!run) {
+    return db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null);
   }
 
-  return currentRun;
-  } finally {
-    await db.releasePortfolioHubAdvisoryLock(PORTFOLIO_HUB_LOCKS.recommendedPositions).catch(() => null);
-  }
+  return run;
 }
 
 export async function runPortfolioHubOpusReview() {
-  const acquired = await db.acquirePortfolioHubAdvisoryLock(
+  const reviewResult = await db.withPortfolioHubAdvisoryLock(
     PORTFOLIO_HUB_LOCKS.opusReview,
     `pid-${process.pid}-review`,
-    { type: 'opus_review' }
-  ).catch(() => false);
-  if (!acquired) {
-    return { reviewedAt: new Date().toISOString(), holdings: [], skipped: 'already_running' };
-  }
-  try {
-  const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
-  const holdings = Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings : [];
-  if (!holdings.length) {
-    return { reviewedAt: new Date().toISOString(), holdings: [] };
-  }
-  const holdingsToReview = holdings.filter(shouldIncrementalReviewHolding);
-  if (!holdingsToReview.length) {
-    return { reviewedAt: new Date().toISOString(), holdings: [] };
-  }
-  const { technicalsMap } = await buildPortfolioHubSymbolContext(holdingsToReview.map(row => row.symbol));
-  const profileBuildResults = await ensurePortfolioHubProfiles(holdingsToReview);
-  const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
-  const stockNewsContext = await buildPortfolioHubStockNewsContext(holdingsToReview, portfolioHub.sectorTrimCandidates || []);
+    { type: 'opus_review' },
+    async () => {
+      const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
+      const holdings = Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings : [];
+      if (!holdings.length) {
+        return { reviewedAt: new Date().toISOString(), holdings: [] };
+      }
+      const holdingsToReview = holdings.filter(shouldIncrementalReviewHolding);
+      if (!holdingsToReview.length) {
+        return { reviewedAt: new Date().toISOString(), holdings: [] };
+      }
+      const { technicalsMap } = await buildPortfolioHubSymbolContext(holdingsToReview.map(row => row.symbol));
+      const profileBuildResults = await ensurePortfolioHubProfiles(holdingsToReview);
+      const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
+      const stockNewsContext = await buildPortfolioHubStockNewsContext(holdingsToReview, portfolioHub.sectorTrimCandidates || []);
 
-  const prompt = `You are reviewing a household portfolio dashboard called Portfolio Hub. Return JSON only.
+      const prompt = `You are reviewing a household portfolio dashboard called Portfolio Hub. Return JSON only.
 
 For each holding, provide:
 - symbol
@@ -1519,12 +1588,16 @@ Rules:
 - Assume future runs may compare plannedTotalShares with executed shares logged after the review, so avoid repeating the same full trim as if nothing was done.
 - Use the supplied technical inputs explicitly when forming holdings guidance, especially for stop loss, take profit, trim/add timing, and whether the current setup is extended, constructive, weak, or breaking down.
 - Pay particular attention to SMA200, SMA50, distance from SMA200, RSI, volume ratio, trend, and slope fields when deciding if a holding deserves patience, tighter risk control, or an active trim/add recommendation.
+- Treat taxable accounts differently from IRA/HSA accounts when it materially changes the recommendation. Taxable exposures should be more sensitive to unnecessary churn and short holding periods. IRA/HSA exposures can tolerate more medium-term tactical turnover when the setup justifies it.
 
 Portfolio summary:
 ${JSON.stringify(portfolioHub.summary, null, 2)}
 
 Market regime context:
 ${JSON.stringify(marketContext.summary, null, 2)}
+
+Account strategy context:
+${JSON.stringify(portfolioHub.accountStrategyContext || {}, null, 2)}
 
 Structured Tavily macro context:
 ${marketContext.formattedMacroNews}
@@ -1551,114 +1624,120 @@ ${JSON.stringify(holdingsToReview.map(row => ({
     whiskieNotes: row.whiskieNotes,
     whiskieCatalysts: row.whiskieCatalysts,
     whiskieHoldingPosture: row.whiskieHoldingPosture,
+    accountContext: row.accountContext || null,
     technicals: technicalsMap.get(row.symbol) || null,
     existingPolicyView: row.whiskieView,
     allocationBucketHint: row.whiskieHoldingPosture && /core|long/i.test(String(row.whiskieHoldingPosture)) ? 'core_long_term' : row.positionType === 'short' ? 'tactical_short' : 'tactical_or_unclear'
   })), null, 2)}`;
 
-  const response = await claude.analyze(prompt, { model: 'opus' });
-  const rawText = String(response?.analysis || '').trim();
-  const startIndex = rawText.search(/[\[{]/);
-  const endIndex = Math.max(rawText.lastIndexOf('}'), rawText.lastIndexOf(']'));
-  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
-    throw new Error('Opus portfolio review did not return JSON');
-  }
+      const response = await claude.analyze(prompt, { model: 'opus' });
+      const rawText = String(response?.analysis || '').trim();
+      const startIndex = rawText.search(/[\[{]/);
+      const endIndex = Math.max(rawText.lastIndexOf('}'), rawText.lastIndexOf(']'));
+      if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+        throw new Error('Opus portfolio review did not return JSON');
+      }
 
-  const parsed = JSON.parse(rawText.slice(startIndex, endIndex + 1));
-  const entries = Array.isArray(parsed) ? parsed : Array.isArray(parsed.holdings) ? parsed.holdings : [];
-  const bySymbol = new Map(entries.map(item => [String(item.symbol || '').toUpperCase(), item]));
-  const reviewedAt = new Date().toISOString();
-  const reviewItems = holdingsToReview.map(row => {
-    const opusReview = bySymbol.get(row.symbol) || null;
-    const normalized = {
-      symbol: row.symbol,
-      positionType: row.positionType,
-      actionLabel: opusReview?.actionLabel || 'Hold',
-      summary: opusReview?.summary || row.whiskieView || '',
-      detail: opusReview?.detail || '',
-      shareCountText: opusReview?.shareCountText || null,
-      plannedTotalShares: Number.isFinite(Number(opusReview?.plannedTotalShares)) ? Number(opusReview.plannedTotalShares) : null,
-      targetPositionShares: Number.isFinite(Number(opusReview?.targetPositionShares)) ? Number(opusReview.targetPositionShares) : null,
-      stageLabel: opusReview?.stageLabel || null,
-      targetWeightPct: Number.isFinite(Number(opusReview?.targetWeightPct)) ? Number(opusReview.targetWeightPct) : null,
-      confidence: opusReview?.confidence || null,
-      stopLoss: Number.isFinite(Number(opusReview?.stopLoss)) ? Number(opusReview.stopLoss) : null,
-      takeProfit: Number.isFinite(Number(opusReview?.takeProfit)) ? Number(opusReview.takeProfit) : null,
-      reasoning: opusReview?.reasoning || '',
-      actionTaxonomy: classifyReviewActionTaxonomy(opusReview || {}),
-      rawModelPayload: opusReview
-    };
-    const scoring = scoreReviewItem(normalized, row);
-    return {
-      ...normalized,
-      deterministicScore: scoring.score,
-      scoringBreakdown: scoring.breakdown
-    };
-  }).sort((a, b) => Number(b.deterministicScore || 0) - Number(a.deterministicScore || 0))
-    .map((item, index) => ({
-      ...item,
-      deterministicRank: index + 1
-    }));
+      const parsed = JSON.parse(rawText.slice(startIndex, endIndex + 1));
+      const entries = Array.isArray(parsed) ? parsed : Array.isArray(parsed.holdings) ? parsed.holdings : [];
+      const bySymbol = new Map(entries.map(item => [String(item.symbol || '').toUpperCase(), item]));
+      const reviewedAt = new Date().toISOString();
+      const reviewItems = holdingsToReview.map(row => {
+        const opusReview = bySymbol.get(row.symbol) || null;
+        const normalized = {
+          symbol: row.symbol,
+          positionType: row.positionType,
+          actionLabel: opusReview?.actionLabel || 'Hold',
+          summary: opusReview?.summary || row.whiskieView || '',
+          detail: opusReview?.detail || '',
+          shareCountText: opusReview?.shareCountText || null,
+          plannedTotalShares: Number.isFinite(Number(opusReview?.plannedTotalShares)) ? Number(opusReview.plannedTotalShares) : null,
+          targetPositionShares: Number.isFinite(Number(opusReview?.targetPositionShares)) ? Number(opusReview.targetPositionShares) : null,
+          stageLabel: opusReview?.stageLabel || null,
+          targetWeightPct: Number.isFinite(Number(opusReview?.targetWeightPct)) ? Number(opusReview.targetWeightPct) : null,
+          confidence: opusReview?.confidence || null,
+          stopLoss: Number.isFinite(Number(opusReview?.stopLoss)) ? Number(opusReview.stopLoss) : null,
+          takeProfit: Number.isFinite(Number(opusReview?.takeProfit)) ? Number(opusReview.takeProfit) : null,
+          reasoning: opusReview?.reasoning || '',
+          actionTaxonomy: classifyReviewActionTaxonomy(opusReview || {}),
+          rawModelPayload: opusReview
+        };
+        const scoring = scoreReviewItem(normalized, row);
+        return {
+          ...normalized,
+          deterministicScore: scoring.score,
+          scoringBreakdown: scoring.breakdown
+        };
+      }).sort((a, b) => Number(b.deterministicScore || 0) - Number(a.deterministicScore || 0))
+        .map((item, index) => ({
+          ...item,
+          deterministicRank: index + 1
+        }));
 
-  const reviewRun = await db.createPortfolioHubReviewRun({
-    sourceLabel: 'opus',
-    reviewType: 'holding_review',
-    marketContext: marketContext.summary,
-    portfolioSnapshot: {
-      summary: portfolioHub.summary,
-      holdingsCount: holdingsToReview.length
-    },
-    notes: `Reviewed ${reviewItems.length} holdings`,
-    rawModelPayload: parsed
-  });
-  await db.replacePortfolioHubReviewItems(reviewRun.id, reviewItems);
-
-  await db.recordPortfolioHubAdviceHistory(
-    holdingsToReview.map(row => {
-      const opusReview = bySymbol.get(row.symbol) || null;
-      return {
-        symbol: row.symbol,
-        positionType: row.positionType,
-        weightPct: row.weightPct,
-        sector: row.sector,
-        sectorWeightPct: row.sectorWeightPct,
-        unrealizedPnLPct: row.unrealizedPnLPct,
-        whiskiePathway: row.whiskiePathway,
-        recommendation: opusReview?.summary || row.whiskieView || '',
-        snapshotPayload: {
-          ...row,
-          totalPortfolioValue: portfolioHub.summary.totalValue,
-          portfolioReturnPct: portfolioHub.summary.performancePct
-        },
-        longReturnPct: portfolioHub.summary.longPerformancePct,
-        shortReturnPct: portfolioHub.summary.shortPerformancePct,
-        sectorSnapshot: portfolioHub.sectorAllocation,
-        viewScope: 'day',
-        metricMode: 'pct',
-        totalPortfolioValue: portfolioHub.summary.totalValue,
-        baselineTotalValue: portfolioHub.summary.baselineTotalValue,
-        performanceValue: portfolioHub.summary.performanceValue,
-        longPerformanceValue: portfolioHub.summary.longPerformanceValue,
-        shortPerformanceValue: portfolioHub.summary.shortPerformanceValue,
+      const reviewRun = await db.createPortfolioHubReviewRun({
         sourceLabel: 'opus',
-        opusReview,
-        opusReviewCreatedAt: reviewedAt
-      };
-    })
-  );
+        reviewType: 'holding_review',
+        marketContext: marketContext.summary,
+        portfolioSnapshot: {
+          summary: portfolioHub.summary,
+          holdingsCount: holdingsToReview.length
+        },
+        notes: `Reviewed ${reviewItems.length} holdings`,
+        rawModelPayload: parsed
+      });
+      await db.replacePortfolioHubReviewItems(reviewRun.id, reviewItems);
 
-  return {
-    reviewedAt,
-    holdings: reviewItems.map(item => ({
-      symbol: item.symbol,
-      positionType: item.positionType,
-      actionTaxonomy: item.actionTaxonomy,
-      deterministicScore: item.deterministicScore,
-      deterministicRank: item.deterministicRank,
-      opusReview: bySymbol.get(item.symbol) || null
-    }))
-  };
-  } finally {
-    await db.releasePortfolioHubAdvisoryLock(PORTFOLIO_HUB_LOCKS.opusReview).catch(() => null);
+      await db.recordPortfolioHubAdviceHistory(
+        holdingsToReview.map(row => {
+          const opusReview = bySymbol.get(row.symbol) || null;
+          return {
+            symbol: row.symbol,
+            positionType: row.positionType,
+            weightPct: row.weightPct,
+            sector: row.sector,
+            sectorWeightPct: row.sectorWeightPct,
+            unrealizedPnLPct: row.unrealizedPnLPct,
+            whiskiePathway: row.whiskiePathway,
+            recommendation: opusReview?.summary || row.whiskieView || '',
+            snapshotPayload: {
+              ...row,
+              totalPortfolioValue: portfolioHub.summary.totalValue,
+              portfolioReturnPct: portfolioHub.summary.performancePct
+            },
+            longReturnPct: portfolioHub.summary.longPerformancePct,
+            shortReturnPct: portfolioHub.summary.shortPerformancePct,
+            sectorSnapshot: portfolioHub.sectorAllocation,
+            viewScope: 'day',
+            metricMode: 'pct',
+            totalPortfolioValue: portfolioHub.summary.totalValue,
+            baselineTotalValue: portfolioHub.summary.baselineTotalValue,
+            performanceValue: portfolioHub.summary.performanceValue,
+            longPerformanceValue: portfolioHub.summary.longPerformanceValue,
+            shortPerformanceValue: portfolioHub.summary.shortPerformanceValue,
+            sourceLabel: 'opus',
+            opusReview,
+            opusReviewCreatedAt: reviewedAt
+          };
+        })
+      );
+
+      return {
+        reviewedAt,
+        holdings: reviewItems.map(item => ({
+          symbol: item.symbol,
+          positionType: item.positionType,
+          actionTaxonomy: item.actionTaxonomy,
+          deterministicScore: item.deterministicScore,
+          deterministicRank: item.deterministicRank,
+          opusReview: bySymbol.get(item.symbol) || null
+        }))
+      };
+    }
+  ).catch(() => null);
+
+  if (!reviewResult) {
+    return { reviewedAt: new Date().toISOString(), holdings: [], skipped: 'already_running' };
   }
+
+  return reviewResult;
 }
