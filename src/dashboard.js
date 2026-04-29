@@ -223,6 +223,28 @@ function renderRecommendationDecisionBar(item) {
   `;
 }
 
+function renderCombinedHoldingDecisionBar(row) {
+  const cells = [
+    { label: 'Guidance', value: row.whiskieView || '-' },
+    { label: 'Share guidance', value: row.whiskieShareCountText || '-' },
+    { label: 'Plan progress', value: row.whiskiePlanProgressText || '-' },
+    { label: 'Tax note', value: row.taxAwareNote || '-' },
+    { label: 'Taxable days', value: row.taxableHoldingDays != null ? String(row.taxableHoldingDays) : '-' },
+    { label: 'Review saved', value: row.opusReviewCreatedAt ? formatShortDate(row.opusReviewCreatedAt) : '-' }
+  ].filter(cell => normalizeText(cell.value));
+
+  return cells.length ? `
+    <div class="recommended-position-decision-bar combined-holding-decision-bar">
+      ${cells.map(cell => `
+        <div class="recommended-position-decision-cell">
+          <div class="recommended-position-decision-label">${escapeHtml(cell.label)}</div>
+          <div class="recommended-position-decision-value">${escapeHtml(normalizeText(cell.value))}</div>
+        </div>
+      `).join('')}
+    </div>
+  ` : '';
+}
+
 function renderRecommendationReasoning(item) {
   const structuredSections = [
     { label: 'Thesis', value: item.thesis || '-' },
@@ -648,7 +670,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('whiskiePathway', '${nextSortDirection('whiskiePathway')}')">Whiskie Pathway${sortIndicator('whiskiePathway')}</button></th>
                   <th>Stop</th>
                   <th>Target</th>
-                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -665,17 +686,12 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                     <td>${escapeHtml(row.whiskiePathway || '-')}</td>
                     <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
                     <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
-                    <td>
-                      <a class="analyze-btn" style="display:inline-block; text-decoration:none; margin-bottom:8px;" href="/adhoc-analyzer?ticker=${encodeURIComponent(row.symbol)}&intent=${row.positionType === 'short' ? 'SHORT' : 'LONG'}&costBasis=${encodeURIComponent(row.avgCost || '')}">Analyze</a>
-                      <br>
-                      <a class="analyze-btn" style="display:inline-block; text-decoration:none;" href="/options-analyzer?symbol=${encodeURIComponent(row.symbol)}">Options</a>
-                    </td>
                   </tr>
                   <tr>
-                    <td colspan="12" style="background:#131a30;">
-                      <details>
+                    <td colspan="11" style="background:#131a30;">
+                      <details class="combined-holding-details">
                         <summary>Whiskie details for ${escapeHtml(row.symbol)}</summary>
-                        <div style="margin-top:12px; display:grid; gap:12px;">
+                        <div class="combined-holding-details-body">
                           <div class="detail-chips">
                             <span class="detail-chip">Pathway: ${escapeHtml(row.whiskiePathway || '-')}</span>
                             <span class="detail-chip">Sector source: ${escapeHtml(row.sectorSource || '-')}</span>
@@ -684,14 +700,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                             <span class="detail-chip">Guidance source: ${escapeHtml(row.whiskieSource || '-')}</span>
                             <span class="detail-chip">Confidence: ${escapeHtml(row.whiskieConfidence || '-')}</span>
                           </div>
-                          ${renderKeyValueRows([
-                            { label: 'Portfolio Hub guidance', value: row.whiskieView || '-' },
-                            { label: 'Share guidance', value: row.whiskieShareCountText || '-' },
-                            { label: 'Plan progress', value: row.whiskiePlanProgressText || '-' },
-                            { label: 'Tax note', value: row.taxAwareNote || '-' },
-                            { label: 'Taxable holding days', value: row.taxableHoldingDays != null ? String(row.taxableHoldingDays) : '-' },
-                            { label: 'Opus review saved', value: row.opusReviewCreatedAt ? formatShortDate(row.opusReviewCreatedAt) : '-' }
-                          ])}
+                          ${renderCombinedHoldingDecisionBar(row)}
                           ${renderDetailSection('Detail', formatStructuredText(row.whiskieDetail || '-'))}
                           ${renderDetailSection('Thesis summary', formatStructuredText(row.whiskieNotes || '-'))}
                           ${renderDetailSection('Catalyst summary', formatStructuredText(row.whiskieCatalysts || '-'))}
@@ -2569,6 +2578,36 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       font-weight: 700;
       line-height: 1.35;
       word-break: break-word;
+    }
+    .combined-holding-decision-bar {
+      margin-bottom: 0;
+    }
+    .combined-holding-details {
+      padding: 10px 0 2px;
+    }
+    .combined-holding-details > summary {
+      cursor: pointer;
+      color: #e2e8f0;
+      font-weight: 700;
+      list-style: none;
+    }
+    .combined-holding-details > summary::-webkit-details-marker {
+      display: none;
+    }
+    .combined-holding-details > summary::after {
+      content: '−';
+      float: right;
+      color: #93c5fd;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+    .combined-holding-details:not([open]) > summary::after {
+      content: '+';
+    }
+    .combined-holding-details-body {
+      margin-top: 12px;
+      display: grid;
+      gap: 12px;
     }
     .recommended-position-layout {
       display: grid;
