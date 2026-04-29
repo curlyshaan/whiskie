@@ -21,7 +21,10 @@ Whiskie is an AI-assisted US equities operating system with two distinct modes:
 - `saturday_watchlist` is the curated upstream candidate source
 - stock profiles use a canonical current-row model
 - earnings reminder dates must preserve literal calendar dates
+- earnings reminder auto-sync should not reuse old-event notes/timing metadata for a new earnings date
 - Portfolio Hub recommendation score is a local heuristic, not the same as model conviction
+- Portfolio Hub holdings review and Recommended New Positions both use shared technical context in Opus prompts
+- Portfolio Hub accounts persist account types, and PHub recommendations now distinguish taxable accounts from IRA/HSA accounts
 
 ## Critical subsystems
 
@@ -38,6 +41,7 @@ For Portfolio Hub Recommended New Positions:
 - `low` conviction is blocked
 - `high` conviction is allowed regardless of score
 - `medium` conviction requires deterministic score `>= 60`
+- account type context is included in the recommendation/review prompt layer
 
 ## Validation habits
 

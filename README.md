@@ -300,6 +300,10 @@ Whiskie now uses `earnings_calendar` as the source of truth for upcoming earning
 - dark glassmorphism dashboard styling
 - date-only earnings values are rendered as literal calendar dates, not timezone-shifted timestamps
 
+Tavily/news-provider behavior:
+
+- selected Tavily provider/account failures that surface as soft HTTP 432 responses now degrade to empty news context in major workflows instead of automatically failing the full job
+
 ## Dashboard behavior
 
 The main dashboard now prefers live portfolio totals from the Tradier-backed analysis engine when available, so cash/invested values reflect the actual synced account state instead of only the most recent saved snapshot row.
@@ -317,6 +321,8 @@ Portfolio Hub UI behavior:
   - refreshed recommendations for only the holdings that currently need review
   - or a no-op message if no holdings are stale / materially changed / near earnings
 - Portfolio Hub holdings review and Recommended New Positions both now pass shared FMP-backed technical context into Opus, including SMA/RSI/volume-based posture data used for stops, targets, and trim/add timing
+- Portfolio Hub accounts now store account types (`Taxable Cash`, `Taxable Margin`, `IRA`, `HSA`, `Other`) and show them in the PHub UI
+- Portfolio Hub recommendation logic is now tax-aware: taxable-heavy exposure biases toward lower churn, while IRA/HSA exposure can support more medium-term tactical turnover when justified
 
 Note: `MAX_DAILY_TRADES` is no longer part of the active configuration model.
 

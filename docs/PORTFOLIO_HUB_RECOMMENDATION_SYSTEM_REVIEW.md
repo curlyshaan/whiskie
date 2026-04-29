@@ -14,6 +14,7 @@ Important boundaries:
 
 - it is manual and advisory
 - it is multi-account
+- account rows now persist an explicit account type bucket
 - it does not auto-place trades
 - it is distinct from Whiskie live bot execution
 - it uses Whiskie research context, market context, and portfolio state to assist human decision-making
@@ -44,6 +45,7 @@ The intended philosophy is:
 - avoid intraday churn
 - avoid low-quality “just because it ranked first” outputs
 - use watchlist and Whiskie context as inputs, but keep Portfolio Hub advisory and human-reviewed
+- use account type and tax context when it meaningfully changes the advice
 
 ## Where the logic lives
 
@@ -133,12 +135,15 @@ Before prompting Opus, the system builds context for candidate symbols including
 - stock metadata
 - Whiskie context
 - FMP-backed technical context from the shared analysis engine
+- account-type strategy context from Portfolio Hub accounts
 - portfolio summary
 - sector allocation
 - current holdings
 - market context
 
 The market context is intended to include regime and macro/news overlays so Opus sees portfolio state plus environment, not just isolated ticker lists.
+
+The same shared technical bundle is now also passed into the Portfolio Hub holdings-review Opus workflow, so both major advisory surfaces use the same FMP-backed technical posture inputs.
 
 ### Technical inputs now included
 
@@ -193,6 +198,33 @@ Prompt-level rules currently emphasize:
 - practical sizing
 - use of portfolio concentration, cash, and sector exposure
 - explicit handling of overlap with existing holdings
+- different treatment of taxable accounts vs IRA/HSA accounts when it changes turnover or holding-period behavior
+
+## Account-type-aware recommendation behavior
+
+Portfolio Hub accounts now persist an `account_type` field. Supported buckets are:
+
+- `Taxable Cash`
+- `Taxable Margin`
+- `IRA`
+- `HSA`
+- `Other`
+
+This account typing is used in two places:
+
+1. **UI / operator context**
+   - account tables show the stored account type
+   - symbol account breakdown shows account type per account/share row
+
+2. **advisory logic**
+   - holdings review and Recommended New Positions both receive account-strategy context in the Opus prompt
+   - holdings now carry account-level exposure context so the system knows whether a symbol is mostly taxable or mostly tax-advantaged
+
+Current intended interpretation:
+
+- taxable-heavy exposure should bias toward less unnecessary churn and more patience when the thesis remains intact
+- IRA/HSA exposure can justify somewhat more medium-term tactical turnover because tax drag is less constraining
+- this is a biasing input, not a hard rule engine
 
 ## Relationship logic with current holdings
 

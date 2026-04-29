@@ -316,6 +316,112 @@ function buildPortfolioHubAccountTypeSummary(accounts = []) {
   }));
 }
 
+function buildRecommendedAccountSuggestion(item = {}, accountStrategyContext = {}) {
+  const relationshipType = String(item.relationshipType || item.relationship_type || '').toLowerCase();
+  const horizonLabel = String(item.horizonLabel || item.horizon_label || '').toLowerCase();
+  const direction = String(item.direction || '').toUpperCase();
+  const taxAdvantagedAccounts = Array.isArray(accountStrategyContext.taxAdvantagedAccounts)
+    ? accountStrategyContext.taxAdvantagedAccounts
+    : [];
+  const taxableAccounts = Array.isArray(accountStrategyContext.taxableAccounts)
+    ? accountStrategyContext.taxableAccounts
+    : [];
+
+  if (relationshipType === 'existing_holding') {
+    return {
+      accountType: 'Existing holding',
+      reason: 'Manage through the current holding account allocation'
+    };
+  }
+
+  const prefersTaxAdvantaged = direction === 'SHORT'
+    || horizonLabel.includes('medium')
+    || horizonLabel.includes('swing');
+
+  if (prefersTaxAdvantaged && taxAdvantagedAccounts.length) {
+    return {
+      accountType: taxAdvantagedAccounts[0].type,
+      reason: 'Medium-term or higher-turnover setup fits a tax-advantaged account'
+    };
+  }
+
+  if (taxableAccounts.length) {
+    return {
+      accountType: taxableAccounts[0].type,
+      reason: 'Lower-turnover or core holding fits a taxable account better'
+    };
+  }
+
+  if (taxAdvantagedAccounts.length) {
+    return {
+      accountType: taxAdvantagedAccounts[0].type,
+      reason: 'Tax-advantaged account available and suitable'
+    };
+  }
+
+  return {
+    accountType: 'Any',
+    reason: 'No account-type preference inferred'
+  };
+}
+
+function inferRecommendationChangeReasons(row, item = {}) {
+  const reasons = [];
+  const action = String(row?.whiskieActionLabel || row?.opusReview?.actionLabel || '').toLowerCase();
+  const summary = String(item.summary || row?.opusReview?.summary || '').toLowerCase();
+  const detail = String(row?.opusReview?.detail || row?.whiskieDetail || '').toLowerCase();
+
+  if (summary.includes('earnings') || detail.includes('earnings')) reasons.push('earnings');
+  if (summary.includes('sector') || detail.includes('sector')) reasons.push('sector concentration');
+  if (summary.includes('stop loss') || detail.includes('stop loss')) reasons.push('risk control');
+  if (summary.includes('target') || detail.includes('target')) reasons.push('target update');
+  if (summary.includes('technical') || detail.includes('sma') || detail.includes('rsi')) reasons.push('technical shift');
+  if (detail.includes('taxable') || detail.includes('tax')) reasons.push('tax-aware caution');
+  if (action === 'trim' && Number(row?.unrealizedPnLPct || 0) > 15) reasons.push('winner trim');
+  if (action === 'reduce') reasons.push('position sizing');
+
+  return [...new Set(reasons)].slice(0, 3);
+}
+
+function calculateTaxableHoldingDays(symbol, positionType, accountBreakdown = [], transactions = []) {
+  const taxableAccountNames = new Set(
+    (accountBreakdown || [])
+      .filter(entry => isTaxableAccountType(entry.accountType))
+      .map(entry => String(entry.accountName || '').trim())
+      .filter(Boolean)
+  );
+  if (!taxableAccountNames.size) return null;
+
+  const relevantTransactions = (transactions || [])
+    .filter(tx => String(tx.symbol || '').toUpperCase() === String(symbol || '').toUpperCase())
+    .filter(tx => String(tx.account_name || '').trim() && taxableAccountNames.has(String(tx.account_name || '').trim()))
+    .filter(tx => {
+      const type = String(tx.transaction_type || '').toLowerCase();
+      if (String(positionType || '').toLowerCase() === 'short') {
+        return type === 'short';
+      }
+      return type === 'buy';
+    })
+    .map(tx => new Date(tx.trade_date || tx.created_at || 0))
+    .filter(date => !Number.isNaN(date.getTime()))
+    .sort((a, b) => a - b);
+
+  if (!relevantTransactions.length) return null;
+  const oldest = relevantTransactions[0];
+  return Math.floor((Date.now() - oldest.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function buildTaxAwareNote(row) {
+  const holdingDays = Number(row?.taxableHoldingDays || 0);
+  const hasTaxableExposure = Boolean(row?.accountContext?.hasTaxableExposure);
+  const action = String(row?.whiskieActionLabel || '').toLowerCase();
+  if (!hasTaxableExposure) return null;
+  if (!['trim', 'reduce'].includes(action)) return null;
+  if (holdingDays > 365) return 'Tax note: already long-term; tax urgency reduced.';
+  if (holdingDays > 300) return 'Tax note: close to long-term treatment, consider patience.';
+  return null;
+}
+
 function confidenceScore(value) {
   const normalized = String(value || '').toLowerCase();
   if (normalized === 'high') return 15;
@@ -579,6 +685,7 @@ async function syncPortfolioHubRecommendationChanges(holdings = [], adviceHistor
         opusReview: row.opusReview,
         opusReviewCreatedAt: changeTimestamp,
         actionTaxonomy: classifyReviewActionTaxonomy(row.opusReview || {}),
+        scoringBreakdown: { reasons: inferRecommendationChangeReasons(row, item) },
         changeKey,
         changeType: item.type,
         changeSummary: item.summary,
@@ -1078,6 +1185,7 @@ export async function buildPortfolioHubView(options = {}) {
         .filter(entry => Math.abs(Number(entry.shares || 0)) >= 0.0001)
         .sort((a, b) => String(a.accountName || '').localeCompare(String(b.accountName || ''))),
       accountContext: buildHoldingAccountContext([...(row.accountBreakdown?.values() || [])], accounts),
+      taxableHoldingDays: null,
       avgCost,
       currentPrice,
       marketValue,
@@ -1108,6 +1216,7 @@ export async function buildPortfolioHubView(options = {}) {
   holdings.sort((a, b) => b.marketValue - a.marketValue);
   holdings.forEach(row => {
     row.weightPct = totalValue > 0 ? (row.marketValue / totalValue) * 100 : 0;
+    row.taxableHoldingDays = calculateTaxableHoldingDays(row.symbol, row.positionType, row.accountContext?.entries || [], transactions);
   });
 
   const sectorAllocation = [...longSectorTotals.entries()]
@@ -1139,6 +1248,7 @@ export async function buildPortfolioHubView(options = {}) {
     row.takeProfit = recommendation.takeProfit ?? row.takeProfit;
     row.whiskieSource = recommendation.source || (row.opusReview ? 'opus' : 'policy');
     row.whiskieConfidence = recommendation.confidence || row.opusReview?.confidence || null;
+    row.taxAwareNote = buildTaxAwareNote(row);
   });
 
   const summary = {
@@ -1482,9 +1592,12 @@ ${JSON.stringify(candidates.map(item => ({
       const items = enforceRecommendedPositionConstraints(rawItems, portfolioHub, stockInfoMap)
         .map(item => {
           const scoring = scoreRecommendedPositionItem(item, portfolioHub, stockInfoMap);
+          const accountSuggestion = buildRecommendedAccountSuggestion(item, portfolioHub.accountStrategyContext || {});
           return {
             ...item,
             actionTaxonomy: classifyRecommendedPositionTaxonomy(item),
+            recommendedAccountType: accountSuggestion.accountType,
+            recommendedAccountReason: accountSuggestion.reason,
             deterministicScore: scoring.score,
             scoringBreakdown: scoring.breakdown
           };
@@ -1589,6 +1702,10 @@ Rules:
 - Use the supplied technical inputs explicitly when forming holdings guidance, especially for stop loss, take profit, trim/add timing, and whether the current setup is extended, constructive, weak, or breaking down.
 - Pay particular attention to SMA200, SMA50, distance from SMA200, RSI, volume ratio, trend, and slope fields when deciding if a holding deserves patience, tighter risk control, or an active trim/add recommendation.
 - Treat taxable accounts differently from IRA/HSA accounts when it materially changes the recommendation. Taxable exposures should be more sensitive to unnecessary churn and short holding periods. IRA/HSA exposures can tolerate more medium-term tactical turnover when the setup justifies it.
+- If a holding has taxable exposure and the thesis is still intact, explicitly consider holding-period thresholds before recommending a trim or reduce:
+  - if taxableHoldingDays > 300, treat it as close to long-term treatment and prefer patience unless risk is urgent
+  - if taxableHoldingDays > 365, treat tax urgency as reduced because the position is already long-term
+- Use those thresholds as a real decision input, not just a reporting note, while still allowing urgent risk management to override tax patience.
 
 Portfolio summary:
 ${JSON.stringify(portfolioHub.summary, null, 2)}
@@ -1625,6 +1742,8 @@ ${JSON.stringify(holdingsToReview.map(row => ({
     whiskieCatalysts: row.whiskieCatalysts,
     whiskieHoldingPosture: row.whiskieHoldingPosture,
     accountContext: row.accountContext || null,
+    taxableHoldingDays: row.taxableHoldingDays,
+    taxAwareNote: row.taxAwareNote || null,
     technicals: technicalsMap.get(row.symbol) || null,
     existingPolicyView: row.whiskieView,
     allocationBucketHint: row.whiskieHoldingPosture && /core|long/i.test(String(row.whiskieHoldingPosture)) ? 'core_long_term' : row.positionType === 'short' ? 'tactical_short' : 'tactical_or_unclear'

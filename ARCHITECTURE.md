@@ -164,6 +164,7 @@ Portfolio Hub is:
 - advisory only
 - manually maintained through the UI and transaction logs
 - allowed to use Whiskie research and market context
+- account-type-aware (`Taxable Cash`, `Taxable Margin`, `IRA`, `HSA`, `Other`)
 
 Main surfaces:
 
@@ -171,6 +172,13 @@ Main surfaces:
 2. latest recommendation changes
 3. recommended new positions
 4. account, cash, and transaction management
+
+Current recommendation/review behavior:
+
+- both Recommended New Positions and holdings review now pass shared FMP-backed technical context into Opus
+- implemented recommendation-change rows should no longer remain the active source for the holdings-table `Whiskie View`
+- account rows persist `account_type`, and that context now flows into both holdings review and Recommended New Positions prompts
+- taxable-heavy holdings now bias toward less churn, while IRA/HSA exposure can tolerate more medium-term tactical turnover when justified
 
 Important persistence:
 
@@ -207,6 +215,7 @@ Lifecycle states:
 Important design rule:
 
 - date-only earnings values are handled as literal calendar dates to avoid timezone drift
+- auto-synced reminder metadata should only carry forward when the existing reminder belongs to the same earnings event date
 
 ## Scheduling architecture
 
@@ -270,6 +279,7 @@ Current safety concepts include:
 - circuit-breaker and risk-manager controls
 - sector concentration and exposure logic
 - stateful earnings lifecycle transitions
+- Portfolio Hub advisory locks now hold a single DB session across the critical section instead of relying on pooled session reuse
 
 These controls are important because several subsystems use LLM output, but the system is not intended to trust raw model output blindly.
 

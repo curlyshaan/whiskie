@@ -168,6 +168,7 @@ function renderRecommendationBadgeList(item) {
     item.horizon_label || item.horizonLabel,
     item.conviction ? `Conviction: ${item.conviction}` : null,
     item.pathway ? `Pathway: ${item.pathway}` : null,
+    (item.recommended_account_type || item.recommendedAccountType) ? `Best account: ${item.recommended_account_type || item.recommendedAccountType}` : null,
     (item.relationship_type || item.relationshipType) ? `Relationship: ${item.relationship_type || item.relationshipType}` : null,
     (item.action_taxonomy || item.actionTaxonomy) ? `Taxonomy: ${item.action_taxonomy || item.actionTaxonomy}` : null,
     (item.related_holding_symbol || item.relatedHoldingSymbol) ? `Related holding: ${item.related_holding_symbol || item.relatedHoldingSymbol}` : null
@@ -199,6 +200,8 @@ function renderRecommendationReasoning(item) {
     { label: 'Why now', value: item.why_now || item.whyNow || '-' },
     { label: 'Portfolio fit', value: item.portfolio_fit || item.portfolioFit || '-' },
     { label: 'Sector impact', value: item.sector_impact || item.sectorImpact || '-' },
+    { label: 'Recommended account', value: item.recommended_account_type || item.recommendedAccountType || '-' },
+    { label: 'Account reason', value: item.recommended_account_reason || item.recommendedAccountReason || '-' },
     { label: 'Invalidation', value: item.invalidation || '-' },
     { label: 'Related holding action', value: item.related_holding_action || item.relatedHoldingAction || '-' },
     { label: 'Target framework', value: item.target_framework || item.targetFramework || '-' },
@@ -519,7 +522,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                     <td>${formatDateTime(item.createdAt)}</td>
                     <td><strong>${escapeHtml(item.symbol || '-')}</strong><br><span class="timestamp">${escapeHtml(item.positionType || '-')}</span></td>
                     <td>${escapeHtml(item.changeType === 'shares' ? 'Shares' : item.changeType === 'target' ? 'Price Target' : 'Stop Loss')}</td>
-                    <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span>${item.actionTaxonomy ? `<br><span class="timestamp">Taxonomy: ${escapeHtml(item.actionTaxonomy)}</span>` : ''}${item.deterministicScore != null ? `<br><span class="timestamp">Score: ${escapeHtml(String(item.deterministicScore))}</span>` : ''}${item.previous ? `<br><span class="timestamp">Prior: ${escapeHtml(item.previous)}</span>` : ''}</td>
+                    <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span>${item.actionTaxonomy ? `<br><span class="timestamp">Taxonomy: ${escapeHtml(item.actionTaxonomy)}</span>` : ''}${Array.isArray(item.scoringBreakdown?.reasons) && item.scoringBreakdown.reasons.length ? `<br><div class="detail-chips" style="margin-top:6px;">${item.scoringBreakdown.reasons.map(reason => `<span class="detail-chip">${escapeHtml(reason)}</span>`).join('')}</div>` : ''}${item.deterministicScore != null ? `<br><span class="timestamp">Score: ${escapeHtml(String(item.deterministicScore))}</span>` : ''}${item.previous ? `<br><span class="timestamp">Prior: ${escapeHtml(item.previous)}</span>` : ''}</td>
                     <td>
                       <label style="display:flex; align-items:center; gap:8px;">
                         <input type="checkbox" ${item.implemented ? 'checked' : ''} onchange="setPortfolioHubRecommendationImplemented(${Number(item.id)}, this.checked)" />
@@ -668,6 +671,8 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                             { label: 'Portfolio Hub guidance', value: row.whiskieView || '-' },
                             { label: 'Share guidance', value: row.whiskieShareCountText || '-' },
                             { label: 'Plan progress', value: row.whiskiePlanProgressText || '-' },
+                            { label: 'Tax note', value: row.taxAwareNote || '-' },
+                            { label: 'Taxable holding days', value: row.taxableHoldingDays != null ? String(row.taxableHoldingDays) : '-' },
                             { label: 'Opus review saved', value: row.opusReviewCreatedAt ? formatShortDate(row.opusReviewCreatedAt) : '-' }
                           ])}
                           ${renderDetailSection('Detail', formatStructuredText(row.whiskieDetail || '-'))}
