@@ -1,5 +1,5 @@
 import axios from 'axios';
-import cheerio from 'cheerio';
+import * as cheerio from 'cheerio';
 import dotenv from 'dotenv';
 import * as db from './db.js';
 import claude, { MODELS } from './claude.js';
