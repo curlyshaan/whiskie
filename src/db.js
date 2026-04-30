@@ -1807,6 +1807,26 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name = 'tavily_usage_events'
+        ) AND NOT EXISTS (
+          SELECT 1
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name = 'serper_usage_events'
+        ) THEN
+          ALTER TABLE tavily_usage_events RENAME TO serper_usage_events;
+        END IF;
+      END
+      $$;
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS serper_usage_events (
         id SERIAL PRIMARY KEY,
         activity VARCHAR(100) NOT NULL,
@@ -1822,6 +1842,16 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      ALTER TABLE serper_usage_events
+      RENAME COLUMN topic TO search_type;
+    `).catch(() => {});
+
+    await client.query(`
+      ALTER TABLE serper_usage_events
+      DROP COLUMN IF EXISTS search_depth;
+    `);
+
+    await client.query(`
       CREATE INDEX IF NOT EXISTS idx_serper_usage_events_activity ON serper_usage_events(activity);
     `);
 
@@ -1831,20 +1861,6 @@ export async function initDatabase() {
 
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_serper_usage_events_created_at ON serper_usage_events(created_at);
-    `);
-
-    await client.query(`
-      ALTER TABLE IF EXISTS tavily_usage_events RENAME TO serper_usage_events;
-    `);
-
-    await client.query(`
-      ALTER TABLE serper_usage_events
-      RENAME COLUMN topic TO search_type;
-    `).catch(() => {});
-
-    await client.query(`
-      ALTER TABLE serper_usage_events
-      DROP COLUMN IF EXISTS search_depth;
     `);
 
     await client.query(`
