@@ -688,6 +688,7 @@ async function syncPortfolioHubRecommendationChanges(holdings = [], adviceHistor
   const existingRows = await db.listPortfolioHubRecommendationChanges().catch(() => []);
   const existingByKey = new Map((existingRows || []).map(row => [String(row.change_key || ''), row]));
   const activeKeys = new Set();
+  let createdCount = 0;
 
   for (const row of holdings) {
     if (!row.opusReview) continue;
@@ -715,11 +716,14 @@ async function syncPortfolioHubRecommendationChanges(holdings = [], adviceHistor
         changeType: item.type,
         changeSummary: item.summary,
         changePreviousValue: item.previous
+      }).then(saved => {
+        if (saved) createdCount += 1;
       }).catch(() => null);
     }
   }
 
   await db.deletePortfolioHubRecommendationChangesNotInKeys([...activeKeys]).catch(() => null);
+  logPortfolioHub('holding-changes', `sync activeKeys=${activeKeys.size} created=${createdCount}`);
 }
 
 function summarizeHoldingAction(row) {
@@ -727,6 +731,26 @@ function summarizeHoldingAction(row) {
   const summary = String(row.whiskieView || '').trim();
   const shareCount = String(row.whiskieShareCountText || '').trim();
   return [action, shareCount || summary].filter(Boolean).slice(0, 2).join(' — ');
+}
+
+function applyTransientRecommendationState(items = [], previousItems = [], keyBuilder) {
+  const priorState = new Map(
+    (previousItems || []).map(item => [keyBuilder(item), item])
+  );
+
+  return (items || []).map(item => {
+    const prior = priorState.get(keyBuilder(item)) || null;
+    if (!prior) {
+      return {
+        ...item,
+        implemented: false,
+        implementedAt: null,
+        skipped: false,
+        skippedAt: null
+      };
+    }
+    return item;
+  });
 }
 
 async function cleanupLegacyPortfolioHubAdviceHistory() {
@@ -741,7 +765,7 @@ function buildRecommendedPositionCandidates({ holdings = [], saturdayRows = [], 
 
   for (const row of saturdayRows || []) {
     const symbol = String(row.symbol || '').toUpperCase();
-    if (!symbol) continue;
+    if (!symbol || heldSymbols.has(symbol)) continue;
     candidates.set(symbol, {
       symbol,
       source: 'watchlist',
@@ -749,13 +773,13 @@ function buildRecommendedPositionCandidates({ holdings = [], saturdayRows = [], 
       intent: row.intent || null,
       score: Number(row.opus_conviction || row.score || 0),
       reasons: row.reasons || null,
-      held: heldSymbols.has(symbol)
+      held: false
     });
   }
 
   for (const row of dailyStates || []) {
     const symbol = String(row.symbol || '').toUpperCase();
-    if (!symbol || candidates.has(symbol)) continue;
+    if (!symbol || candidates.has(symbol) || heldSymbols.has(symbol)) continue;
     candidates.set(symbol, {
       symbol,
       source: 'daily_state',
@@ -763,7 +787,7 @@ function buildRecommendedPositionCandidates({ holdings = [], saturdayRows = [], 
       intent: row.last_action || null,
       score: Number(row.conviction_score || 0),
       reasons: row.thesis_summary || null,
-      held: heldSymbols.has(symbol)
+      held: false
     });
   }
 
@@ -1839,9 +1863,14 @@ ${JSON.stringify(candidates.map(item => ({
           deterministicRank: index + 1
         }))
         .slice(0, 5);
+      const normalizedItems = applyTransientRecommendationState(
+        items,
+        previousRun?.items || [],
+        item => buildRecommendedPositionPreferenceKey(item)
+      );
       logPortfolioHub(
         'new-positions',
-        `final-ideas count=${items.length} ${formatPhubLogList(items, item => `${item.symbol}[${item.direction}|${item.actionTaxonomy || 'n/a'}|acct=${item.recommendedAccountType || 'n/a'}|postEarnings=${item.postEarningsSignal?.recommendation || 'NO_SIGNAL'}]`)}`
+        `final-ideas count=${normalizedItems.length} ${formatPhubLogList(normalizedItems, item => `${item.symbol}[${item.direction}|${item.actionTaxonomy || 'n/a'}|acct=${item.recommendedAccountType || 'n/a'}|postEarnings=${item.postEarningsSignal?.recommendation || 'NO_SIGNAL'}|implemented=${item.implemented ? 'yes' : 'no'}]`)}`
       );
 
       const savedRun = await db.createPortfolioHubRecommendedPositionRun({
@@ -1857,11 +1886,11 @@ ${JSON.stringify(candidates.map(item => ({
         rawModelPayload: parsed
       });
 
-      await db.replacePortfolioHubRecommendedPositionItems(savedRun.id, items);
+      await db.replacePortfolioHubRecommendedPositionItems(savedRun.id, normalizedItems);
 
       const currentRun = {
         ...savedRun,
-        items
+        items: normalizedItems
       };
 
       try {
@@ -1870,7 +1899,7 @@ ${JSON.stringify(candidates.map(item => ({
         console.error('❌ Failed to send Portfolio Hub recommendation diff email:', error);
       }
 
-      logPortfolioHub('new-positions', `saved runId=${savedRun?.id || 'n/a'} items=${items.length}`);
+      logPortfolioHub('new-positions', `saved runId=${savedRun?.id || 'n/a'} items=${normalizedItems.length}`);
 
       return currentRun;
     }
