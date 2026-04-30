@@ -708,7 +708,6 @@ class WhiskieBot {
       // Schedule trade executor and pathway exit monitoring every 30 minutes during regular market hours
       cron.schedule('*/30 9-16 * * 1-5', async () => {
         try {
-          await tradeExecutor.processApprovedTrades();
           await pathwayExitMonitor.checkPathwayExits();
         } catch (error) {
           console.error('❌ Error in 30-minute monitoring cycle:', error);
@@ -3204,7 +3203,7 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
               action: rec.type === 'short' ? 'sell_short' : 'buy'
             });
 
-            await tradeApproval.submitForExecution({
+            const approvalId = await tradeApproval.submitForExecution({
               symbol: rec.symbol,
               action: rec.type === 'short' ? 'sell_short' : 'buy',
               quantity: rec.quantity,
@@ -3245,6 +3244,7 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
                 ? `VIX ${regime.name} sizing adjusted from ${rec.originalQuantity} to ${rec.quantity}`
                 : null
             }, true);
+            await tradeExecutor.executeApprovalById(approvalId);
 
             console.log(`   ✅ ${rec.symbol} queued for autonomous execution`);
           } catch (error) {

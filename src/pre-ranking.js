@@ -379,7 +379,7 @@ class PreRanking {
       .filter(row => row.intent !== 'short')
       .filter(row => {
         const earningsInfo = earningsMap.get(row.symbol);
-        return !(earningsInfo && earningsInfo.daysUntil >= 0 && earningsInfo.daysUntil <= 3);
+        return !this.shouldExcludeLongForEarnings(earningsInfo);
       })
       .map(row => ({
         symbol: row.symbol,
