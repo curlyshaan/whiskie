@@ -1884,6 +1884,34 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS tavily_usage_events (
+        id SERIAL PRIMARY KEY,
+        activity VARCHAR(100) NOT NULL,
+        symbol VARCHAR(10),
+        query TEXT NOT NULL,
+        topic VARCHAR(20),
+        search_depth VARCHAR(20),
+        max_results INTEGER,
+        result_count INTEGER DEFAULT 0,
+        cache_hit BOOLEAN DEFAULT FALSE,
+        context JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_tavily_usage_events_activity ON tavily_usage_events(activity);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_tavily_usage_events_symbol ON tavily_usage_events(symbol);
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_tavily_usage_events_created_at ON tavily_usage_events(created_at);
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS options_analysis_runs (
         id SERIAL PRIMARY KEY,
         symbol VARCHAR(10) NOT NULL,
@@ -3811,6 +3839,33 @@ export async function getUpcomingEarnings(days = 30) {
   }
 }
 
+export async function getUpcomingEarningsForCanonicalSaturdayWatchlist(days = 30) {
+  try {
+    const result = await pool.query(
+      `SELECT
+        ec.*,
+        su.company_name,
+        su.market_cap
+       FROM earnings_calendar ec
+       LEFT JOIN stock_universe su ON su.symbol = ec.symbol
+       WHERE ec.earnings_date >= CURRENT_DATE
+       AND ec.earnings_date <= CURRENT_DATE + INTERVAL '${days} days'
+       AND EXISTS (
+         SELECT 1
+         FROM saturday_watchlist sw
+         WHERE sw.symbol = ec.symbol
+           AND sw.status IN ('active', 'pending')
+       )
+       ORDER BY ec.earnings_date ASC, ec.source_priority DESC, ec.last_verified_at DESC`,
+      []
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching upcoming earnings for canonical saturday_watchlist:', error);
+    throw error;
+  }
+}
+
 export async function getRecentAndUpcomingEarnings(pastDays = 2, futureDays = 2) {
   try {
     const result = await pool.query(
@@ -4814,6 +4869,41 @@ export async function logSerperUsageEvent(payload = {}) {
     );
   } catch (error) {
     console.error('Error logging Serper usage event:', error);
+  }
+}
+
+export async function logTavilyUsageEvent(payload = {}) {
+  const {
+    activity = 'unknown',
+    symbol = null,
+    query = '',
+    topic = null,
+    searchDepth = null,
+    maxResults = null,
+    resultCount = 0,
+    cacheHit = false,
+    context = {}
+  } = payload;
+
+  try {
+    await pool.query(
+      `INSERT INTO tavily_usage_events (
+        activity, symbol, query, topic, search_depth, max_results, result_count, cache_hit, context
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+      [
+        String(activity || 'unknown'),
+        symbol ? String(symbol).toUpperCase() : null,
+        String(query || ''),
+        topic || null,
+        searchDepth || null,
+        Number.isFinite(Number(maxResults)) ? Number(maxResults) : null,
+        Number.isFinite(Number(resultCount)) ? Number(resultCount) : 0,
+        Boolean(cacheHit),
+        JSON.stringify(context || {})
+      ]
+    );
+  } catch (error) {
+    console.error('Error logging Tavily usage event:', error);
   }
 }
 

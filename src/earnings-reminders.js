@@ -424,7 +424,7 @@ export async function buildEarningsCatalystSummary(symbol, options = {}) {
     .filter(item => item.degraded)
     .map(item => `${item.providerStatus}${item.warning ? ` (${item.warning})` : ''}`)
     .join('; ');
-  return `[SERPER DEGRADED: ${warnings}] ${summary}`;
+  return `[TAVILY DEGRADED: ${warnings}] ${summary}`;
 }
 
 export async function getEarningsReminderDetails(symbol) {

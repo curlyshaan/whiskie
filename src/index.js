@@ -63,16 +63,16 @@ async function runDailyProfileRefreshSweep(options = {}) {
   const staleAfterDays = options.staleAfterDays == null ? 14 : Number(options.staleAfterDays);
   const symbols = new Set();
 
-  const [positions, watchlist, upcomingEarnings] = await Promise.all([
+  const [positions, saturdayRows, upcomingEarnings] = await Promise.all([
     db.getPositions().catch(() => []),
-    db.getWatchlist().catch(() => []),
-    db.getUpcomingEarnings(2).catch(() => [])
+    db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => []),
+    db.getUpcomingEarningsForCanonicalSaturdayWatchlist(2).catch(() => [])
   ]);
 
   for (const row of positions || []) {
     if (row?.symbol) symbols.add(String(row.symbol).toUpperCase());
   }
-  for (const row of watchlist || []) {
+  for (const row of saturdayRows || []) {
     if (row?.symbol) symbols.add(String(row.symbol).toUpperCase());
   }
   for (const row of upcomingEarnings || []) {
@@ -235,7 +235,7 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule daily analysis at 10:00 AM, 12:00 PM, and 2:00 PM ET
+      // Schedule daily analysis at 10:00 AM and 2:00 PM ET
       cron.schedule('0 10 * * 1-5', async () => {
         const scheduledTime = new Date();
         const jobId = await db.logCronJobStart('Morning Analysis', 'daily', scheduledTime);
@@ -246,22 +246,6 @@ class WhiskieBot {
           await db.logCronJobComplete(jobId, true);
         } catch (error) {
           console.error('❌ Morning analysis failed:', error);
-          await db.logCronJobComplete(jobId, false, error.message);
-        }
-      }, {
-        timezone: 'America/New_York'
-      });
-
-      cron.schedule('0 12 * * 1-5', async () => {
-        const scheduledTime = new Date();
-        const jobId = await db.logCronJobStart('Midday Analysis', 'daily', scheduledTime);
-
-        try {
-          console.log('\n⏰ 12:00 PM Analysis - Midday refresh');
-          await this.runDailyAnalysis();
-          await db.logCronJobComplete(jobId, true);
-        } catch (error) {
-          console.error('❌ Midday analysis failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
         }
       }, {
@@ -368,7 +352,7 @@ class WhiskieBot {
         const jobId = await db.logCronJobStart('Daily Stock Profile Refresh Sweep', 'daily', scheduledTime);
 
         try {
-          console.log('\n⏰ 8:00 PM ET - Refreshing stock profiles older than 14 days or within 2 days of earnings');
+          console.log('\n⏰ 8:00 PM ET - Refreshing stock profiles for positions and canonical saturday_watchlist names older than 14 days or within 2 days of earnings');
           const results = await runDailyProfileRefreshSweep({ staleAfterDays: 14 });
           console.log(`✅ Daily stock profile refresh sweep complete: ${results.filter(item => item.action !== 'failed').length} processed, ${results.filter(item => item.action === 'failed').length} failed`);
           await db.logCronJobComplete(jobId, true);
@@ -1341,7 +1325,7 @@ class WhiskieBot {
       }
     });
 
-    // Chat endpoint with Serper integration
+    // Chat endpoint with Tavily integration
     app.post('/chat', async (req, res) => {
       try {
         const { question } = req.body;
@@ -1355,7 +1339,7 @@ class WhiskieBot {
         // Get current portfolio state
         const portfolio = await analysisEngine.getPortfolioState();
 
-        // Search for relevant market news/data with Serper
+        // Search for relevant market news/data with Tavily
         const searchResults = await newsSearch.search(question, { maxResults: 5, engine: 'search', fetchFullArticles: 2 });
         const newsContext = searchResults.map(r => `${r.title}: ${r.content}`).join('\n\n');
 
@@ -1630,13 +1614,20 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       await db.updateDaysHeld();
       console.log('✅ Days held updated\n');
 
-      // Get enriched news
-      console.log('📰 Fetching enriched news...');
-      const marketNews = await newsSearch.searchMarketNews(8);
-      const techNews = await newsSearch.searchSectorNews('technology', 3);
-      const healthNews = await newsSearch.searchSectorNews('healthcare', 3);
-      const macroResults = await newsSearch.searchStructuredMacroContext({ maxResults: 5 });
-      const allNews = [...marketNews, ...techNews, ...healthNews, ...macroResults];
+      // Get Tavily news scoped to active/promoted saturday_watchlist names only
+      console.log('📰 Fetching Tavily news for active saturday_watchlist analysis universe...');
+      const activeWatchlistRows = await db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true });
+      const universeSymbols = [...new Set(activeWatchlistRows.map(row => String(row.symbol || '').toUpperCase()).filter(Boolean))].slice(0, 12);
+      const symbolNewsResults = await Promise.all(
+        universeSymbols.map(symbol =>
+          newsSearch.searchStructuredStockContext(symbol, {
+            maxResults: 2,
+            timeRange: 'week',
+            context: { workflow: 'daily_analysis', scope: 'active_saturday_watchlist' }
+          }).catch(() => [])
+        )
+      );
+      const allNews = symbolNewsResults.flat();
 
       // Sanitize news content to prevent prompt injection
       const sanitizedNews = allNews.map(article => ({
@@ -1647,7 +1638,7 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
 
       const formattedNews = newsSearch.formatResults(sanitizedNews);
       const wrappedNews = wrapNewsForPrompt(formattedNews);
-      console.log(`   Found ${allNews.length} articles (sanitized)\n`);
+      console.log(`   Found ${allNews.length} Tavily articles across ${universeSymbols.length} active saturday_watchlist symbols (sanitized)\n`);
 
       console.log('📊 Market Sentiment: skipped (news context passed directly into analysis prompts)\n');
 
@@ -1792,24 +1783,12 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         // Portfolio is healthy, but still scan watchlist and news for opportunities
         console.log('✅ Portfolio healthy - running watchlist scan and news review');
 
-        // Get watchlist
-        const watchlist = await db.getWatchlist();
-        if (watchlist.length > 0) {
-          console.log(`📋 Watchlist: ${watchlist.length} stocks being monitored`);
-
-          // Check if any watchlist stocks are at target entry prices
-          const opportunities = watchlist.filter(w => w.current_price <= w.target_entry_price);
-          if (opportunities.length > 0) {
-            console.log(`🎯 ${opportunities.length} watchlist stocks at or below target entry price`);
-            console.log('   Consider running full analysis to evaluate these opportunities');
-          }
+        if (activeWatchlistRows.length > 0) {
+          console.log(`📋 Active saturday_watchlist: ${activeWatchlistRows.length} stocks in current live analysis universe`);
         }
 
-        // Brief news scan for major market events
-        console.log('📰 Scanning for major market events...');
-        const majorNews = await newsSearch.searchMarketNews(3);
-        if (majorNews.length > 0) {
-          console.log(`   Found ${majorNews.length} recent market headlines`);
+        if (allNews.length > 0) {
+          console.log(`📰 Tavily captured ${allNews.length} recent headlines across the active saturday_watchlist universe`);
         }
       }
 
@@ -2049,7 +2028,6 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         intentMap[candidate.symbol] = pathway ? PATHWAY_TO_INTENT[pathway] || 'momentum_short' : 'momentum_short';
       });
 
-      const activeWatchlistRows = await db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true });
       const watchlistMetadataBySymbol = Object.fromEntries(
         activeWatchlistRows.map(row => [row.symbol, row])
       );
@@ -2121,27 +2099,18 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         console.log('ℹ️  No trend learning data yet');
       }
 
-      // Check watchlist for buy opportunities
-      console.log('👀 Checking watchlist for buy opportunities...');
-      const watchlist = await db.getWatchlist();
-      const buyOpportunities = await db.getWatchlistBuyOpportunities();
-
+      // Check canonical saturday_watchlist context only
+      console.log('👀 Checking active saturday_watchlist context...');
       let watchlistContext = '';
-      if (watchlist.length > 0) {
-        watchlistContext = '\n\n**WATCHLIST (stocks you are monitoring):**\n';
-        for (const item of watchlist) {
+      if (activeWatchlistRows.length > 0) {
+        watchlistContext = '\n\n**ACTIVE SATURDAY WATCHLIST (current analysis universe):**\n';
+        for (const item of activeWatchlistRows) {
           const sector = await this.getSector(item.symbol);
-          const atTarget = item.current_price <= item.target_entry_price ? '✅ AT TARGET' : '';
-          watchlistContext += `- ${item.symbol} (${sector}): Current $${item.current_price}, Target Entry $${item.target_entry_price} ${atTarget}\n`;
-          watchlistContext += `  Why watching: ${item.why_watching}\n`;
-          watchlistContext += `  Why not buying now: ${item.why_not_buying_now}\n\n`;
+          watchlistContext += `- ${item.symbol} (${sector}) | pathway: ${item.primary_pathway || item.pathway || 'unknown'} | review priority: ${item.review_priority ?? 'n/a'}\n`;
         }
-        console.log(`   Found ${watchlist.length} stocks on watchlist`);
-        if (buyOpportunities.length > 0) {
-          console.log(`   🎯 ${buyOpportunities.length} stocks at or below target entry price!`);
-        }
+        console.log(`   Found ${activeWatchlistRows.length} active/promoted saturday_watchlist stocks`);
       } else {
-        console.log('   Watchlist is empty');
+        console.log('   Active saturday_watchlist is empty');
       }
 
       // Get correlation analysis for portfolio
@@ -2474,7 +2443,7 @@ ${assetClassContext}
 1. Growth Potential: Can this stock 2x-3x over 12-24 months? Addressable market, acceleration, margin expansion, moat
 2. Fundamental Analysis: Business quality, revenue/earnings growth, valuation, balance sheet, management
 3. Technical Analysis: Price vs moving averages, support/resistance, volume, RSI/MACD, chart patterns
-4. Catalyst Analysis: Use the provided Serper results to identify dated catalysts, probability, and impact
+4. Catalyst Analysis: Use the provided Tavily results to identify dated catalysts, probability, and impact
 5. Risk/Reward: Entry price, stop loss, target price, R/R ratio (minimum 2:1), position size
 
 **Decision Criteria:**

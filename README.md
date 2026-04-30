@@ -43,7 +43,7 @@ Whiskie currently does the following:
 
 - builds and maintains a curated `stock_universe` from FMP
 - runs weekly screening into `saturday_watchlist`
-- builds stock profiles for watchlist names using FMP + Serper + Gemini
+- builds stock profiles for watchlist names using FMP + Tavily + Gemini
 - runs weekday daily analysis using a 4-phase pipeline
 - queues trades into `trade_approvals` as autonomous trade intents
 - auto-approves normal system-generated intents for execution while retaining operator override paths
@@ -73,7 +73,6 @@ Whiskie currently does the following:
 - **8:00 AM ET** — macro regime detection
 - **9:00 AM ET** — pre-market scan
 - **10:00 AM ET** — daily 4-phase analysis
-- **12:00 PM ET** — daily 4-phase analysis midday refresh
 - **2:00 PM ET** — daily 4-phase analysis
 - **3:00 PM ET** — earnings reminder processing
 - **11:00 AM ET** — earnings reminder grading for eligible rows
@@ -92,7 +91,7 @@ That shared layer includes:
 - stock profiles
 - pathway/watchlist context
 - technical indicators
-- structured Serper macro/news context
+- structured Tavily macro/news context
 - deterministic earnings timing and post-earnings signals
 - market regime and risk context
 
@@ -110,7 +109,7 @@ Consumers of that intelligence include:
 
 Stock profiles are operationally important and currently work like this:
 
-- source inputs: **FMP fundamentals + FMP historical price data + Serper news + Gemini generation**
+- source inputs: **FMP fundamentals + FMP historical price data + Tavily news + Gemini generation**
 - profile build path is intentionally **Yahoo-free**
 - profile generation is split into 3 Gemini calls:
   - `core-business`
@@ -279,7 +278,7 @@ The goal of this section is that a future session should not need you to restate
 | --- | --- | --- | --- | --- |
 | Quatarly | Claude/Opus/Gemini gateway | `https://www.quatarly.cloud/docs` | `QUATARLY_API_KEY`, `QUATARLY_BASE_URL` | Current base URL is `https://api.quatarly.cloud/` |
 | FMP | Fundamentals, quotes, historical prices, earnings, core market data | `https://site.financialmodelingprep.com/developer/docs/stable` | `FMP_API_KEY_1` | Current code assumes a paid single-key setup and `/stable` endpoints |
-| Serper | Google-style discovery for structured search/news retrieval | `https://serper.dev` | `SERPER_API_KEY` | Used through workflow-aware search helpers with tiered source retrieval and degradation tracking |
+| Tavily | Search plus provider-returned content extraction for structured market/news retrieval | `https://tavily.com` | `TAVILY_API_KEY` | Used as the app-wide news/content provider with usage tracking and workflow-specific query helpers |
 | DoltHub | Earnings session timing (`pre_market` / `post_market`) | `https://www.dolthub.com/repositories/post-no-preference/earnings/data/master/earnings_calendar` | none | Used as the earnings session timing source layered on top of earnings dates |
 | Tradier | Brokerage, market open state, order/account actions | `https://documentation.tradier.com/brokerage-api` | `TRADIER_API_KEY`, `TRADIER_BASE_URL`, `TRADIER_SANDBOX_API_KEY`, `TRADIER_SANDBOX_URL`, `TRADIER_ACCOUNT_ID`, `TRADIER_SANDBOX_ACCOUNT_ID` | Supports live and sandbox/paper flows |
 | Resend | Email delivery | `https://resend.com/docs` | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `ALERT_EMAIL` | Used for alerts and reminder email delivery |
@@ -388,7 +387,7 @@ Current important variables:
 - `QUATARLY_API_KEY`
 - `QUATARLY_BASE_URL`
 - `FMP_API_KEY_1`
-- `SERPER_API_KEY`
+- `TAVILY_API_KEY`
 - `NEWS_SUMMARY_MODEL`
 - `TRADIER_API_KEY`
 - `TRADIER_BASE_URL`
@@ -421,7 +420,7 @@ Recent reliability/performance updates:
 - circuit breaker now checks both weekly loss and daily drawdown
 - options analyzer keeps low-conviction options ideas as warnings instead of force-converting them to `no_trade`
 - earnings trim lot changes now execute inside a DB transaction
-- shared services now provide reusable profile-build coordination, Serper/news caching, quote caching, and Opus-response caching
+- shared services now provide reusable profile-build coordination, Tavily/news caching, quote caching, and Opus-response caching
 - post-earnings analysis now uses trading-day-aware eligibility and session-aware deterministic dip logic
 - PHUB recommended-position persistence now retains technical snapshots and recommended-account context
 
@@ -474,9 +473,8 @@ Whiskie now uses `earnings_calendar` as the source of truth for upcoming earning
 - dark glassmorphism dashboard styling
 - date-only earnings values are rendered as literal calendar dates, not timezone-shifted timestamps
 
-Serper/news-provider behavior:
-
-- selected Serper provider/account failures that surface as soft HTTP 432 responses now degrade to empty news context in major workflows instead of automatically failing the full job
+Tavily/news-provider behavior:
+- selected Tavily provider/account failures that surface as soft HTTP 432/433 responses now degrade to empty news context in major workflows instead of automatically failing the full job
 
 ## Dashboard behavior
 

@@ -768,8 +768,8 @@ router.post('/analyze', async (req, res) => {
     const newsHealth = await newsSearch.getStructuredStockContextWithHealth(symbol, { maxResults: 5 });
     const news = newsHealth.results || [];
     if (newsHealth.degraded) {
-      console.warn(`   ⚠️ Serper structured search degraded for ${symbol}: ${newsHealth.warning || newsHealth.providerStatus}`);
-      warnings.push(`Serper search degraded: ${newsHealth.providerStatus}${newsHealth.warning ? ` (${newsHealth.warning})` : ''}`);
+      console.warn(`   ⚠️ Tavily structured search degraded for ${symbol}: ${newsHealth.warning || newsHealth.providerStatus}`);
+      warnings.push(`Tavily search degraded: ${newsHealth.providerStatus}${newsHealth.warning ? ` (${newsHealth.warning})` : ''}`);
     }
 
     // Step 7: Get catalyst research and options data

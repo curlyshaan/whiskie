@@ -64,6 +64,5 @@ Before closing work:
 
 ## News retrieval
 
-- `SERPER_API_KEY` powers URL discovery via Serper
-- `NEWS_SUMMARY_MODEL` selects the Quatarly model used to summarize fetched article text (default: `claude-sonnet-4-6-thinking`)
-- `src/news-search.js` fetches top result pages, extracts readable article text with Cheerio, and produces structured bullets for downstream prompts
+- `TAVILY_API_KEY` powers app-wide news search and provider-returned content retrieval
+- `src/news-search.js` normalizes Tavily result content for downstream prompts and structured workflows

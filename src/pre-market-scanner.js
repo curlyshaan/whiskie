@@ -79,7 +79,7 @@ export async function runPreMarketScan() {
         try {
           const newsHealth = await newsSearch.getStructuredPremarketContextWithHealth(normalizedSymbol, { maxResults: 2, timeRange: 'day' });
           gapInfo.newsHeadlines = newsHealth.degraded
-            ? `SERPER STATUS: ${newsHealth.providerStatus}${newsHealth.warning ? ` — ${newsHealth.warning}` : ''}\n${newsSearch.formatResults(newsHealth.results || [])}`
+            ? `TAVILY STATUS: ${newsHealth.providerStatus}${newsHealth.warning ? ` — ${newsHealth.warning}` : ''}\n${newsSearch.formatResults(newsHealth.results || [])}`
             : newsSearch.formatResults(newsHealth.results || []);
         } catch (e) {
           gapInfo.newsHeadlines = 'News unavailable';

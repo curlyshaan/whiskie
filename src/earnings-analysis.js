@@ -9,6 +9,11 @@ import { resolveMarketPrice } from './utils.js';
 import optionsAnalyzer from './options-analyzer.js';
 import { ensureFreshStockProfile } from './stock-profiles.js';
 
+async function isCanonicalSaturdayWatchlistSymbol(symbol) {
+  const rows = await db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => []);
+  return rows.some(row => String(row.symbol || '').toUpperCase() === String(symbol || '').trim().toUpperCase());
+}
+
 async function getEarningsSurpriseHistory(symbol) {
   const [surprises, earningsHistory] = await Promise.all([
     fmp.getEarningsSurprises(symbol, 8).catch(() => []),
@@ -377,7 +382,7 @@ export async function analyzeBeforeEarnings(position) {
 
     // Get latest news
     const context = await getPostEarningsContext(position.symbol);
-    const newsText = `${context.newsHealth?.degraded ? `SERPER DEGRADED: ${context.newsHealth.providerStatus}${context.newsHealth.warning ? ` — ${context.newsHealth.warning}` : ''}\n` : ''}${newsSearch.formatResults(context.news)}`;
+    const newsText = `${context.newsHealth?.degraded ? `TAVILY DEGRADED: ${context.newsHealth.providerStatus}${context.newsHealth.warning ? ` — ${context.newsHealth.warning}` : ''}\n` : ''}${newsSearch.formatResults(context.news)}`;
 
     // Get current price
     const quote = await fmp.getQuote(position.symbol);
@@ -436,7 +441,7 @@ POSITION DETAILS:
 - Investment thesis: ${thesis}
 
 RECENT NEWS:
-${context.newsHealth?.degraded ? `SERPER DEGRADED: ${context.newsHealth.providerStatus}${context.newsHealth.warning ? ` — ${context.newsHealth.warning}` : ''}\n` : ''}${newsText}
+${context.newsHealth?.degraded ? `TAVILY DEGRADED: ${context.newsHealth.providerStatus}${context.newsHealth.warning ? ` — ${context.newsHealth.warning}` : ''}\n` : ''}${newsText}
 
 OPTIONS EARNINGS CONTEXT:
 ${optionsContext}
@@ -674,7 +679,9 @@ export async function analyzeAfterEarnings(symbol) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
   if (!normalizedSymbol) throw new Error('Symbol is required');
 
-  await ensureFreshStockProfile(normalizedSymbol, { staleAfterDays: 14, incrementalRefreshDays: 14 }).catch(() => null);
+  if (await isCanonicalSaturdayWatchlistSymbol(normalizedSymbol)) {
+    await ensureFreshStockProfile(normalizedSymbol, { staleAfterDays: 14, incrementalRefreshDays: 14 }).catch(() => null);
+  }
 
   const [positionLots, context, nextEarning, profile, stockInfo] = await Promise.all([
     db.getPositionLots(normalizedSymbol).catch(() => []),
@@ -710,7 +717,7 @@ export async function analyzeAfterEarnings(symbol) {
       reactionSnapshot
     };
   }
-  const newsText = `${context.newsHealth?.degraded ? `SERPER DEGRADED: ${context.newsHealth.providerStatus}${context.newsHealth.warning ? ` — ${context.newsHealth.warning}` : ''}\n` : ''}${newsSearch.formatResults(context.news || [])}`;
+  const newsText = `${context.newsHealth?.degraded ? `TAVILY DEGRADED: ${context.newsHealth.providerStatus}${context.newsHealth.warning ? ` — ${context.newsHealth.warning}` : ''}\n` : ''}${newsSearch.formatResults(context.news || [])}`;
   const hasPosition = Array.isArray(positionLots) && positionLots.length > 0;
   const totalQuantity = hasPosition
     ? positionLots.reduce((sum, lot) => sum + Math.abs(Number(lot.quantity || 0)), 0)

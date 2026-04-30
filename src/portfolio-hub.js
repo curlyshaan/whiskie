@@ -982,7 +982,7 @@ async function buildPortfolioHubMarketContext(portfolioHub) {
       warning: macroHealth.warning || null
     },
     formattedMacroNews: macroHealth.degraded
-      ? `SERPER STATUS: ${macroHealth.providerStatus}${macroHealth.warning ? ` — ${macroHealth.warning}` : ''}\n` + newsSearch.formatResults(macroHealth.results || [])
+      ? `TAVILY STATUS: ${macroHealth.providerStatus}${macroHealth.warning ? ` — ${macroHealth.warning}` : ''}\n` + newsSearch.formatResults(macroHealth.results || [])
       : newsSearch.formatResults(macroHealth.results || [])
   };
 }
@@ -1030,7 +1030,7 @@ async function buildPortfolioHubStockNewsContext(holdings = [], sectorTrimCandid
         postEarningsSignal: row.postEarningsSignal,
         searchHealth: { providerStatus: health.providerStatus, degraded: health.degraded, warning: health.warning || null },
         formattedNews: health.degraded
-          ? `SERPER STATUS: ${health.providerStatus}${health.warning ? ` — ${health.warning}` : ''}\n` + newsSearch.formatResults(results)
+          ? `TAVILY STATUS: ${health.providerStatus}${health.warning ? ` — ${health.warning}` : ''}\n` + newsSearch.formatResults(results)
           : newsSearch.formatResults(results),
         items: results.map(item => ({
           title: item.title,
@@ -1589,13 +1589,22 @@ export async function runPortfolioHubRecommendedPositions(options = {}) {
         db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => [])
       ]);
 
+      const saturdaySymbols = [...new Set((saturdayRows || []).map(row => String(row.symbol || '').toUpperCase()).filter(Boolean))];
+      const postEarningsAnalyses = await db.getLatestPostEarningsAnalyses(saturdaySymbols, 3).catch(() => []);
+      const postEarningsSignalMap = new Map(
+        (postEarningsAnalyses || []).map(row => [String(row.symbol || '').toUpperCase(), row.recommendation || null])
+      );
+
       const candidates = buildRecommendedPositionCandidates({
         holdings: portfolioHub.holdings || [],
         saturdayRows,
         dailyStates
       }).map(item => ({
         ...item,
-        postEarningsSignal: (portfolioHub.holdings || []).find(row => row.symbol === item.symbol)?.postEarningsSignal || null
+        postEarningsSignal:
+          (portfolioHub.holdings || []).find(row => row.symbol === item.symbol)?.postEarningsSignal
+          || postEarningsSignalMap.get(String(item.symbol || '').toUpperCase())
+          || null
       }));
 
       const candidateSymbols = candidates.map(item => item.symbol);
@@ -1854,10 +1863,10 @@ ${JSON.stringify(marketContext.summary, null, 2)}
 Account strategy context:
 ${JSON.stringify(portfolioHub.accountStrategyContext || {}, null, 2)}
 
-Structured Serper macro context:
+Structured Tavily macro context:
 ${marketContext.formattedMacroNews}
 
-Structured Serper stock context for highest-priority holdings only:
+Structured Tavily stock context for highest-priority holdings only:
 ${JSON.stringify(stockNewsContext, null, 2)}
 
 Profile build results for holdings that were missing a Whiskie stock profile:
