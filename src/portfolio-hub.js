@@ -772,6 +772,22 @@ function buildRecommendedPositionCandidates({ holdings = [], saturdayRows = [], 
     .slice(0, 20);
 }
 
+function formatPhubLogList(rows = [], formatter = row => row, emptyLabel = 'none') {
+  const items = (rows || [])
+    .map(formatter)
+    .filter(Boolean);
+  return items.length ? items.join(', ') : emptyLabel;
+}
+
+function logPortfolioHub(scope, message, details = null) {
+  const prefix = `[phub:${scope}]`;
+  if (details == null) {
+    console.log(`${prefix} ${message}`);
+    return;
+  }
+  console.log(`${prefix} ${message}`, details);
+}
+
 function parsePostEarningsReasoning(text = '') {
   const normalized = String(text || '').trim();
   if (!normalized) return '';
@@ -1635,6 +1651,7 @@ export async function runPortfolioHubRecommendedPositions(options = {}) {
     async () => {
       const previousRun = await db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null);
       const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
+      logPortfolioHub('new-positions', `start cycleRunId=${cycleRunId || 'n/a'} holdings=${(portfolioHub.holdings || []).length} cash=${Number(portfolioHub.summary?.cash || 0).toFixed(2)}`);
       const [dailyStates, saturdayRows] = await Promise.all([
         db.getLatestDailySymbolStates().catch(() => []),
         db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => [])
@@ -1662,10 +1679,26 @@ export async function runPortfolioHubRecommendedPositions(options = {}) {
             item.symbol
           )
       }));
+      logPortfolioHub(
+        'new-positions',
+        `candidate-universe total=${candidates.length} watchlistRows=${(saturdayRows || []).length} dailyStates=${(dailyStates || []).length}`
+      );
+      logPortfolioHub(
+        'new-positions',
+        `candidates ${formatPhubLogList(candidates, item => {
+          const signal = item.postEarningsSignal?.recommendation || 'NO_SIGNAL';
+          const held = item.held ? 'held' : 'new';
+          return `${item.symbol}[${item.source}|${held}|${signal}|score=${Number(item.score || 0).toFixed(1)}]`;
+        })}`
+      );
 
       const candidateSymbols = candidates.map(item => item.symbol);
       const { quoteMap, whiskieContextMap, stockInfoMap, technicalsMap } = await buildPortfolioHubSymbolContext(candidateSymbols);
       const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
+      logPortfolioHub(
+        'new-positions',
+        `macro-news fetched=${(marketContext.summary?.macroNews || []).length} degraded=${marketContext.searchHealth?.degraded ? 'yes' : 'no'}`
+      );
 
       const prompt = `You are generating Recommended New Positions for a household portfolio dashboard called Portfolio Hub. Return JSON only.
 
@@ -1779,6 +1812,10 @@ ${JSON.stringify(candidates.map(item => ({
           rawModelPayload: item
         }))
         .filter(item => item.symbol);
+      logPortfolioHub(
+        'new-positions',
+        `opus-returned rawIdeas=${rawItems.length} ${formatPhubLogList(rawItems, item => `${item.symbol}[${item.direction}|${item.horizonLabel || 'n/a'}|${item.conviction || 'n/a'}]`)}`
+      );
 
       const items = enforceRecommendedPositionConstraints(rawItems, portfolioHub, stockInfoMap)
         .map(item => {
@@ -1802,6 +1839,10 @@ ${JSON.stringify(candidates.map(item => ({
           deterministicRank: index + 1
         }))
         .slice(0, 5);
+      logPortfolioHub(
+        'new-positions',
+        `final-ideas count=${items.length} ${formatPhubLogList(items, item => `${item.symbol}[${item.direction}|${item.actionTaxonomy || 'n/a'}|acct=${item.recommendedAccountType || 'n/a'}|postEarnings=${item.postEarningsSignal?.recommendation || 'NO_SIGNAL'}]`)}`
+      );
 
       const savedRun = await db.createPortfolioHubRecommendedPositionRun({
         sourceLabel: 'opus',
@@ -1829,6 +1870,8 @@ ${JSON.stringify(candidates.map(item => ({
         console.error('❌ Failed to send Portfolio Hub recommendation diff email:', error);
       }
 
+      logPortfolioHub('new-positions', `saved runId=${savedRun?.id || 'n/a'} items=${items.length}`);
+
       return currentRun;
     }
   ).catch(() => null);
@@ -1853,17 +1896,38 @@ export async function runPortfolioHubOpusReviewWithOptions(options = {}) {
     async () => {
       const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
       const holdings = Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings : [];
+      logPortfolioHub('holdings-review', `start cycleRunId=${cycleRunId || 'n/a'} holdings=${holdings.length}`);
       if (!holdings.length) {
+        logPortfolioHub('holdings-review', 'skipped no holdings');
         return { reviewedAt: new Date().toISOString(), holdings: [] };
       }
       const holdingsToReview = holdings.filter(shouldIncrementalReviewHolding);
       if (!holdingsToReview.length) {
+        logPortfolioHub('holdings-review', 'skipped no holdings needed refresh');
         return { reviewedAt: new Date().toISOString(), holdings: [] };
       }
+      logPortfolioHub(
+        'holdings-review',
+        `reviewing ${formatPhubLogList(holdingsToReview, row => `${row.symbol}[${row.positionType}|${row.whiskiePathway || 'n/a'}|earnings=${row.nextEarningsDate || 'none'}|postEarnings=${row.postEarningsSignal?.recommendation || 'NO_SIGNAL'}]`)}`
+      );
       const { technicalsMap } = await buildPortfolioHubSymbolContext(holdingsToReview.map(row => row.symbol));
       const profileBuildResults = await ensurePortfolioHubProfiles(holdingsToReview);
       const marketContext = await buildPortfolioHubMarketContext(portfolioHub);
       const stockNewsContext = await buildPortfolioHubStockNewsContext(holdingsToReview, portfolioHub.sectorTrimCandidates || []);
+      logPortfolioHub(
+        'holdings-review',
+        `macro-news fetched=${(marketContext.summary?.macroNews || []).length} degraded=${marketContext.searchHealth?.degraded ? 'yes' : 'no'}`
+      );
+      logPortfolioHub(
+        'holdings-review',
+        `stock-news coverage ${formatPhubLogList(stockNewsContext, row => `${row.symbol}[articles=${Array.isArray(row.articles) ? row.articles.length : 0}|degraded=${row.searchHealth?.degraded ? 'yes' : 'no'}|postEarnings=${row.postEarningsSignal?.recommendation || 'NO_SIGNAL'}]`)}`
+      );
+      if (profileBuildResults?.length) {
+        logPortfolioHub(
+          'holdings-review',
+          `profile-builds ${formatPhubLogList(profileBuildResults, row => `${row.symbol || 'unknown'}[${row.status || 'n/a'}]`)}`
+        );
+      }
 
       const prompt = `You are reviewing a household portfolio dashboard called Portfolio Hub. Return JSON only.
 
@@ -2000,6 +2064,10 @@ ${JSON.stringify(holdingsToReview.map(row => ({
           ...item,
           deterministicRank: index + 1
         }));
+      logPortfolioHub(
+        'holdings-review',
+        `recommendations ${formatPhubLogList(reviewItems, item => `${item.symbol}[${item.actionLabel}|${item.shareCountText || 'no-share-change'}|SL=${item.stopLoss ?? 'n/a'}|TP=${item.takeProfit ?? 'n/a'}]`)}`
+      );
 
       const reviewRun = await db.createPortfolioHubReviewRun({
         sourceLabel: 'opus',
@@ -2049,6 +2117,8 @@ ${JSON.stringify(holdingsToReview.map(row => ({
         })
       );
 
+      logPortfolioHub('holdings-review', `saved runId=${reviewRun?.id || 'n/a'} items=${reviewItems.length}`);
+
       return {
         reviewedAt,
         holdings: reviewItems.map(item => ({
@@ -2086,6 +2156,7 @@ export async function runPortfolioHubCycle(options = {}) {
         persistHistory: true
       });
       const marketContext = await buildPortfolioHubMarketContext(precomputedView);
+      logPortfolioHub('master-review', `start trigger=${triggerType} holdings=${(precomputedView.holdings || []).length} cash=${Number(precomputedView.summary?.cash || 0).toFixed(2)} total=${Number(precomputedView.summary?.totalValue || 0).toFixed(2)}`);
       const cycleRun = await db.createPortfolioHubCycleRun({
         sourceLabel: 'system',
         triggerType,
@@ -2106,16 +2177,18 @@ export async function runPortfolioHubCycle(options = {}) {
         }
       });
 
-      const [reviewRun, recommendedRun] = await Promise.all([
-        runPortfolioHubOpusReviewWithOptions({ cycleRunId: cycleRun.id }),
-        runPortfolioHubRecommendedPositions({ cycleRunId: cycleRun.id })
-      ]);
+      const reviewRun = await runPortfolioHubOpusReviewWithOptions({ cycleRunId: cycleRun.id });
+      const recommendedRun = await runPortfolioHubRecommendedPositions({ cycleRunId: cycleRun.id });
 
       const view = await buildPortfolioHubView({
         performanceRange,
         performanceMetric,
         persistHistory: false
       });
+      logPortfolioHub(
+        'master-review',
+        `complete cycleRun=${cycleRun?.id || 'n/a'} reviewRun=${reviewRun?.reviewedAt ? 'ok' : 'none'} recommendedRun=${recommendedRun?.id || recommendedRun?.recommendedRun?.id || 'n/a'} activeHoldingChanges=${(view.recommendationChanges || []).filter(item => !item.implemented && !item.skipped).length} activeNewIdeas=${((view.recommendedPositionsRun?.items) || []).filter(item => !item.implemented && !item.skipped).length}`
+      );
 
       return {
         cycleRun,

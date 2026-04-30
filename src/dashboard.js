@@ -611,7 +611,9 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <p class="subtitle" style="margin-top:0;">Separate from Whiskie live trading. Manual multi-account holdings with portfolio-wide analytics.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
         <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Refresh Portfolio</button>
-        <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Holding Review Only (Advanced)</button>
+        <button class="analyze-btn" onclick="runPortfolioHubMasterReview()" id="portfolioHubMasterReviewBtn">Master PHUB Review</button>
+        <button class="analyze-btn" onclick="refreshPortfolioHubRecommendedPositions()" id="portfolioHubRecommendedBtn">Refresh New Position</button>
+        <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Holding Review Only</button>
         <button class="analyze-btn" onclick="togglePortfolioHubAdminPanel()">Toggle Admin / Debug</button>
       </div>
       <div class="position-summary-note" style="margin-bottom:14px;">Latest Portfolio Hub review cycle: ${latestCycleRun?.generated_at ? `${escapeHtml(formatDateTime(latestCycleRun.generated_at))} • ${escapeHtml(formatCycleTriggerLabel(latestCycleRun.trigger_type))} • ${escapeHtml(formatCycleStatusLabel(latestCycleRun.status))}` : 'Not run yet'}</div>
@@ -710,8 +712,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         <div style="margin-top:12px;">
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
             <button class="analyze-btn" onclick="resetPortfolioHubRecommendationChanges()">Reset Recommendation Changes</button>
-            <button class="analyze-btn" onclick="refreshPortfolioHubRecommendedPositions()" id="portfolioHubRecommendedBtn">Refresh New-Position Ideas</button>
-            <button class="analyze-btn" onclick="refreshPortfolioHubWithStoredRecommendationState()">Refresh Active Recommendations</button>
+            <button class="analyze-btn" onclick="refreshPortfolioHubWithStoredRecommendationState()">Reload Recommendations</button>
           </div>
           <div class="position-summary-note" style="margin-bottom:12px;">New-position ideas last generated: ${recommendedPositionsRun?.generated_at ? escapeHtml(formatDateTime(recommendedPositionsRun.generated_at)) : 'Not run yet'}${recommendedPositionsRun?.freshness?.label ? ` • ${escapeHtml(recommendedPositionsRun.freshness.label)}` : ''}</div>
           ${recommendationChanges.length === 0 && recommendedPositions.length === 0
@@ -1137,11 +1138,42 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       }
     }
 
+    async function runPortfolioHubMasterReview() {
+      const btn = document.getElementById('portfolioHubMasterReviewBtn');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Running master PHUB review...';
+      }
+
+      try {
+        const response = await fetch('/api/portfolio-hub/refresh', { method: 'POST' });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to run master PHUB review');
+
+        const holdingChanges = Array.isArray(data.result?.portfolioHub?.recommendationChanges)
+          ? data.result.portfolioHub.recommendationChanges.filter(item => !item.implemented && !item.skipped).length
+          : 0;
+        const newIdeas = Array.isArray(data.result?.portfolioHub?.recommendedPositionsRun?.items)
+          ? data.result.portfolioHub.recommendedPositionsRun.items.filter(item => !item.implemented && !item.skipped).length
+          : 0;
+
+        alert('Master PHUB review complete. ' + holdingChanges + ' active holding recommendation(s), ' + newIdeas + ' active new-position idea(s).');
+        location.reload();
+      } catch (error) {
+        alert('Error running master PHUB review: ' + error.message);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Master PHUB Review';
+        }
+      }
+    }
+
     async function runPortfolioHubOpusReview() {
       const btn = document.getElementById('portfolioHubOpusBtn');
       if (btn) {
         btn.disabled = true;
-        btn.textContent = 'Running Opus review...';
+        btn.textContent = 'Running holding review...';
       }
 
       try {
@@ -1150,15 +1182,15 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         if (!response.ok || !data.success) throw new Error(data.error || 'Failed to run Opus portfolio review');
         const reviewedCount = Array.isArray(data.result?.holdings) ? data.result.holdings.length : 0;
         alert(reviewedCount > 0
-          ? ('Holding review completed for ' + reviewedCount + ' holding(s) and saved.')
-          : 'No Portfolio Hub holdings needed an Opus refresh right now.');
+          ? ('Holding review completed for ' + reviewedCount + ' holding(s) and saved to Active Recommendations.')
+          : 'Holding review ran, but no holdings needed a fresh PHUB review right now.');
         location.reload();
       } catch (error) {
         alert('Error running Opus portfolio review: ' + error.message);
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Holding Review Only (Advanced)';
+          btn.textContent = 'Holding Review Only';
         }
       }
     }
@@ -1167,7 +1199,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       const btn = document.getElementById('portfolioHubRecommendedBtn');
       if (btn) {
         btn.disabled = true;
-        btn.textContent = 'Refreshing prices...';
+        btn.textContent = 'Refreshing new positions...';
       }
 
       try {
@@ -1180,7 +1212,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
             ? data.result.recommendedRun.items.length
             : 0;
         alert(count > 0
-          ? ('Recommended new positions refreshed for ' + count + ' idea(s).')
+          ? ('Recommended new positions refreshed for ' + count + ' idea(s). Check Active Recommendations below.')
           : 'No new recommended positions were generated.');
         location.reload();
       } catch (error) {
@@ -1188,7 +1220,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Refresh New-Position Ideas';
+          btn.textContent = 'Refresh New Position';
         }
       }
     }
