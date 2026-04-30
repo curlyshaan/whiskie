@@ -113,7 +113,7 @@ function nextTradingDay(dateString) {
   return null;
 }
 
-function previousTradingDay(dateString) {
+export function previousTradingDay(dateString) {
   let cursor = shiftDateByDays(dateString, -1);
   while (cursor) {
     const date = new Date(`${cursor}T12:00:00Z`);
@@ -124,7 +124,7 @@ function previousTradingDay(dateString) {
   return null;
 }
 
-function getTradingDayDifference(fromDate, toDate = new Date()) {
+export function getTradingDayDifference(fromDate, toDate = new Date()) {
   const startString = toDateOnlyString(fromDate);
   const endString = toDateOnlyString(toDate);
   if (!startString || !endString) return Number.POSITIVE_INFINITY;
@@ -141,7 +141,7 @@ function getTradingDayDifference(fromDate, toDate = new Date()) {
   return count;
 }
 
-function isRecentPostEarningsCandidate(row = null, maxTradingDays = 2, now = new Date()) {
+export function isRecentPostEarningsCandidate(row = null, maxTradingDays = 2, now = new Date()) {
   if (!row?.earnings_date) return false;
   const earningsDate = toDateOnlyString(row.earnings_date);
   if (!earningsDate) return false;
