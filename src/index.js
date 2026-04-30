@@ -141,6 +141,27 @@ function summarizeProfileActions(results = []) {
   }, {});
 }
 
+function shouldRerunPostEarningsAnalysis(latestAnalysis, row = {}, now = new Date()) {
+  if (!latestAnalysis) return true;
+  const latestEarningsDate = String(
+    latestAnalysis.earnings_snapshot?.earnings_date
+    || latestAnalysis.earningsSnapshot?.earnings_date
+    || ''
+  ).split('T')[0];
+  const rowEarningsDate = String(row.earnings_date || '').split('T')[0];
+  if (!latestEarningsDate || !rowEarningsDate || latestEarningsDate !== rowEarningsDate) {
+    return true;
+  }
+
+  const latestCreated = latestAnalysis.created_at ? new Date(latestAnalysis.created_at) : null;
+  if (!latestCreated || Number.isNaN(latestCreated.getTime())) {
+    return true;
+  }
+
+  const ageMinutes = (now.getTime() - latestCreated.getTime()) / (1000 * 60);
+  return ageMinutes >= 180;
+}
+
 function getEasternDateString(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
@@ -354,24 +375,6 @@ class WhiskieBot {
           console.error('❌ Next-day earnings profile prep failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
           await email.sendErrorAlert(error, 'Next-day earnings profile prep failed');
-        }
-      }, {
-        timezone: 'America/New_York'
-      });
-
-      cron.schedule('0 20 * * *', async () => {
-        const scheduledTime = new Date();
-        const jobId = await db.logCronJobStart('Daily Stock Profile Refresh Sweep', 'daily', scheduledTime);
-
-        try {
-          console.log('\n⏰ 8:00 PM ET - Refreshing stock profiles for positions and canonical saturday_watchlist names older than 14 days or within 2 days of earnings');
-          const results = await runDailyProfileRefreshSweep({ staleAfterDays: 14 });
-          console.log(`✅ Daily stock profile refresh sweep complete: ${results.filter(item => item.action !== 'failed').length} processed, ${results.filter(item => item.action === 'failed').length} failed`);
-          await db.logCronJobComplete(jobId, true);
-        } catch (error) {
-          console.error('❌ Daily stock profile refresh sweep failed:', error);
-          await db.logCronJobComplete(jobId, false, error.message);
-          await email.sendErrorAlert(error, 'Daily stock profile refresh sweep failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -1225,14 +1228,27 @@ class WhiskieBot {
               [normalizedDates]
             );
 
+            console.log(`[post-prep] matched ${earningsRows.rows.length} symbol(s) across ${normalizedDates.join(', ')}`);
             const prepared = [];
+            const recentAnalyses = await db.getLatestPostEarningsAnalyses(
+              [...new Set((earningsRows.rows || []).map(row => String(row.symbol || '').toUpperCase()))],
+              3
+            ).catch(() => []);
+            const latestAnalysisMap = new Map(
+              (recentAnalyses || []).map(row => [String(row.symbol || '').toUpperCase(), row])
+            );
+
             for (const row of earningsRows.rows || []) {
               const symbol = String(row.symbol || '').toUpperCase();
+              const profileProgressLabel = `[post-prep ${prepared.length + 1}/${earningsRows.rows.length}] ${symbol}`;
               try {
                 const ensured = await stockProfiles.ensureFreshStockProfile(symbol, { staleAfterDays: 14, incrementalRefreshDays: 14 });
-                const eligibility = isRecentPostEarningsCandidate(row, 2)
+                const shouldAnalyze = isRecentPostEarningsCandidate(row, 2)
+                  && shouldRerunPostEarningsAnalysis(latestAnalysisMap.get(symbol), row);
+                console.log(`${profileProgressLabel} profile=${ensured?.action || 'unknown'} session=${row.session_normalized || row.earnings_time || 'unknown'} analyze=${shouldAnalyze ? 'yes' : 'skip'}`);
+                const eligibility = shouldAnalyze
                   ? await analyzeAfterEarnings(symbol, row).catch(error => ({ skipped: true, reason: error.message }))
-                  : { skipped: true, reason: 'not_yet_post_earnings_eligible' };
+                  : { skipped: true, reason: latestAnalysisMap.get(symbol) ? 'recent_post_earnings_analysis_exists' : 'not_yet_post_earnings_eligible' };
                 prepared.push({
                   symbol,
                   earningsDate: row.earnings_date,
@@ -1242,6 +1258,7 @@ class WhiskieBot {
                   analysisReason: eligibility?.reason || null,
                   recommendation: eligibility?.recommendation || null
                 });
+                console.log(`${profileProgressLabel} result status=${eligibility?.skipped ? 'skipped' : 'analyzed'} reason=${eligibility?.reason || 'none'} recommendation=${eligibility?.recommendation || 'none'}`);
               } catch (error) {
                 prepared.push({
                   symbol,
@@ -1252,11 +1269,11 @@ class WhiskieBot {
                   analysisReason: error.message,
                   recommendation: null
                 });
+                console.log(`${profileProgressLabel} result status=failed reason=${error.message}`);
               }
             }
 
-            console.log(`✅ One-time earnings post-prep complete for ${prepared.length} symbol(s)`);
-            console.log(JSON.stringify(prepared, null, 2));
+            console.log(`[post-prep] complete symbols=${prepared.length} analyzed=${prepared.filter(item => item.analysisStatus === 'analyzed').length} skipped=${prepared.filter(item => item.analysisStatus === 'skipped').length} failed=${prepared.filter(item => item.analysisStatus === 'failed').length}`);
           } catch (error) {
             console.error('❌ Error in one-time earnings post-prep:', error);
           }

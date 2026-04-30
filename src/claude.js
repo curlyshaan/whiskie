@@ -46,17 +46,11 @@ class ClaudeAPI {
       // Quatarly/Claude thinking models require temperature 1.0 when thinking is enabled.
       // For non-thinking calls, keep temperature near-deterministic for trading consistency.
       if (enableThinking && model === MODELS.OPUS) {
-        if (!quiet) {
-          console.log(`🧠 Enabling extended thinking with ${thinkingBudget.toLocaleString()} token budget...`);
-        }
         payload.thinking = {
           type: 'enabled',
           budget_tokens: thinkingBudget
         };
         payload.temperature = 1; // Required for extended thinking
-        if (!quiet) {
-          console.log('⏳ This may take 3-7 minutes for DEEP analysis...');
-        }
       } else {
         payload.temperature = 0; // Deterministic for non-thinking calls
       }
@@ -66,12 +60,9 @@ class ClaudeAPI {
       }
 
       if (!quiet) {
-        console.log(`📡 Calling Claude API (model: ${model}, temp: ${payload.temperature})...`);
+        console.log(`📡 Claude request model=${model} temp=${payload.temperature}${enableThinking && model === MODELS.OPUS ? ` thinking=${thinkingBudget}` : ''}`);
       }
       const response = await this.client.post('/v1/messages', payload);
-      if (!quiet) {
-        console.log('✅ Claude API response received');
-      }
 
       return response.data;
     } catch (error) {

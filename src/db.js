@@ -388,6 +388,30 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      ALTER TABLE portfolio_hub_recommended_position_items
+      ADD COLUMN IF NOT EXISTS implemented BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS implemented_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS skipped BOOLEAN DEFAULT FALSE,
+      ADD COLUMN IF NOT EXISTS skipped_at TIMESTAMP,
+      ADD COLUMN IF NOT EXISTS preference_key VARCHAR(255);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_recommended_position_preferences (
+        id SERIAL PRIMARY KEY,
+        preference_key VARCHAR(255) UNIQUE NOT NULL,
+        symbol VARCHAR(10) NOT NULL,
+        direction VARCHAR(10) NOT NULL,
+        implemented BOOLEAN DEFAULT FALSE,
+        implemented_at TIMESTAMP,
+        skipped BOOLEAN DEFAULT FALSE,
+        skipped_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS portfolio_hub_review_runs (
         id SERIAL PRIMARY KEY,
         source_label VARCHAR(100) DEFAULT 'opus',
@@ -456,6 +480,8 @@ export async function initDatabase() {
         scoring_breakdown JSONB,
         implemented BOOLEAN DEFAULT FALSE,
         implemented_at TIMESTAMP,
+        skipped BOOLEAN DEFAULT FALSE,
+        skipped_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -2898,6 +2924,7 @@ export async function replacePortfolioHubReviewItems(runId, items = []) {
 
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
+    const preference = preferenceMap.get(String(item.preferenceKey || '').trim()) || null;
     await pool.query(
       `INSERT INTO portfolio_hub_review_items (
         run_id, symbol, position_type, action_label, action_taxonomy, summary, detail,
@@ -3054,6 +3081,18 @@ export async function setPortfolioHubRecommendationChangeImplemented(id, impleme
   return result.rows[0] || null;
 }
 
+export async function setPortfolioHubRecommendationChangeSkipped(id, skipped) {
+  const result = await pool.query(
+    `UPDATE portfolio_hub_recommendation_changes
+     SET skipped = $2,
+         skipped_at = CASE WHEN $2 THEN NOW() ELSE NULL END
+     WHERE id = $1
+     RETURNING *`,
+    [id, Boolean(skipped)]
+  );
+  return result.rows[0] || null;
+}
+
 export async function createPortfolioHubRecommendedPositionRun(entry = {}) {
   const result = await pool.query(
     `INSERT INTO portfolio_hub_recommended_position_runs (
@@ -3073,6 +3112,19 @@ export async function createPortfolioHubRecommendedPositionRun(entry = {}) {
 }
 
 export async function replacePortfolioHubRecommendedPositionItems(runId, items = []) {
+  const preferenceKeys = items
+    .map(item => String(item.preferenceKey || '').trim())
+    .filter(Boolean);
+  const existingPrefsResult = preferenceKeys.length
+    ? await pool.query(
+        `SELECT *
+         FROM portfolio_hub_recommended_position_preferences
+         WHERE preference_key = ANY($1)`,
+        [preferenceKeys]
+      )
+    : { rows: [] };
+  const preferenceMap = new Map((existingPrefsResult.rows || []).map(row => [row.preference_key, row]));
+
   await pool.query(
     `DELETE FROM portfolio_hub_recommended_position_items
      WHERE run_id = $1`,
@@ -3089,8 +3141,9 @@ export async function replacePortfolioHubRecommendedPositionItems(runId, items =
         relationship_type, related_holding_symbol, related_holding_action,
         model_reasoning, action_taxonomy, deterministic_score, deterministic_rank,
         scoring_breakdown, raw_model_payload, recommended_account_type,
-        recommended_account_reason, technicals_snapshot, sort_order
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`,
+        recommended_account_reason, technicals_snapshot, implemented, implemented_at,
+        skipped, skipped_at, preference_key, sort_order
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)`,
       [
         runId,
         item.symbol,
@@ -3121,6 +3174,11 @@ export async function replacePortfolioHubRecommendedPositionItems(runId, items =
         item.recommendedAccountType || null,
         item.recommendedAccountReason || null,
         item.technicals ? JSON.stringify(item.technicals) : null,
+        Boolean(preference?.implemented),
+        preference?.implemented_at || null,
+        Boolean(preference?.skipped),
+        preference?.skipped_at || null,
+        item.preferenceKey || null,
         index
       ]
     );
@@ -3149,6 +3207,77 @@ export async function getLatestPortfolioHubRecommendedPositionRun() {
     ...run,
     items: itemsResult.rows || []
   };
+}
+
+export async function setPortfolioHubRecommendedPositionItemState(id, updates = {}) {
+  const implemented = Object.prototype.hasOwnProperty.call(updates, 'implemented')
+    ? Boolean(updates.implemented)
+    : null;
+  const skipped = Object.prototype.hasOwnProperty.call(updates, 'skipped')
+    ? Boolean(updates.skipped)
+    : null;
+
+  if (implemented === null && skipped === null) return null;
+
+  const existingResult = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_recommended_position_items
+     WHERE id = $1`,
+    [id]
+  );
+  const existing = existingResult.rows[0] || null;
+  if (!existing) return null;
+
+  const clauses = [];
+  const values = [id];
+  let index = 2;
+
+  if (implemented !== null) {
+    clauses.push(`implemented = $${index}`);
+    values.push(implemented);
+    index += 1;
+    clauses.push(`implemented_at = CASE WHEN $${index - 1} THEN NOW() ELSE NULL END`);
+  }
+
+  if (skipped !== null) {
+    clauses.push(`skipped = $${index}`);
+    values.push(skipped);
+    index += 1;
+    clauses.push(`skipped_at = CASE WHEN $${index - 1} THEN NOW() ELSE NULL END`);
+  }
+
+  const result = await pool.query(
+    `UPDATE portfolio_hub_recommended_position_items
+     SET ${clauses.join(', ')}
+     WHERE id = $1
+     RETURNING *`,
+    values
+  );
+  const updated = result.rows[0] || null;
+  if (!updated?.preference_key) return updated;
+
+  await pool.query(
+    `INSERT INTO portfolio_hub_recommended_position_preferences (
+      preference_key, symbol, direction, implemented, implemented_at, skipped, skipped_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+    ON CONFLICT (preference_key) DO UPDATE SET
+      implemented = EXCLUDED.implemented,
+      implemented_at = EXCLUDED.implemented_at,
+      skipped = EXCLUDED.skipped,
+      skipped_at = EXCLUDED.skipped_at,
+      updated_at = NOW()`,
+    [
+      updated.preference_key,
+      updated.symbol,
+      updated.direction,
+      Boolean(updated.implemented),
+      updated.implemented_at || null,
+      Boolean(updated.skipped),
+      updated.skipped_at || null
+    ]
+  );
+
+  return updated;
 }
 
 export async function createPortfolioHubCycleRun(entry = {}) {

@@ -290,6 +290,120 @@ function renderRecommendationTechnicalPanel(item) {
   ]);
 }
 
+function getRecommendationImplementationKey(item = {}) {
+  return String(item.changeKey || `${item.kind || 'idea'}:${String(item.symbol || '').toUpperCase()}`).trim();
+}
+
+function renderRecommendationImplementedControl(item = {}) {
+  const checked = item.implemented ? 'checked' : '';
+  const label = item.implemented
+    ? `Implemented${item.implementedAt ? ` ${escapeHtml(formatShortDate(item.implementedAt))}` : ''}`
+    : 'Mark implemented';
+
+  return `
+    <label class="recommendation-implemented-toggle">
+      <input
+        type="checkbox"
+        data-recommendation-kind="${escapeHtml(item.kind || '')}"
+        data-recommendation-id="${escapeHtml(String(item.id || ''))}"
+        data-recommendation-field="implemented"
+        ${checked}
+        onchange="setPortfolioHubUnifiedRecommendationPreference(this)"
+      />
+      <span class="timestamp">${label}</span>
+    </label>
+  `;
+}
+
+function getRecommendationSkippedKey(item = {}) {
+  return `${getRecommendationImplementationKey(item)}:skipped`;
+}
+
+function renderRecommendationSkipControl(item = {}) {
+  const checked = item.skipped ? 'checked' : '';
+  return `
+    <label class="recommendation-implemented-toggle">
+      <input
+        type="checkbox"
+        data-recommendation-kind="${escapeHtml(item.kind || '')}"
+        data-recommendation-id="${escapeHtml(String(item.id || ''))}"
+        data-recommendation-field="skipped"
+        ${checked}
+        onchange="setPortfolioHubUnifiedRecommendationPreference(this)"
+      />
+      <span class="timestamp">Skip / hide</span>
+    </label>
+  `;
+}
+
+function renderHoldingRecommendationChangeCard(item = {}) {
+  return `
+    <div class="active-recommendation-card">
+      <div class="active-recommendation-header">
+        <div>
+          <div class="active-recommendation-title-row">
+            <div class="recommended-position-symbol">${escapeHtml(item.symbol || '-')}</div>
+            <span class="active-recommendation-kind-pill">Holding change</span>
+          </div>
+          <div class="detail-chips" style="margin-top:8px;">
+            <span class="detail-chip">${escapeHtml(item.positionType || '-')}</span>
+            <span class="detail-chip">${escapeHtml(item.changeType === 'shares' ? 'Shares' : item.changeType === 'target' ? 'Price Target' : 'Stop Loss')}</span>
+            <span class="detail-chip">${escapeHtml(item.actionLabel || '-')}</span>
+            ${item.deterministicScore != null ? `<span class="detail-chip">Score: ${escapeHtml(String(item.deterministicScore))}</span>` : ''}
+          </div>
+        </div>
+        <div class="recommendation-action-stack">
+          ${renderRecommendationImplementedControl(item)}
+          ${renderRecommendationSkipControl(item)}
+        </div>
+      </div>
+      <div class="recommended-position-why-now-banner">${escapeHtml(item.summary || 'No summary available.')}</div>
+      <div class="active-recommendation-meta">
+        <div class="active-recommendation-meta-item"><span>Saved</span><strong>${escapeHtml(formatDateTime(item.createdAt))}</strong></div>
+        ${item.previous ? `<div class="active-recommendation-meta-item"><span>Prior</span><strong>${escapeHtml(item.previous)}</strong></div>` : ''}
+        ${item.actionTaxonomy ? `<div class="active-recommendation-meta-item"><span>Taxonomy</span><strong>${escapeHtml(item.actionTaxonomy)}</strong></div>` : ''}
+      </div>
+      ${Array.isArray(item.scoringBreakdown?.reasons) && item.scoringBreakdown.reasons.length
+        ? `<div class="detail-chips" style="margin-top:10px;">${item.scoringBreakdown.reasons.map(reason => `<span class="detail-chip">${escapeHtml(reason)}</span>`).join('')}</div>`
+        : ''}
+    </div>
+  `;
+}
+
+function renderNewPositionRecommendationCard(item = {}) {
+  return `
+    <div class="active-recommendation-card">
+      <div class="active-recommendation-header">
+        <div>
+          <div class="active-recommendation-title-row">
+            <div class="recommended-position-symbol">${escapeHtml(item.symbol || '-')}</div>
+            <span class="recommended-position-direction ${String(item.direction || '').toUpperCase() === 'SHORT' ? 'is-short' : 'is-long'}">${escapeHtml(formatRecommendationDirection(item.direction))}</span>
+            <span class="active-recommendation-kind-pill">New position</span>
+          </div>
+          ${renderRecommendationBadgeList(item)}
+          ${renderRecommendationScoringChips(item)}
+        </div>
+        <div class="recommendation-action-stack">
+          ${renderRecommendationImplementedControl(item)}
+          ${renderRecommendationSkipControl(item)}
+        </div>
+      </div>
+      <div class="recommended-position-why-now-banner">${escapeHtml(item.why_now || item.whyNow || item.portfolio_fit || 'No concise why-now summary available.')}</div>
+      ${renderRecommendationDecisionBar(item)}
+      <div class="active-recommendation-compact-grid">
+        <div class="recommended-position-block">
+          <div class="recommended-position-block-title">Summary</div>
+          ${renderRecommendationReasoning(item)}
+        </div>
+        <div class="recommended-position-block">
+          <div class="recommended-position-block-title">Technical snapshot</div>
+          ${renderRecommendationTechnicalPanel(item)}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function formatTargetType(value) {
   const normalized = normalizeText(value);
   if (!normalized) return '-';
@@ -466,9 +580,13 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   const holdingsAccountBreakdown = portfolioHub.holdingsAccountBreakdown || [];
   const accounts = portfolioHub.accounts || [];
   const accountTypeSummary = portfolioHub.accountTypeSummary || [];
-  const recommendationChanges = (portfolioHub.recommendationChanges || []).filter(item => !item.implemented);
+  const recommendationChanges = (portfolioHub.recommendationChanges || [])
+    .map(item => ({ ...item, kind: 'holding_change', changeKey: item.changeKey || `holding_change:${Number(item.id)}` }))
+    .filter(item => !item.implemented && !item.skipped);
   const recommendedPositionsRun = portfolioHub.recommendedPositionsRun || null;
-  const recommendedPositions = recommendedPositionsRun?.items || [];
+  const recommendedPositions = (recommendedPositionsRun?.items || [])
+    .map(item => ({ ...item, kind: 'new_position' }))
+    .filter(item => !item.implemented && !item.skipped);
   const transactions = portfolioHub.transactions || [];
   const sectorRows = portfolioHub.sectorAllocation || [];
   const shortSectorRows = portfolioHub.shortSectorExposure || [];
@@ -477,7 +595,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   const performanceSeries = portfolioHub.performanceSeries || [];
   const performanceRange = portfolioHub.performanceRange || 'week';
   const performanceMetric = portfolioHub.performanceMetric || 'pct';
-  const latestFullReviewAt = portfolioHub.latestFullReviewAt || null;
   const latestCycleRun = portfolioHub.latestCycleRun || null;
   const accountOptions = DEFAULT_PORTFOLIO_HUB_ACCOUNTS;
   const accountTypeOptions = ['Taxable Cash', 'Taxable Margin', 'IRA', 'HSA', 'Other'];
@@ -493,12 +610,11 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <div class="section-title">🧭 Portfolio Hub</div>
       <p class="subtitle" style="margin-top:0;">Separate from Whiskie live trading. Manual multi-account holdings with portfolio-wide analytics.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
-        <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Run Unified Cycle</button>
-        <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Run Holding Review Only</button>
+        <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Run Portfolio Hub Review</button>
+        <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Holding Review Only (Advanced)</button>
         <button class="analyze-btn" onclick="togglePortfolioHubAdminPanel()">Toggle Admin / Debug</button>
       </div>
-      <div class="position-summary-note" style="margin-bottom:8px;">Last full holding review: ${latestFullReviewAt ? escapeHtml(formatDateTime(latestFullReviewAt)) : 'Not run yet'}</div>
-      <div class="position-summary-note" style="margin-bottom:14px;">Latest unified cycle: ${latestCycleRun?.generated_at ? `${escapeHtml(formatDateTime(latestCycleRun.generated_at))} • ${escapeHtml(formatCycleTriggerLabel(latestCycleRun.trigger_type))} • ${escapeHtml(formatCycleStatusLabel(latestCycleRun.status))}` : 'Not run yet'}</div>
+      <div class="position-summary-note" style="margin-bottom:14px;">Latest Portfolio Hub review cycle: ${latestCycleRun?.generated_at ? `${escapeHtml(formatDateTime(latestCycleRun.generated_at))} • ${escapeHtml(formatCycleTriggerLabel(latestCycleRun.trigger_type))} • ${escapeHtml(formatCycleStatusLabel(latestCycleRun.status))}` : 'Not run yet'}</div>
 
       <div class="stats" style="margin-top:16px;">
         <div class="stat-card"><div class="stat-label">Total Value</div><div class="stat-value">${formatMoney(summary.totalValue || 0)}</div></div>
@@ -589,92 +705,23 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         </div>
       </details>
 
-      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;">
-        <summary>Latest Recommendation Changes</summary>
+      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;" open>
+        <summary>Active Recommendations</summary>
         <div style="margin-top:12px;">
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
             <button class="analyze-btn" onclick="resetPortfolioHubRecommendationChanges()">Reset Recommendation Changes</button>
+            <button class="analyze-btn" onclick="refreshPortfolioHubRecommendedPositions()" id="portfolioHubRecommendedBtn">Refresh New-Position Ideas</button>
+            <button class="analyze-btn" onclick="refreshPortfolioHubWithStoredRecommendationState()">Refresh Active Recommendations</button>
           </div>
-          ${recommendationChanges.length === 0 ? '<div class="no-data">No new Whiskie recommendation changes saved yet.</div>' : `
-            <table>
-              <thead>
-                <tr><th>When</th><th>Symbol</th><th>Change</th><th>Details</th><th>Implemented</th></tr>
-              </thead>
-              <tbody>
-                ${recommendationChanges.map(item => `
-                  <tr>
-                    <td>${formatDateTime(item.createdAt)}</td>
-                    <td><strong>${escapeHtml(item.symbol || '-')}</strong><br><span class="timestamp">${escapeHtml(item.positionType || '-')}</span></td>
-                    <td>${escapeHtml(item.changeType === 'shares' ? 'Shares' : item.changeType === 'target' ? 'Price Target' : 'Stop Loss')}</td>
-                    <td><strong>${escapeHtml(item.actionLabel || '-')}</strong><br><span class="timestamp">${escapeHtml(item.summary || '-')}</span>${item.actionTaxonomy ? `<br><span class="timestamp">Taxonomy: ${escapeHtml(item.actionTaxonomy)}</span>` : ''}${Array.isArray(item.scoringBreakdown?.reasons) && item.scoringBreakdown.reasons.length ? `<br><div class="detail-chips" style="margin-top:6px;">${item.scoringBreakdown.reasons.map(reason => `<span class="detail-chip">${escapeHtml(reason)}</span>`).join('')}</div>` : ''}${item.deterministicScore != null ? `<br><span class="timestamp">Score: ${escapeHtml(String(item.deterministicScore))}</span>` : ''}${item.previous ? `<br><span class="timestamp">Prior: ${escapeHtml(item.previous)}</span>` : ''}</td>
-                    <td>
-                      <label style="display:flex; align-items:center; gap:8px;">
-                        <input type="checkbox" ${item.implemented ? 'checked' : ''} onchange="setPortfolioHubRecommendationImplemented(${Number(item.id)}, this.checked)" />
-                        <span class="timestamp">${item.implemented ? `Saved${item.implementedAt ? ` ${escapeHtml(formatShortDate(item.implementedAt))}` : ''}` : 'Not yet'}</span>
-                      </label>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          `}
-        </div>
-      </details>
-
-      <details class="portfolio-hub-collapsible-section" style="margin-top:18px;">
-        <summary>Recommended New Positions</summary>
-        <div style="margin-top:12px;">
-          <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
-            <button class="analyze-btn" onclick="refreshPortfolioHubRecommendedPositions()" id="portfolioHubRecommendedBtn">Run Unified Cycle</button>
-          </div>
-          <div class="position-summary-note" style="margin-bottom:12px;">Last generated by unified cycle: ${recommendedPositionsRun?.generated_at ? escapeHtml(formatDateTime(recommendedPositionsRun.generated_at)) : 'Not run yet'}${recommendedPositionsRun?.freshness?.label ? ` • ${escapeHtml(recommendedPositionsRun.freshness.label)}` : ''}</div>
-          ${recommendedPositions.length === 0 ? '<div class="no-data">No recommended new positions yet. Run a refresh to generate long-term and medium-term ideas.</div>' : `
-            <div style="display:grid; gap:14px;">
-              ${recommendedPositions.map(item => `
-                <div class="recommended-position-card">
-                  <div class="recommended-position-header">
-                    <div>
-                      <div class="recommended-position-symbol-row">
-                        <div class="recommended-position-symbol">${escapeHtml(item.symbol || '-')}</div>
-                        <span class="recommended-position-direction ${String(item.direction || '').toUpperCase() === 'SHORT' ? 'is-short' : 'is-long'}">${escapeHtml(formatRecommendationDirection(item.direction))}</span>
-                      </div>
-                      ${renderRecommendationBadgeList(item)}
-                      ${renderRecommendationScoringChips(item)}
-                    </div>
-                  </div>
-                  <div class="recommended-position-why-now-banner">${escapeHtml(item.why_now || item.whyNow || item.portfolio_fit || 'No concise why-now summary available.')}</div>
-                  ${renderRecommendationDecisionBar(item)}
-                  <div class="recommended-position-layout">
-                    <div class="recommended-position-primary-column">
-                      <div class="recommended-position-block">
-                        <div class="recommended-position-block-title">Trade plan</div>
-                        ${renderKeyValueRows([
-                    { label: 'Target framework', value: item.target_framework || item.targetFramework || '-' },
-                    { label: 'Recommended account', value: item.recommended_account_type || item.recommendedAccountType || '-' },
-                    { label: 'Account reason', value: item.recommended_account_reason || item.recommendedAccountReason || '-' },
-                    { label: 'Holding relationship action', value: item.related_holding_action || item.relatedHoldingAction || '-' }
-                  ])}
-                      </div>
-                      <div class="recommended-position-block">
-                        <div class="recommended-position-block-title">Technical snapshot</div>
-                        ${renderRecommendationTechnicalPanel(item)}
-                      </div>
-                    </div>
-                    <div class="recommended-position-secondary-column">
-                      <div class="recommended-position-block">
-                        <div class="recommended-position-block-title">Recommendation summary</div>
-                        ${renderRecommendationReasoning(item)}
-                      </div>
-                      <details class="recommended-position-block">
-                        <summary class="recommended-position-block-title" style="cursor:pointer; margin-bottom:0;">Scoring breakdown</summary>
-                        <div style="margin-top:12px;">${renderJsonValue(item.scoring_breakdown || item.scoringBreakdown || null)}</div>
-                      </details>
-                    </div>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          `}
+          <div class="position-summary-note" style="margin-bottom:12px;">New-position ideas last generated: ${recommendedPositionsRun?.generated_at ? escapeHtml(formatDateTime(recommendedPositionsRun.generated_at)) : 'Not run yet'}${recommendedPositionsRun?.freshness?.label ? ` • ${escapeHtml(recommendedPositionsRun.freshness.label)}` : ''}</div>
+          ${recommendationChanges.length === 0 && recommendedPositions.length === 0
+            ? '<div class="no-data">No active recommendations right now.</div>'
+            : `
+              <div class="active-recommendation-list">
+                ${recommendationChanges.map(item => renderHoldingRecommendationChangeCard(item)).join('')}
+                ${recommendedPositions.map(item => renderNewPositionRecommendationCard(item)).join('')}
+              </div>
+            `}
         </div>
       </details>
 
@@ -1087,7 +1134,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Run Unified Cycle';
+          btn.textContent = 'Run Portfolio Hub Review';
         }
       }
     }
@@ -1113,7 +1160,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Run Holding Review Only';
+          btn.textContent = 'Holding Review Only (Advanced)';
         }
       }
     }
@@ -1143,7 +1190,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Run Unified Cycle';
+          btn.textContent = 'Refresh New-Position Ideas';
         }
       }
     }
@@ -1173,6 +1220,36 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         alert('Error saving implemented state: ' + error.message);
         location.reload();
       }
+    }
+
+    async function setPortfolioHubUnifiedRecommendationPreference(checkbox) {
+      const kind = checkbox?.dataset?.recommendationKind;
+      const id = checkbox?.dataset?.recommendationId;
+      const field = checkbox?.dataset?.recommendationField;
+      if (!kind || !id || !field) return;
+
+      try {
+        const endpoint = kind === 'holding_change'
+          ? '/api/portfolio-hub/recommendation-changes/' + id + '/' + field
+          : '/api/portfolio-hub/recommended-position-items/' + id + '/' + field;
+        const body = kind === 'holding_change' && field === 'implemented'
+          ? { implemented: checkbox.checked }
+          : { value: checkbox.checked };
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save recommendation preference');
+      } catch (error) {
+        alert('Error saving recommendation preference: ' + error.message);
+        checkbox.checked = !checkbox.checked;
+      }
+    }
+
+    function refreshPortfolioHubWithStoredRecommendationState() {
+      window.location.reload();
     }
 
     async function togglePortfolioHubAdminPanel() {
@@ -2576,6 +2653,87 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       padding: 18px;
       box-shadow: 0 8px 24px rgba(2, 6, 23, 0.28);
     }
+    .active-recommendation-list {
+      display: grid;
+      gap: 14px;
+    }
+    .active-recommendation-card {
+      background: linear-gradient(180deg, #0f1425 0%, #0c1220 100%);
+      border: 1px solid #2a2f4a;
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 8px 24px rgba(2, 6, 23, 0.24);
+    }
+    .active-recommendation-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .active-recommendation-title-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .recommendation-action-stack {
+      display: grid;
+      gap: 8px;
+      justify-items: end;
+    }
+    .active-recommendation-kind-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      border: 1px solid #374151;
+      color: #cbd5e1;
+      background: rgba(15, 23, 42, 0.85);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .active-recommendation-meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .active-recommendation-meta-item {
+      background: #11182b;
+      border: 1px solid #2a2f4a;
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .active-recommendation-meta-item span {
+      display: block;
+      color: #93c5fd;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 5px;
+    }
+    .active-recommendation-meta-item strong {
+      color: #fff;
+      font-size: 0.95rem;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .active-recommendation-compact-grid {
+      display: grid;
+      grid-template-columns: 1.3fr 0.9fr;
+      gap: 14px;
+      align-items: start;
+    }
+    .recommendation-implemented-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
     .recommended-position-header {
       display: flex;
       justify-content: space-between;
@@ -2753,6 +2911,9 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
     @media (max-width: 900px) {
       .recommended-position-layout {
+        grid-template-columns: 1fr;
+      }
+      .active-recommendation-compact-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -4603,6 +4764,33 @@ router.post('/api/portfolio-hub/recommendation-changes/:id/implemented', async (
       Number(req.params.id),
       Boolean(req.body?.implemented)
     );
+    res.json({ success: true, row });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/portfolio-hub/recommendation-changes/:id/skipped', async (req, res) => {
+  try {
+    const row = await db.setPortfolioHubRecommendationChangeSkipped(
+      Number(req.params.id),
+      Boolean(req.body?.value)
+    );
+    res.json({ success: true, row });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/api/portfolio-hub/recommended-position-items/:id/:field', async (req, res) => {
+  try {
+    const field = String(req.params.field || '');
+    if (!['implemented', 'skipped'].includes(field)) {
+      return res.status(400).json({ success: false, error: 'Invalid field' });
+    }
+    const row = await db.setPortfolioHubRecommendedPositionItemState(Number(req.params.id), {
+      [field]: Boolean(req.body?.value)
+    });
     res.json({ success: true, row });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

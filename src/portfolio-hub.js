@@ -29,6 +29,7 @@ const PORTFOLIO_HUB_LOCKS = {
 };
 
 const PORTFOLIO_HUB_RECOMMENDATION_MIN_SCORE = 60;
+const PORTFOLIO_HUB_RECOMMENDATION_HARD_FLOOR_SCORE = 45;
 const PORTFOLIO_HUB_RECOMMENDATION_ALLOWED_CONVICTIONS = new Set(['medium', 'high']);
 const PORTFOLIO_HUB_RECOMMENDATION_DIFF_FIELDS = [
   'direction',
@@ -488,6 +489,9 @@ function passesRecommendedPositionQualityGate(item = {}) {
   if (!PORTFOLIO_HUB_RECOMMENDATION_ALLOWED_CONVICTIONS.has(conviction)) {
     return false;
   }
+  if (score < PORTFOLIO_HUB_RECOMMENDATION_HARD_FLOOR_SCORE) {
+    return false;
+  }
   if (conviction === 'high') {
     return true;
   }
@@ -512,6 +516,14 @@ function normalizeRecommendedPositionAlertShape(item = {}) {
     deterministicScore: item.deterministicScore ?? item.deterministic_score ?? null,
     deterministicRank: item.deterministicRank ?? item.deterministic_rank ?? null
   };
+}
+
+export function buildRecommendedPositionPreferenceKey(item = {}) {
+  const symbol = String(item.symbol || '').toUpperCase();
+  const direction = String(item.direction || 'LONG').toUpperCase();
+  const pathway = String(item.pathway || '').trim().toLowerCase();
+  const relationshipType = String(item.relationshipType ?? item.relationship_type ?? '').trim().toLowerCase();
+  return [symbol, direction, pathway || 'na', relationshipType || 'na'].join(':');
 }
 
 function diffRecommendedPositionRuns(previousRun = null, currentRun = null) {
@@ -1553,6 +1565,7 @@ export async function buildPortfolioHubView(options = {}) {
       id: row.id,
       symbol: row.symbol,
       positionType: row.position_type,
+      changeKey: row.change_key,
       actionLabel: row.recommendation,
       changeType: row.change_type || String(row.change_key || '').split(':')[2] || 'shares',
       actionTaxonomy: row.action_taxonomy || null,
@@ -1562,7 +1575,9 @@ export async function buildPortfolioHubView(options = {}) {
       deterministicScore: row.deterministic_score != null ? Number(row.deterministic_score) : null,
       scoringBreakdown: row.scoring_breakdown || null,
       implemented: Boolean(row.implemented),
-      implementedAt: row.implemented_at || null
+      implementedAt: row.implemented_at || null,
+      skipped: Boolean(row.skipped),
+      skippedAt: row.skipped_at || null
     }))
     .sort((a, b) => safeDateValue(b.createdAt) - safeDateValue(a.createdAt));
 
@@ -1771,6 +1786,7 @@ ${JSON.stringify(candidates.map(item => ({
           const accountSuggestion = buildRecommendedAccountSuggestion(item, portfolioHub.accountStrategyContext || {});
           return {
             ...item,
+            preferenceKey: buildRecommendedPositionPreferenceKey(item),
             technicals: technicalsMap.get(item.symbol) || null,
             actionTaxonomy: classifyRecommendedPositionTaxonomy(item),
             recommendedAccountType: accountSuggestion.accountType,
