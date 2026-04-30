@@ -1807,26 +1807,6 @@ export async function initDatabase() {
     `);
 
     await client.query(`
-      DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT 1
-          FROM information_schema.tables
-          WHERE table_schema = 'public'
-            AND table_name = 'tavily_usage_events'
-        ) AND NOT EXISTS (
-          SELECT 1
-          FROM information_schema.tables
-          WHERE table_schema = 'public'
-            AND table_name = 'serper_usage_events'
-        ) THEN
-          ALTER TABLE tavily_usage_events RENAME TO serper_usage_events;
-        END IF;
-      END
-      $$;
-    `);
-
-    await client.query(`
       CREATE TABLE IF NOT EXISTS serper_usage_events (
         id SERIAL PRIMARY KEY,
         activity VARCHAR(100) NOT NULL,
