@@ -46,6 +46,17 @@ class PreRanking {
     };
   }
 
+  getEasternMinutesSinceMidnight(date = new Date()) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit'
+    }).formatToParts(date);
+    const lookup = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return (Number(lookup.hour) * 60) + Number(lookup.minute);
+  }
+
   getAverageVolumeFromQuote(quote) {
     const candidates = [
       quote?.averageVolume,
@@ -137,6 +148,28 @@ class PreRanking {
     }
 
     return earningsMap;
+  }
+
+  shouldExcludeLongForEarnings(earningsInfo = null, now = new Date()) {
+    if (!earningsInfo) return false;
+    const session = String(earningsInfo.sessionNormalized || 'unknown').toLowerCase();
+    const daysUntil = Number(earningsInfo.daysUntil);
+    const currentMinutes = this.getEasternMinutesSinceMidnight(now);
+
+    if (daysUntil < 0 || daysUntil > 3) return false;
+    if (daysUntil >= 1) return true;
+
+    if (daysUntil === 0) {
+      if (session === 'pre_market') {
+        return currentMinutes < 10 * 60;
+      }
+      if (session === 'post_market') {
+        return true;
+      }
+      return currentMinutes < 10 * 60;
+    }
+
+    return false;
   }
 
   /**
@@ -497,7 +530,7 @@ class PreRanking {
     if (change > 0) {
       // Earnings filter for longs: exclude if earnings in next 3 days (imminent risk)
       // BUT allow stocks that reported 1-3 days ago (post-earnings dip opportunity)
-      if (earningsInfo && earningsInfo.daysUntil >= 0 && earningsInfo.daysUntil <= 3) {
+      if (this.shouldExcludeLongForEarnings(earningsInfo)) {
         console.log(`   ⚠️ ${stock.symbol} has earnings in ${earningsInfo.daysUntil} days - excluding from longs (imminent risk)`);
         return null;
       }

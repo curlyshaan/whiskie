@@ -908,10 +908,15 @@ export async function runEarningsDayAnalysis(daysAhead = 5) {
 
     console.log(`\n✅ Earnings analysis complete: ${decisions.length} decisions made`);
     console.log('\n📉 Checking for recent post-earnings opportunities...');
+    const activeWatchlistRows = await db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true }).catch(() => []);
+    const activeWatchlistSymbols = new Set(
+      (activeWatchlistRows || []).map(row => String(row.symbol || '').toUpperCase()).filter(Boolean)
+    );
     const recentEarnings = await db.getRecentAndUpcomingEarnings(4, 0).catch(() => []);
     const recentSymbols = [...new Set(
       (recentEarnings || [])
         .filter(row => isRecentPostEarningsCandidate(row, 2))
+        .filter(row => activeWatchlistSymbols.has(String(row.symbol || '').toUpperCase()))
         .map(row => String(row.symbol || '').toUpperCase())
         .filter(Boolean)
     )];

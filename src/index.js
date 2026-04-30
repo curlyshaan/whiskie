@@ -61,12 +61,14 @@ let profileBuildRun = null;
 
 async function runDailyProfileRefreshSweep(options = {}) {
   const staleAfterDays = options.staleAfterDays == null ? 14 : Number(options.staleAfterDays);
+  const logEachSymbol = options.logEachSymbol === true;
   const symbols = new Set();
 
-  const [positions, saturdayRows, upcomingEarnings] = await Promise.all([
+  const [positions, saturdayRows, upcomingEarnings, recentEarnings] = await Promise.all([
     db.getPositions().catch(() => []),
-    db.getCanonicalSaturdayWatchlistRows(['active', 'pending'], { includePromoted: true }).catch(() => []),
-    db.getUpcomingEarningsForCanonicalSaturdayWatchlist(2).catch(() => [])
+    db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true }).catch(() => []),
+    db.getUpcomingEarningsForCanonicalSaturdayWatchlist(2).catch(() => []),
+    db.getRecentAndUpcomingEarnings(1, 0).catch(() => [])
   ]);
 
   for (const row of positions || []) {
@@ -78,6 +80,9 @@ async function runDailyProfileRefreshSweep(options = {}) {
   for (const row of upcomingEarnings || []) {
     if (row?.symbol) symbols.add(String(row.symbol).toUpperCase());
   }
+  for (const row of recentEarnings || []) {
+    if (row?.symbol) symbols.add(String(row.symbol).toUpperCase());
+  }
 
   const orderedSymbols = [...symbols].sort();
   const results = [];
@@ -85,7 +90,9 @@ async function runDailyProfileRefreshSweep(options = {}) {
   for (const symbol of orderedSymbols) {
     try {
       const ensured = await stockProfiles.ensureFreshStockProfile(symbol, { staleAfterDays, incrementalRefreshDays: staleAfterDays });
-      console.log(`   ✅ ${symbol}: ${ensured.action}`);
+      if (logEachSymbol || ensured.action !== 'reused') {
+        console.log(`   ✅ ${symbol}: ${ensured.action}`);
+      }
       results.push({ symbol, action: ensured.action });
     } catch (error) {
       console.error(`   ❌ ${symbol}: ${error.message}`);
@@ -139,6 +146,34 @@ function summarizeProfileActions(results = []) {
     acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
+}
+
+function truncateText(value, maxLength = 240) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function summarizeCatalystResearchForPrompt(symbol, results = {}) {
+  if (!results || typeof results !== 'object') {
+    return `${symbol}: no catalyst research available`;
+  }
+
+  const parts = [];
+  const summary = truncateText(results.summary || results.executiveSummary || results.thesis || '', 220);
+  if (summary) parts.push(summary);
+
+  const catalysts = Array.isArray(results.catalysts) ? results.catalysts.slice(0, 3) : [];
+  if (catalysts.length) {
+    parts.push(`catalysts: ${catalysts.map(item => truncateText(item.title || item.name || item.catalyst || item, 80)).filter(Boolean).join('; ')}`);
+  }
+
+  const risks = Array.isArray(results.risks) ? results.risks.slice(0, 2) : [];
+  if (risks.length) {
+    parts.push(`risks: ${risks.map(item => truncateText(item.title || item.name || item.risk || item, 70)).filter(Boolean).join('; ')}`);
+  }
+
+  return `${symbol}: ${parts.join(' | ') || 'no concise catalyst summary available'}`;
 }
 
 function shouldRerunPostEarningsAnalysis(latestAnalysis, row = {}, now = new Date()) {
@@ -787,8 +822,8 @@ class WhiskieBot {
       try {
         console.log('📡 Manual analysis triggered via API');
 
-        // Run analysis in background
-        this.runDailyAnalysis().catch(console.error);
+        // Run shared cycle in background
+        this.runDailyAnalysis({ includePortfolioHub: true, runLabel: 'manual_shared' }).catch(console.error);
 
         res.json({
           success: true,
@@ -855,7 +890,7 @@ class WhiskieBot {
         console.log('📡 Manual daily analysis triggered via API');
         (async () => {
           try {
-            await this.runDailyAnalysis();
+            await this.runDailyAnalysis({ includePortfolioHub: true, runLabel: 'manual_shared' });
           } catch (error) {
             console.error('❌ Error in manual daily analysis:', error);
           }
@@ -1623,7 +1658,7 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       const wrappedNews = wrapNewsForPrompt(formattedNews);
       logRunPhase('shared', `news articles=${allNews.length} symbols=${universeSymbols.length}`);
 
-      const profileRefreshResults = await runDailyProfileRefreshSweep({ staleAfterDays: 14 });
+      const profileRefreshResults = await runDailyProfileRefreshSweep({ staleAfterDays: 14, logEachSymbol: false });
       const profileSummary = summarizeProfileActions(profileRefreshResults);
       logRunPhase('shared', `profileRefresh ${JSON.stringify(profileSummary)}`);
 
@@ -2327,9 +2362,9 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
         Object.entries(longProfiles).forEach(([symbol, profile]) => {
           const daysOld = Math.floor((Date.now() - new Date(profile.last_updated).getTime()) / (1000 * 60 * 60 * 24));
           stockProfileContext += `\n${symbol} (profile ${daysOld} days old):\n`;
-          stockProfileContext += `  Business: ${profile.business_model?.substring(0, 200) || 'N/A'}...\n`;
-          stockProfileContext += `  Moats: ${profile.moats?.substring(0, 150) || 'N/A'}...\n`;
-          stockProfileContext += `  Key Risks: ${profile.risks?.substring(0, 150) || 'N/A'}...\n`;
+          stockProfileContext += `  Business: ${truncateText(profile.business_model, 140) || 'N/A'}\n`;
+          stockProfileContext += `  Moats: ${truncateText(profile.moats, 100) || 'N/A'}\n`;
+          stockProfileContext += `  Key Risks: ${truncateText(profile.risks, 100) || 'N/A'}\n`;
           if (daysOld > 14) {
             stockProfileContext += `  ⚠️ Profile is stale (${daysOld} days old) - do deeper refresh\n`;
           } else {
@@ -2342,7 +2377,7 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
       const longStockHistory = {};
       for (const candidate of candidates.longs) {
         const symbol = candidate.symbol;
-        const history = await trendLearning.getStockAnalysisHistory(symbol, 2);
+        const history = await trendLearning.getStockAnalysisHistory(symbol, 1);
         if (history.length > 0) {
           longStockHistory[symbol] = history;
         }
@@ -2353,14 +2388,14 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
         recentAnalysisContext = '\n\n**RECENT TRADE DECISIONS:**\n';
         Object.entries(longStockHistory).forEach(([symbol, history]) => {
           recentAnalysisContext += `${symbol}: `;
-          recentAnalysisContext += history.map(h => `${h.analysis_date} ${h.recommendation}`).join(', ');
+          recentAnalysisContext += history.map(h => `${h.analysis_date} ${truncateText(h.recommendation, 60)}`).join(', ');
           recentAnalysisContext += '\n';
         });
       }
 
       // Get learning insights from weekly reviews
       const learningInsights = await learningFeedback.getRecentInsights(30);
-      const learningContext = learningInsights || '';
+      const learningContext = truncateText(learningInsights, 1200) || '';
       const catalystResearchBySymbol = {};
       for (const candidate of candidates.longs) {
         catalystResearchBySymbol[candidate.symbol] = await catalystResearch.researchCatalysts(candidate.symbol, candidate.pathway);
@@ -2368,7 +2403,7 @@ ${marketRegime === 'bull' ? '- Focus: High-conviction longs, tactical shorts as 
 
       let catalystContext = '\n\n**CATALYST RESEARCH RESULTS:**\n';
       Object.entries(catalystResearchBySymbol).forEach(([symbol, results]) => {
-        catalystContext += `\n${symbol}:\n${JSON.stringify(results, null, 2)}\n`;
+        catalystContext += `- ${summarizeCatalystResearchForPrompt(symbol, results)}\n`;
       });
 
       const phase2Question = `You are managing a $100k portfolio. You are in PHASE 2: LONG ANALYSIS.
@@ -2507,8 +2542,8 @@ ${historyContext}`;
         Object.entries(shortProfiles).forEach(([symbol, profile]) => {
           const daysOld = Math.floor((Date.now() - new Date(profile.last_updated).getTime()) / (1000 * 60 * 60 * 24));
           shortProfileContext += `\n${symbol} (profile ${daysOld} days old):\n`;
-          shortProfileContext += `  Business: ${profile.business_model?.substring(0, 200) || 'N/A'}...\n`;
-          shortProfileContext += `  Key Risks: ${profile.risks?.substring(0, 150) || 'N/A'}...\n`;
+          shortProfileContext += `  Business: ${truncateText(profile.business_model, 140) || 'N/A'}\n`;
+          shortProfileContext += `  Key Risks: ${truncateText(profile.risks, 100) || 'N/A'}\n`;
           if (daysOld > 14) {
             shortProfileContext += `  ⚠️ Profile is stale (${daysOld} days old) - do deeper refresh\n`;
           } else {
@@ -2521,7 +2556,7 @@ ${historyContext}`;
       const shortStockHistory = {};
       for (const candidate of candidates.shorts) {
         const symbol = candidate.symbol;
-        const history = await trendLearning.getStockAnalysisHistory(symbol, 2);
+        const history = await trendLearning.getStockAnalysisHistory(symbol, 1);
         if (history.length > 0) {
           shortStockHistory[symbol] = history;
         }
@@ -2532,7 +2567,7 @@ ${historyContext}`;
         shortRecentAnalysisContext = '\n\n**RECENT TRADE DECISIONS:**\n';
         Object.entries(shortStockHistory).forEach(([symbol, history]) => {
           shortRecentAnalysisContext += `${symbol}: `;
-          shortRecentAnalysisContext += history.map(h => `${h.analysis_date} ${h.recommendation}`).join(', ');
+          shortRecentAnalysisContext += history.map(h => `${h.analysis_date} ${truncateText(h.recommendation, 60)}`).join(', ');
           shortRecentAnalysisContext += '\n';
         });
       }

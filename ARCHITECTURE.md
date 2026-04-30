@@ -101,6 +101,7 @@ Profile behavior:
 - next-day earnings names are proactively prepared
 - post-earnings cohorts can be proactively refreshed through operator-triggered prep
 - adhoc analysis can trigger missing or stale profile rebuilds
+- recurring Tavily-intensive refresh and daily-analysis news pulls are narrowed toward `saturday_watchlist` symbols for cost control
 
 Important persistence:
 
@@ -172,8 +173,7 @@ Portfolio Hub is:
 Main surfaces:
 
 1. combined holdings review
-2. latest recommendation changes
-3. recommended new positions
+2. active recommendations
 4. account, cash, and transaction management
 
 Current recommendation/review behavior:
@@ -184,6 +184,11 @@ Current recommendation/review behavior:
 - taxable-heavy holdings now bias toward less churn, while IRA/HSA exposure can tolerate more medium-term tactical turnover when justified
 - fresh post-earnings signals can feed PHUB holdings context so add/pass decisions reflect recent earnings reactions
 - recommended-position persistence now keeps technical snapshot data and recommended-account metadata for subsequent reloads
+- the default operator action is now `Run Portfolio Hub Review`, with `Holding Review Only (Advanced)` preserved as a narrower/manual path
+- Active Recommendations merges holding-change guidance and new-position ideas into one action-oriented surface
+- recommendation cards now support both `Implemented` and `Skip / hide`
+- holding-change preference state persists directly on `portfolio_hub_recommendation_changes`
+- new-position preference state persists through a separate stable-key table so regenerated recommendation runs inherit prior `Implemented` / `Skip` decisions
 
 Portfolio Hub unified cycle behavior:
 
@@ -198,6 +203,10 @@ Important persistence:
 
 - `portfolio_hub_accounts`
 - `portfolio_hub_transactions`
+- `portfolio_hub_recommendation_changes`
+- `portfolio_hub_recommended_position_runs`
+- `portfolio_hub_recommended_position_items`
+- `portfolio_hub_recommended_position_preferences`
 - Portfolio Hub review/recommendation history tables
 
 Design boundary:

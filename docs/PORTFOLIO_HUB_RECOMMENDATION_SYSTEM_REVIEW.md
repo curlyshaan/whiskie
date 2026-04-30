@@ -418,18 +418,32 @@ The intent is to avoid emailing on pure wording tweaks or simple ranking displac
 
 ## UI behavior
 
-The Recommended New Positions section currently shows:
+Portfolio Hub now uses a merged `Active Recommendations` section rather than separate:
 
+- `Latest Recommendation Changes`
+- `Recommended New Positions`
+
+The merged surface shows:
+
+- holding-change recommendations for existing positions
+- recommended new-position ideas
 - symbol
-- direction
-- horizon / conviction / pathway / relationship chips
+- direction / conviction / pathway / relationship chips where relevant
 - starter sizing
 - entry / stop / target and portfolio-fit fields
 - thesis / why now / invalidation / related-action content
 - deterministic score and rank
-- scoring breakdown
+- scoring breakdown / reasoning context
+- action controls:
+  - `Implemented`
+  - `Skip / hide`
 
 This UI is advisory only and does not produce trade execution.
+
+Persistence behavior:
+
+- holding-change recommendation states persist on the recommendation-change record itself
+- new-position recommendation states persist using a stable preference key so the same idea can remain hidden even after later recommendation runs regenerate the underlying row IDs
 
 ## Advisory locking and concurrency
 
@@ -538,15 +552,17 @@ Reviewer question:
 
 ### 6. Threshold choice is policy, not scientific truth
 
-The new gate uses:
+The current gate uses:
 
 - conviction `medium/high`
-- `high` conviction bypasses the score threshold
+- all ideas must first clear a universal hard floor of `>= 45`
+- `high` conviction can pass once above that floor
 - `medium` conviction requires score `>= 60`
 
 Reviewer questions:
 
 - Is 60 the right threshold?
+- Is 45 the right universal hard floor?
 - Should there be different thresholds for long vs short?
 - Should replacement candidates have different standards?
 
@@ -582,7 +598,7 @@ The correct mental model is:
 - Opus proposes ideas
 - local Portfolio Hub logic decides whether those ideas are acceptable
 - deterministic local scoring ranks acceptable ideas
-- a hard gate blocks weak ideas
+- a hard gate blocks weak ideas (`< 45` universally, `< 60` for medium conviction)
 - the final output is advisory, not executable
 
 ## Summary
@@ -600,7 +616,7 @@ Portfolio Hub Recommended New Positions is a hybrid recommendation system:
 The most important recent policy change is:
 
 - only `medium` / `high` conviction ideas
-- with `high` conviction always allowed
-- and `medium` conviction requiring local score `>= 60`
+- with all ideas requiring local score `>= 45`
+- and `medium` conviction additionally requiring local score `>= 60`
 
 are now allowed to surface in the final Recommended New Positions output.

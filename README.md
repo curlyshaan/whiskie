@@ -128,6 +128,7 @@ Stock profiles are operationally important and currently work like this:
 - manual profile trigger currently rebuilds `pending` names in `saturday_watchlist`
 - Adhoc Analyzer can also build or refresh an individual profile on demand
 - daily analysis core universe is `active` watchlist names
+- Tavily-heavy recurring analysis/news collection is intentionally concentrated on `saturday_watchlist` symbols to control provider cost
 - during market hours, daily pre-ranking can also merge in broader momentum/discovery names
 - missing profiles do **not** block analysis; some flows continue without them
 
@@ -489,12 +490,20 @@ Trade approval UI behavior:
 Portfolio Hub UI behavior:
 
 - holdings rows now include direct links into Adhoc Analyzer and Options Analyzer
+- the main PHUB action is now a single `Run Portfolio Hub Review` flow, while `Holding Review Only (Advanced)` remains available as a narrower operator/debug action
 - running Portfolio Hub Opus review can return either:
   - refreshed recommendations for only the holdings that currently need review
   - or a no-op message if no holdings are stale / materially changed / near earnings
 - Portfolio Hub holdings review and Recommended New Positions both now pass shared FMP-backed technical context into Opus, including SMA/RSI/volume-based posture data used for stops, targets, and trim/add timing
 - Portfolio Hub accounts now store account types (`Taxable Cash`, `Taxable Margin`, `IRA`, `HSA`, `Other`) and show them in the PHub UI
 - Portfolio Hub recommendation logic is now tax-aware: taxable-heavy exposure biases toward lower churn, while IRA/HSA exposure can support more medium-term tactical turnover when justified
+- PHUB now uses one merged `Active Recommendations` surface instead of separate `Latest Recommendation Changes` and `Recommended New Positions` sections
+- recommendation cards support both `Implemented` and `Skip / hide` states
+- holding-change recommendations persist those states directly in their history table, while new-position recommendations persist them through a stable preference key so the same idea stays hidden across regenerated runs
+- new-position quality gating now uses:
+  - universal hard floor `>= 45`
+  - `high` conviction can pass once above that floor
+  - `medium` conviction still requires local score `>= 60`
 
 Note: `MAX_DAILY_TRADES` is no longer part of the active configuration model.
 
