@@ -3815,6 +3815,22 @@ export async function getNextEarning(symbol) {
   }
 }
 
+export async function getLatestEarning(symbol) {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM earnings_calendar
+       WHERE symbol = $1
+       ORDER BY earnings_date DESC, source_priority DESC, last_verified_at DESC
+       LIMIT 1`,
+      [symbol]
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    console.error(`Error fetching latest earning for ${symbol}:`, error);
+    throw error;
+  }
+}
+
 /**
  * Get upcoming earnings (next N days)
  */

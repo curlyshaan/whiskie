@@ -675,7 +675,7 @@ export async function executeEarningsDecision(analysis) {
   }
 }
 
-export async function analyzeAfterEarnings(symbol) {
+export async function analyzeAfterEarnings(symbol, earningOverride = null) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
   if (!normalizedSymbol) throw new Error('Symbol is required');
 
@@ -683,17 +683,19 @@ export async function analyzeAfterEarnings(symbol) {
     await ensureFreshStockProfile(normalizedSymbol, { staleAfterDays: 14, incrementalRefreshDays: 14 }).catch(() => null);
   }
 
-  const [positionLots, context, nextEarning, profile, stockInfo] = await Promise.all([
+  const [positionLots, context, fallbackLatestEarning, profile, stockInfo] = await Promise.all([
     db.getPositionLots(normalizedSymbol).catch(() => []),
     getPostEarningsContext(normalizedSymbol),
-    db.getNextEarning(normalizedSymbol).catch(() => null),
+    earningOverride ? Promise.resolve(null) : db.getLatestEarning(normalizedSymbol).catch(() => null),
     db.getLatestStockProfile(normalizedSymbol).catch(() => null),
     db.getStockInfo(normalizedSymbol).catch(() => null)
   ]);
 
+  const relevantEarning = earningOverride || fallbackLatestEarning;
+
   const currentPrice = Number(resolveMarketPrice(context.quote, { marketOpen: false, fallback: 0 }));
-  const earningsSession = normalizeEarningsSession(nextEarning?.session_normalized || nextEarning?.earnings_time);
-  const readiness = getPostEarningsAnalysisReadiness(nextEarning?.earnings_date || null, earningsSession);
+  const earningsSession = normalizeEarningsSession(relevantEarning?.session_normalized || relevantEarning?.earnings_time);
+  const readiness = getPostEarningsAnalysisReadiness(relevantEarning?.earnings_date || null, earningsSession);
   if (!readiness.ready) {
     return {
       symbol: normalizedSymbol,
@@ -704,7 +706,7 @@ export async function analyzeAfterEarnings(symbol) {
   }
   const reactionSnapshot = await buildPostEarningsReactionSnapshot(
     normalizedSymbol,
-    nextEarning?.earnings_date || null,
+    relevantEarning?.earnings_date || null,
     earningsSession,
     currentPrice
   ).catch(() => null);
@@ -736,7 +738,7 @@ ${JSON.stringify(stockInfo || {}, null, 2)}
 
 Current price: $${currentPrice.toFixed(2)}
 Upcoming/last earnings calendar record:
-${JSON.stringify(nextEarning || {}, null, 2)}
+${JSON.stringify(relevantEarning || {}, null, 2)}
 
 Analysis timing gate:
 ${JSON.stringify(readiness, null, 2)}

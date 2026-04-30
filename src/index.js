@@ -1231,7 +1231,7 @@ class WhiskieBot {
               try {
                 const ensured = await stockProfiles.ensureFreshStockProfile(symbol, { staleAfterDays: 14, incrementalRefreshDays: 14 });
                 const eligibility = isRecentPostEarningsCandidate(row, 2)
-                  ? await analyzeAfterEarnings(symbol).catch(error => ({ skipped: true, reason: error.message }))
+                  ? await analyzeAfterEarnings(symbol, row).catch(error => ({ skipped: true, reason: error.message }))
                   : { skipped: true, reason: 'not_yet_post_earnings_eligible' };
                 prepared.push({
                   symbol,
