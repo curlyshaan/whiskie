@@ -3050,7 +3050,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     <div class="section">
       <div class="section-title">📊 Today's Analyses</div>
       ${analyses.length === 0 ?
-        '<div class="no-data">No analyses yet today. Next run at 10:00 AM ET.</div>' :
+        '<div class="no-data">No analyses yet today. Next shared cycle starts at 10:30 AM ET.</div>' :
         analyses.map(a => {
           const time = new Date(a.created_at).toLocaleTimeString('en-US', {
             hour: '2-digit',
@@ -3259,8 +3259,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       <p style="margin-top: 10px;">
         <strong>Analysis Schedule (Mon-Fri):</strong><br>
         • 9:00 AM ET - Pre-market gap scan<br>
-        • 10:00 AM ET - Morning analysis (4-phase)<br>
-        • 2:00 PM ET - Afternoon analysis<br>
+        • 10:30 AM ET - Morning shared intelligence cycle<br>
+        • 2:30 PM ET - Afternoon shared intelligence cycle<br>
         • 6:00 PM ET - Daily summary email
       </p>
       <p style="margin-top: 15px; color: #888;">
@@ -4831,10 +4831,10 @@ function generateCronStatusHTML(executions, days) {
   // Define expected jobs
   const expectedJobs = [
     { name: 'Pre-Market Scan', type: 'daily', schedule: '9:00 AM ET Mon-Fri', endpoint: '/api/trigger-premarket-scan' },
-    { name: 'Morning Analysis', type: 'daily', schedule: '10:00 AM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
-    { name: 'Afternoon Analysis', type: 'daily', schedule: '2:00 PM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
+    { name: 'Morning Shared Intelligence Cycle', type: 'daily', schedule: '10:30 AM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
+    { name: 'Afternoon Shared Intelligence Cycle', type: 'daily', schedule: '2:30 PM ET Mon-Fri', endpoint: '/api/trigger-daily-analysis' },
     { name: 'Daily Summary', type: 'daily', schedule: '6:00 PM ET Mon-Fri', endpoint: '/api/trigger-eod-summary' },
-    { name: 'Trade Executor', type: 'manual', schedule: 'Every 30 min (9:30am-4pm ET)', endpoint: '/api/trigger-trade-executor' },
+    { name: 'Trade Executor', type: 'manual', schedule: 'Manual trigger only', endpoint: '/api/trigger-trade-executor' },
     { name: 'Portfolio Sync', type: 'manual', schedule: 'Manual only', endpoint: '/api/trigger-portfolio-sync' },
     { name: 'Weekly Earnings Refresh', type: 'weekly', schedule: 'Friday 8:00 PM ET', endpoint: '/api/trigger-weekly-earnings-refresh' },
     { name: 'Earnings Reminder Processor', type: 'daily', schedule: '3:00 PM ET Sun-Thu', endpoint: '/api/trigger-earnings-reminders' },
