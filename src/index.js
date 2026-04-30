@@ -1216,9 +1216,11 @@ class WhiskieBot {
               `SELECT DISTINCT ec.symbol, ec.earnings_date, ec.session_normalized, ec.earnings_time
                FROM earnings_calendar ec
                JOIN stock_universe su ON su.symbol = ec.symbol
+               JOIN saturday_watchlist sw ON sw.symbol = ec.symbol
                WHERE ec.earnings_date = ANY($1::date[])
                  AND COALESCE(su.earnings_tracking_eligible, TRUE) = TRUE
                  AND su.status = 'active'
+                 AND sw.status IN ('active', 'pending')
                ORDER BY ec.earnings_date ASC, ec.symbol ASC`,
               [normalizedDates]
             );
