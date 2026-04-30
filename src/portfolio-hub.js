@@ -824,6 +824,42 @@ function normalizePostEarningsSignal(row = null) {
   };
 }
 
+function coercePostEarningsSignal(value = null, symbol = '') {
+  if (!value) return null;
+  if (typeof value === 'object' && value.recommendation) {
+    return normalizePostEarningsSignal({
+      symbol: value.symbol || symbol,
+      recommendation: value.recommendation,
+      reasoning: value.reasoning || value.why || '',
+      signal_snapshot: value.reactionSnapshot || value.signalSnapshot || null,
+      created_at: value.createdAt || new Date().toISOString()
+    }) || value;
+  }
+
+  const recommendation = String(value || '').trim().toUpperCase();
+  if (!recommendation) return null;
+  return {
+    symbol: String(symbol || '').toUpperCase(),
+    recommendation,
+    reasoning: '',
+    why: '',
+    trigger: '',
+    reactionSnapshot: null,
+    createdAt: null,
+    ageTradingDays: null,
+    isFresh: true,
+    holdingBias: recommendation === 'BUY_DIP'
+      ? 'add_on_post_earnings_weakness'
+      : recommendation === 'PASS'
+        ? 'avoid_new_exposure'
+        : recommendation === 'HOLD'
+          ? 'stay_patient'
+          : recommendation === 'ADD_TO_WATCHLIST'
+            ? 'watch_for_follow_through'
+            : null
+  };
+}
+
 function inferRelatedHoldingForRecommendation(item, holdings = [], stockInfoMap = new Map()) {
   const symbol = String(item.symbol || '').toUpperCase();
   const candidateInfo = stockInfoMap.get(symbol) || null;
@@ -1592,7 +1628,9 @@ export async function runPortfolioHubRecommendedPositions(options = {}) {
       const saturdaySymbols = [...new Set((saturdayRows || []).map(row => String(row.symbol || '').toUpperCase()).filter(Boolean))];
       const postEarningsAnalyses = await db.getLatestPostEarningsAnalyses(saturdaySymbols, 3).catch(() => []);
       const postEarningsSignalMap = new Map(
-        (postEarningsAnalyses || []).map(row => [String(row.symbol || '').toUpperCase(), row.recommendation || null])
+        (postEarningsAnalyses || [])
+          .map(row => [String(row.symbol || '').toUpperCase(), normalizePostEarningsSignal(row)])
+          .filter(([, value]) => Boolean(value))
       );
 
       const candidates = buildRecommendedPositionCandidates({
@@ -1602,9 +1640,12 @@ export async function runPortfolioHubRecommendedPositions(options = {}) {
       }).map(item => ({
         ...item,
         postEarningsSignal:
-          (portfolioHub.holdings || []).find(row => row.symbol === item.symbol)?.postEarningsSignal
-          || postEarningsSignalMap.get(String(item.symbol || '').toUpperCase())
-          || null
+          coercePostEarningsSignal(
+            (portfolioHub.holdings || []).find(row => row.symbol === item.symbol)?.postEarningsSignal
+            || postEarningsSignalMap.get(String(item.symbol || '').toUpperCase())
+            || null,
+            item.symbol
+          )
       }));
 
       const candidateSymbols = candidates.map(item => item.symbol);

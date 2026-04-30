@@ -683,15 +683,16 @@ export async function analyzeAfterEarnings(symbol, earningOverride = null) {
     await ensureFreshStockProfile(normalizedSymbol, { staleAfterDays: 14, incrementalRefreshDays: 14 }).catch(() => null);
   }
 
-  const [positionLots, context, fallbackLatestEarning, profile, stockInfo] = await Promise.all([
+  const normalizedOverride = earningOverride?.earnings_date ? earningOverride : null;
+  const [positionLots, context, fallbackPastEarning, profile, stockInfo] = await Promise.all([
     db.getPositionLots(normalizedSymbol).catch(() => []),
     getPostEarningsContext(normalizedSymbol),
-    earningOverride ? Promise.resolve(null) : db.getLatestEarning(normalizedSymbol).catch(() => null),
+    normalizedOverride ? Promise.resolve(null) : db.getMostRecentPastEarning(normalizedSymbol).catch(() => null),
     db.getLatestStockProfile(normalizedSymbol).catch(() => null),
     db.getStockInfo(normalizedSymbol).catch(() => null)
   ]);
 
-  const relevantEarning = earningOverride || fallbackLatestEarning;
+  const relevantEarning = normalizedOverride || fallbackPastEarning;
 
   const currentPrice = Number(resolveMarketPrice(context.quote, { marketOpen: false, fallback: 0 }));
   const earningsSession = normalizeEarningsSession(relevantEarning?.session_normalized || relevantEarning?.earnings_time);
@@ -795,7 +796,7 @@ TRIGGER: one concise sentence describing what would confirm or invalidate the se
     recommendation,
     reasoning: text,
     positionSnapshot: positionLots,
-    earningsSnapshot: nextEarning,
+    earningsSnapshot: relevantEarning,
     optionsSnapshot: context.surpriseHistory,
     signalSnapshot: reactionSnapshot
   });

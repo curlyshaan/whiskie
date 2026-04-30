@@ -317,7 +317,8 @@ TECHNICAL CONTEXT:
     if (news && news.length > 0) {
       prompt += `RECENT NEWS (structured search):\n`;
       news.forEach((item, i) => {
-        prompt += `${i + 1}. ${item.title}\n   ${item.snippet}\n\n`;
+        const summary = item.summary || item.content || item.articleText || item.snippet || 'No summary available.';
+        prompt += `${i + 1}. ${item.title}\n   ${summary}\n\n`;
       });
     }
 
