@@ -610,7 +610,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <div class="section-title">🧭 Portfolio Hub</div>
       <p class="subtitle" style="margin-top:0;">Separate from Whiskie live trading. Manual multi-account holdings with portfolio-wide analytics.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
-        <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Run Portfolio Hub Review</button>
+        <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Refresh Portfolio</button>
         <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Holding Review Only (Advanced)</button>
         <button class="analyze-btn" onclick="togglePortfolioHubAdminPanel()">Toggle Admin / Debug</button>
       </div>
@@ -746,7 +746,6 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('marketValue', '${nextSortDirection('marketValue')}')">Value${sortIndicator('marketValue')}</button></th>
                   <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('weightPct', '${nextSortDirection('weightPct')}')">Weight${sortIndicator('weightPct')}</button></th>
                   <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('unrealizedPnLPct', '${nextSortDirection('unrealizedPnLPct')}')">P/L${sortIndicator('unrealizedPnLPct')}</button></th>
-                  <th>Earnings</th>
                   <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('whiskiePathway', '${nextSortDirection('whiskiePathway')}')">Whiskie Pathway${sortIndicator('whiskiePathway')}</button></th>
                   <th>My Stop</th>
                   <th>My Target</th>
@@ -762,13 +761,12 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                     <td>${formatMoney(row.marketValue)}</td>
                     <td>${formatPercent(row.weightPct)}</td>
                     <td class="${Number(row.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(row.unrealizedPnL)}<br>${formatPercent(row.unrealizedPnLPct)}</td>
-                    <td>${formatShortDate(row.nextEarningsDate)}</td>
                     <td>${escapeHtml(row.whiskiePathway || '-')}</td>
                     <td>${row.userStopLoss ? formatMoney(row.userStopLoss) : '-'}</td>
                     <td>${row.userTakeProfit ? formatMoney(row.userTakeProfit) : '-'}</td>
                   </tr>
                   <tr>
-                    <td colspan="11" style="background:#131a30;">
+                    <td colspan="10" style="background:#131a30;">
                       <details class="combined-holding-details">
                         <summary>Whiskie details for ${escapeHtml(row.symbol)}</summary>
                         <div class="combined-holding-details-body">
@@ -1121,7 +1119,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       const btn = document.getElementById('portfolioHubRefreshBtn');
       if (btn) {
         btn.disabled = true;
-          btn.textContent = 'Running unified cycle...';
+          btn.textContent = 'Refreshing prices...';
       }
 
       try {
@@ -1134,7 +1132,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Run Portfolio Hub Review';
+          btn.textContent = 'Refresh Portfolio';
         }
       }
     }
@@ -1169,7 +1167,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       const btn = document.getElementById('portfolioHubRecommendedBtn');
       if (btn) {
         btn.disabled = true;
-        btn.textContent = 'Running unified cycle...';
+        btn.textContent = 'Refreshing prices...';
       }
 
       try {
