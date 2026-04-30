@@ -263,7 +263,8 @@ function summarizeCatalystResults(symbol, results = []) {
 
   return unique.map((item, index) => {
     const source = item.url ? ` (${item.url})` : '';
-    return `${index + 1}. ${item.title}: ${item.content || 'No summary available.'}${source}`;
+    const bestContext = item.summary || item.articleText || item.content || 'No summary available.';
+    return `${index + 1}. ${item.title}: ${bestContext}${source}`;
   }).join('\n');
 }
 

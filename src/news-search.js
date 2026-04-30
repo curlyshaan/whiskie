@@ -1,5 +1,7 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { JSDOM } from 'jsdom';
+import { Readability } from '@mozilla/readability';
 import dotenv from 'dotenv';
 import * as db from './db.js';
 import claude, { MODELS } from './claude.js';
@@ -8,6 +10,14 @@ import serper from './serper.js';
 dotenv.config();
 
 const ARTICLE_TIMEOUT_MS = Number(process.env.NEWS_ARTICLE_TIMEOUT_MS || 15000);
+const DEFAULT_BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Cache-Control': 'no-cache',
+  'Pragma': 'no-cache',
+  'Upgrade-Insecure-Requests': '1'
+};
 const SUMMARY_MODEL = (() => {
   const configured = String(process.env.NEWS_SUMMARY_MODEL || '').trim();
   if (!configured) return MODELS.SONNET;
@@ -72,6 +82,84 @@ class NewsSearchService {
     return bestText.slice(0, 12000);
   }
 
+  extractReadableArticle(html = '', url = '') {
+    try {
+      const dom = new JSDOM(html, { url: url || 'https://example.com/' });
+      const reader = new Readability(dom.window.document);
+      const parsed = reader.parse();
+      const text = String(parsed?.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!text) return null;
+      return {
+        articleText: text.slice(0, 12000),
+        title: parsed?.title || null,
+        excerpt: parsed?.excerpt || null,
+        byline: parsed?.byline || null,
+        siteName: parsed?.siteName || null
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  scoreExtractionQuality(articleText = '', html = '') {
+    const text = String(articleText || '').trim();
+    const lower = text.toLowerCase();
+    if (!text) return 'empty';
+    if (text.length < 200) return 'too_short';
+    if (
+      text.length < 1200
+      && (
+        lower.includes('subscriber agreement')
+        || lower.includes('for your personal, non-commercial use only')
+        || lower.includes('distribution and use of this material are governed')
+        || lower.includes('copyright law')
+      )
+    ) {
+      return 'paywall_stub';
+    }
+    const htmlLower = String(html || '').slice(0, 4000).toLowerCase();
+    if (
+      this.looksBlocked(htmlLower, text)
+      && text.length < 1200
+    ) {
+      return 'blocked';
+    }
+    if (text.length < 1200) return 'partial';
+    return 'good';
+  }
+
+  looksBlocked(html = '', extractedText = '') {
+    const text = String(html || '').slice(0, 4000).toLowerCase();
+    const normalizedExtracted = String(extractedText || '').trim();
+    if (!text) return true;
+    const blocked = [
+      'access denied',
+      'just a moment',
+      'captcha',
+      'verify you are human',
+      'enable javascript and cookies to continue',
+      'request unsuccessful',
+      'please enable cookies',
+      'security check'
+    ].some(fragment => text.includes(fragment));
+
+    if (!blocked) return false;
+    return normalizedExtracted.length < 1200;
+  }
+
+  buildArticleHeaders(url = '') {
+    const headers = { ...DEFAULT_BROWSER_HEADERS };
+    try {
+      const parsed = new URL(url);
+      const origin = `${parsed.protocol}//${parsed.hostname}`;
+      headers.Referer = origin;
+      headers.Origin = origin;
+    } catch {
+      // ignore malformed URL
+    }
+    return headers;
+  }
+
   normalizePublisherName(source = '', url = '') {
     const explicit = String(source || '').trim();
     if (explicit) return explicit;
@@ -83,24 +171,44 @@ class NewsSearchService {
     }
   }
 
+  getBestAvailableArticleText(result = {}) {
+    return String(
+      result.articleText
+      || result.summary
+      || result.content
+      || ''
+    ).trim();
+  }
+
   async fetchArticle(url) {
     if (!url) return null;
 
     try {
       const response = await axios.get(url, {
         timeout: ARTICLE_TIMEOUT_MS,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; Whiskie/1.0; +https://github.com/curlyshaan/whiskie)'
-        },
+        headers: this.buildArticleHeaders(url),
         responseType: 'text',
         maxRedirects: 5
       });
 
-      const articleText = this.normalizeArticleText(response.data);
+      const readabilityResult = this.extractReadableArticle(response.data, url);
+      const cheerioText = this.normalizeArticleText(response.data);
+      const articleText = readabilityResult?.articleText || cheerioText;
+      const extractionQuality = this.scoreExtractionQuality(articleText, response.data);
+
+      if (extractionQuality === 'blocked') {
+        console.warn(`News article fetch blocked for ${url}: publisher challenge detected`);
+        return null;
+      }
       if (!articleText) return null;
       return {
         url,
-        articleText
+        articleText,
+        extractionQuality,
+        extractedTitle: readabilityResult?.title || null,
+        extractedExcerpt: readabilityResult?.excerpt || null,
+        extractedByline: readabilityResult?.byline || null,
+        extractedSiteName: readabilityResult?.siteName || null
       };
     } catch (error) {
       console.warn(`News article fetch failed for ${url}:`, error.message);
@@ -172,6 +280,11 @@ ${articleText}`;
         ...result,
         source: this.normalizePublisherName(result.source, result.url),
         articleText,
+        extractionQuality: fetched?.extractionQuality || (result.content ? 'snippet_only' : 'empty'),
+        extractedTitle: fetched?.extractedTitle || null,
+        extractedExcerpt: fetched?.extractedExcerpt || null,
+        extractedByline: fetched?.extractedByline || null,
+        extractedSiteName: fetched?.extractedSiteName || null,
         summary,
         bullets
       };
@@ -183,6 +296,11 @@ ${articleText}`;
         ...result,
         source: this.normalizePublisherName(result.source, result.url),
         articleText,
+        extractionQuality: fetched?.extractionQuality || (result.content ? 'snippet_only' : 'empty'),
+        extractedTitle: fetched?.extractedTitle || null,
+        extractedExcerpt: fetched?.extractedExcerpt || null,
+        extractedByline: fetched?.extractedByline || null,
+        extractedSiteName: fetched?.extractedSiteName || null,
         summary: result.content || 'No summary available.',
         bullets: []
       };
@@ -205,6 +323,11 @@ ${articleText}`;
           ...result,
           source: this.normalizePublisherName(result.source, result.url),
           articleText: '',
+          extractionQuality: result.content ? 'snippet_only' : 'empty',
+          extractedTitle: null,
+          extractedExcerpt: null,
+          extractedByline: null,
+          extractedSiteName: null,
           summary: result.content || 'No summary available.',
           bullets: []
         });
@@ -324,9 +447,10 @@ ${articleText}`;
       const bulletText = Array.isArray(result.bullets) && result.bullets.length
         ? `\n   Key points: ${result.bullets.join(' | ')}`
         : '';
+      const bestSummary = result.summary || this.getBestAvailableArticleText(result) || 'No summary available.';
       return `${index + 1}. ${result.title}
    Source: ${result.source || 'Unknown'} — ${result.url}
-   Summary: ${result.summary || result.content || 'No summary available.'}
+   Summary: ${bestSummary}
    Published: ${result.published_date || 'Recent'}${bulletText}`;
     }).join('\n\n');
   }

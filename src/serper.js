@@ -5,15 +5,27 @@ import * as db from './db.js';
 dotenv.config();
 
 const SERPER_API_KEY = process.env.SERPER_API_KEY;
-const DEFAULT_FINANCE_DOMAINS = [
+const EXTRACTION_FRIENDLY_FINANCE_DOMAINS = [
   'reuters.com',
   'cnbc.com',
+  'benzinga.com',
+  'seekingalpha.com',
+  'fool.com',
   'marketwatch.com',
   'finance.yahoo.com',
+  'bloomberg.com',
+  'sec.gov',
+  'fda.gov'
+];
+
+const EXTRACTION_WEAK_FINANCE_DOMAINS = [
   'investing.com',
-  'barrons.com',
-  'benzinga.com',
-  'bloomberg.com'
+  'barrons.com'
+];
+
+const DEFAULT_FINANCE_DOMAINS = [
+  ...EXTRACTION_FRIENDLY_FINANCE_DOMAINS,
+  ...EXTRACTION_WEAK_FINANCE_DOMAINS
 ];
 
 const COMMENTARY_HEAVY_DOMAINS = [
@@ -474,6 +486,16 @@ class SerperAPI {
     return [...new Set([...COMMENTARY_HEAVY_DOMAINS, ...SOCIAL_NOISE_DOMAINS, ...(extra || [])])];
   }
 
+  getExtractionAwareIncludeDomains(options = {}) {
+    if (Array.isArray(options.includeDomains) && options.includeDomains.length) {
+      return options.includeDomains;
+    }
+    if (options.allowWeakExtractionDomains) {
+      return DEFAULT_FINANCE_DOMAINS;
+    }
+    return EXTRACTION_FRIENDLY_FINANCE_DOMAINS;
+  }
+
   buildStockContextQueries(symbol, companyName = '') {
     const identity = this.buildTickerIdentity(symbol, companyName);
     const ticker = this.normalizeSymbolToken(symbol);
@@ -578,7 +600,7 @@ class SerperAPI {
       maxResults,
       timeRange: options.timeRange || 'week',
       context: options.context || {},
-      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      includeDomains: this.getExtractionAwareIncludeDomains(options),
       excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
@@ -594,7 +616,7 @@ class SerperAPI {
       maxResults,
       timeRange: options.timeRange || 'week',
       context: options.context || {},
-      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      includeDomains: this.getExtractionAwareIncludeDomains(options),
       excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
@@ -621,7 +643,7 @@ class SerperAPI {
       timeRange: options.timeRange || 'week',
       maxResults,
       context: options.context || {},
-      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      includeDomains: this.getExtractionAwareIncludeDomains(options),
       excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
@@ -630,7 +652,7 @@ class SerperAPI {
     const minResults = Math.max(3, Number(options.minResults || 4));
     const maxResults = Math.max(minResults, Number(options.maxResults || 5));
     const companyName = String(options.companyName || '').trim();
-    const includeDomains = options.includeDomains || DEFAULT_FINANCE_DOMAINS;
+    const includeDomains = this.getExtractionAwareIncludeDomains(options);
 
     return await this.searchMany(this.ensureMinResults(this.buildEarningsContextQueries(symbol, companyName), minResults), {
       activity: 'earnings_context',
@@ -654,7 +676,7 @@ class SerperAPI {
       timeRange: options.timeRange || 'day',
       maxResults,
       context: options.context || {},
-      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      includeDomains: this.getExtractionAwareIncludeDomains(options),
       excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
@@ -677,7 +699,7 @@ class SerperAPI {
       engine: 'news',
       timeRange: options.timeRange || 'week',
       maxResults,
-      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      includeDomains: this.getExtractionAwareIncludeDomains(options),
       excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
@@ -690,7 +712,7 @@ class SerperAPI {
       engine: 'news',
       maxResults: normalizedMax,
       timeRange: options.timeRange || 'week',
-      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      includeDomains: this.getExtractionAwareIncludeDomains(options),
       excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains(),
       ...options
     });
