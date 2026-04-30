@@ -957,8 +957,8 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0a0e27;
-      color: #e0e0e0;
+      background: #07111f;
+      color: #e6eef8;
       padding: 20px;
       line-height: 1.6;
     }
@@ -966,13 +966,13 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
     h1 {
       font-size: 2.4rem;
       margin-bottom: 10px;
-      background: linear-gradient(135deg, #60a5fa 0%, #8b5cf6 100%);
+      background: linear-gradient(135deg, #22d3ee 0%, #3b82f6 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
-    .subtitle { color: #94a3b8; margin-bottom: 24px; }
+    .subtitle { color: #8fb3d9; margin-bottom: 24px; }
     .back-btn {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%);
       color: white;
       border: none;
       padding: 12px 24px;
@@ -986,7 +986,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
     }
     .back-btn:hover { opacity: 0.9; }
     .section {
-      background: #1a1f3a;
+      background: #0f1b2d;
       border-radius: 12px;
       padding: 25px;
       margin-bottom: 20px;
@@ -994,27 +994,27 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
     }
     .section-title { font-size: 1.3rem; font-weight: 600; margin-bottom: 20px; color: #fff; }
     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px; }
-    .stat-card { background: #0f1425; padding: 20px; border-radius: 10px; border: 1px solid #2a2f4a; }
-    .stat-label { color: #94a3b8; font-size: 0.9rem; margin-bottom: 8px; }
+    .stat-card { background: #0b1626; padding: 20px; border-radius: 10px; border: 1px solid #1d3557; }
+    .stat-label { color: #8fb3d9; font-size: 0.9rem; margin-bottom: 8px; }
     .stat-value { font-size: 1.8rem; font-weight: 700; color: #fff; }
-    .positive { color: #10b981; }
-    .negative { color: #ef4444; }
+    .positive { color: #22c55e; }
+    .negative { color: #fb7185; }
     table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #2a2f4a; }
-    th { background: #0f1425; color: #94a3b8; font-weight: 600; position: sticky; top: 0; }
-    tr:hover { background: #0f1425; }
-    .no-data { color: #94a3b8; padding: 20px; text-align: center; }
+    th, td { padding: 12px; text-align: left; border-bottom: 1px solid #1d3557; }
+    th { background: #0b1626; color: #8fb3d9; font-weight: 600; position: sticky; top: 0; }
+    tr:hover { background: #0b1626; }
+    .no-data { color: #8fb3d9; padding: 20px; text-align: center; }
     .detail-section-title { color: #fff; font-weight: 700; margin-bottom: 8px; }
-    .position-summary-note { color: #94a3b8; font-size: 0.9rem; }
+    .position-summary-note { color: #8fb3d9; font-size: 0.9rem; }
     input, select, button {
-      background: #0f1425;
-      color: #e0e0e0;
-      border: 1px solid #2a2f4a;
+      background: #0b1626;
+      color: #e6eef8;
+      border: 1px solid #1d3557;
       border-radius: 8px;
       padding: 10px 12px;
     }
     .analyze-btn {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%);
       border: none;
       cursor: pointer;
       font-weight: 600;
@@ -1330,12 +1330,12 @@ function generateSymbolOverviewHTML(symbol, data = {}) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0e27; color: #e0e0e0; padding: 20px; line-height: 1.6; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #07111f; color: #e6eef8; padding: 20px; line-height: 1.6; }
     .container { max-width: 1300px; margin: 0 auto; }
-    .card { background: #1a1f3a; border: 1px solid #2a2f4a; border-radius: 12px; padding: 20px; margin-bottom: 18px; }
+    .card { background: #0f1b2d; border: 1px solid #1d3557; border-radius: 12px; padding: 20px; margin-bottom: 18px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
-    .muted { color: #94a3b8; }
-    .btn { display: inline-block; padding: 10px 14px; border-radius: 8px; text-decoration: none; color: #fff; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin-right: 8px; margin-bottom: 8px; }
+    .muted { color: #8fb3d9; }
+    .btn { display: inline-block; padding: 10px 14px; border-radius: 8px; text-decoration: none; color: #fff; background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%); margin-right: 8px; margin-bottom: 8px; }
   </style>
 </head>
 <body>
@@ -1443,15 +1443,15 @@ function markdownToHtml(text) {
   html = html.replace(/```json[\s\S]*?```/g, '');
 
   // Convert horizontal rules
-  html = html.replace(/^---+$/gm, '<hr style="border: none; border-top: 2px solid #2a2f4a; margin: 20px 0;">');
+  html = html.replace(/^---+$/gm, '<hr style="border: none; border-top: 2px solid #1d3557; margin: 20px 0;">');
 
   // Convert EXECUTE_BUY/EXECUTE_SHORT to styled boxes
   html = html.replace(/EXECUTE_(BUY|SHORT):\s*([A-Z]+)\s*\|\s*(\d+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)\s*\|\s*([\d.]+)/g,
     (match, action, symbol, qty, entry, stop, target) => {
-      const color = action === 'BUY' ? '#10b981' : '#ef4444';
-      return `<div style="background: #1a1f3a; border-left: 4px solid ${color}; padding: 15px; margin: 15px 0; border-radius: 5px;">
+      const color = action === 'BUY' ? '#22c55e' : '#fb7185';
+      return `<div style="background: #0f1b2d; border-left: 4px solid ${color}; padding: 15px; margin: 15px 0; border-radius: 5px;">
         <strong style="color: ${color}; font-size: 1.1rem;">${action} ${symbol}</strong><br>
-        <span style="color: #d0d0d0;">Quantity: ${qty} | Entry: $${entry} | Stop: $${stop} | Target: $${target}</span>
+        <span style="color: #d7e3f4;">Quantity: ${qty} | Entry: $${entry} | Stop: $${stop} | Target: $${target}</span>
       </div>`;
     }
   );
@@ -1464,12 +1464,12 @@ function markdownToHtml(text) {
       row.split('|').map(cell => cell.trim()).filter(cell => cell)
     );
 
-    let table = '<table style="width: 100%; border-collapse: collapse; margin: 15px 0; background: #1a1f3a;">';
+    let table = '<table style="width: 100%; border-collapse: collapse; margin: 15px 0; background: #0f1b2d;">';
 
     // Header
     table += '<thead><tr>';
     headers.forEach(h => {
-      table += `<th style="border: 1px solid #2a2f4a; padding: 10px; background: #0f1425; text-align: left; color: #fff;">${h}</th>`;
+      table += `<th style="border: 1px solid #1d3557; padding: 10px; background: #0b1626; text-align: left; color: #fff;">${h}</th>`;
     });
     table += '</tr></thead>';
 
@@ -1478,7 +1478,7 @@ function markdownToHtml(text) {
     rowData.forEach(row => {
       table += '<tr>';
       row.forEach(cell => {
-        table += `<td style="border: 1px solid #2a2f4a; padding: 10px; color: #d0d0d0;">${cell}</td>`;
+        table += `<td style="border: 1px solid #1d3557; padding: 10px; color: #d7e3f4;">${cell}</td>`;
       });
       table += '</tr>';
     });
@@ -1488,22 +1488,22 @@ function markdownToHtml(text) {
   });
 
   // Convert headers
-  html = html.replace(/^### (.*$)/gim, '<h3 style="color: #667eea; margin-top: 25px; margin-bottom: 10px; font-size: 1.1rem;">$1</h3>');
-  html = html.replace(/^## (.*$)/gim, '<h2 style="color: #667eea; margin-top: 30px; margin-bottom: 15px; font-size: 1.3rem;">$1</h2>');
-  html = html.replace(/^# (.*$)/gim, '<h1 style="color: #667eea; margin-top: 30px; margin-bottom: 15px; font-size: 1.5rem;">$1</h1>');
+  html = html.replace(/^### (.*$)/gim, '<h3 style="color: #14b8a6; margin-top: 25px; margin-bottom: 10px; font-size: 1.1rem;">$1</h3>');
+  html = html.replace(/^## (.*$)/gim, '<h2 style="color: #14b8a6; margin-top: 30px; margin-bottom: 15px; font-size: 1.3rem;">$1</h2>');
+  html = html.replace(/^# (.*$)/gim, '<h1 style="color: #14b8a6; margin-top: 30px; margin-bottom: 15px; font-size: 1.5rem;">$1</h1>');
 
   // Convert bold
   html = html.replace(/\*\*(.*?)\*\*/g, '<strong style="color: #fff;">$1</strong>');
 
   // Convert bullet points
-  html = html.replace(/^- (.*$)/gim, '<li style="margin-bottom: 8px; color: #d0d0d0;">$1</li>');
+  html = html.replace(/^- (.*$)/gim, '<li style="margin-bottom: 8px; color: #d7e3f4;">$1</li>');
   html = html.replace(/(<li.*<\/li>\n?)+/g, '<ul style="margin: 10px 0 10px 20px;">$&</ul>');
 
   // Convert line breaks to paragraphs
   html = html.split('\n\n').map(para => {
     para = para.trim();
     if (para && !para.startsWith('<')) {
-      return `<p style="margin-bottom: 12px; color: #d0d0d0; line-height: 1.6;">${para.replace(/\n/g, '<br>')}</p>`;
+      return `<p style="margin-bottom: 12px; color: #d7e3f4; line-height: 1.6;">${para.replace(/\n/g, '<br>')}</p>`;
     }
     return para;
   }).join('\n');
@@ -1684,7 +1684,7 @@ function renderPhase4Analysis(text) {
     sections.push(renderDetailSection('Rationale', formatStructuredText(rationaleMatch[1])));
   }
 
-  return sections.length ? sections.join('') : `<pre style="white-space: pre-wrap; color: #d0d0d0;">${escaped}</pre>`;
+  return sections.length ? sections.join('') : `<pre style="white-space: pre-wrap; color: #d7e3f4;">${escaped}</pre>`;
 }
 
 function buildTradeBlockLookup(text) {
@@ -2171,8 +2171,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0a0e27;
-      color: #e0e0e0;
+      background: #07111f;
+      color: #e6eef8;
       padding: 20px;
       line-height: 1.6;
     }
@@ -2180,7 +2180,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     h1 {
       font-size: 2.5rem;
       margin-bottom: 10px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
@@ -2196,10 +2196,10 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       margin-bottom: 30px;
     }
     .stat-card {
-      background: #1a1f3a;
+      background: #0f1b2d;
       padding: 20px;
       border-radius: 12px;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
     }
     .stat-label {
       color: #888;
@@ -2211,14 +2211,14 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       font-weight: bold;
       color: #fff;
     }
-    .stat-value.positive { color: #10b981; }
-    .stat-value.negative { color: #ef4444; }
+    .stat-value.positive { color: #22c55e; }
+    .stat-value.negative { color: #fb7185; }
     .section {
-      background: #1a1f3a;
+      background: #0f1b2d;
       padding: 25px;
       border-radius: 12px;
       margin-bottom: 25px;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
     }
     .section-title {
       font-size: 1.5rem;
@@ -2257,7 +2257,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       margin-bottom: 15px;
     }
     .approval-detail {
-      color: #d0d0d0;
+      color: #d7e3f4;
     }
     .approval-detail strong {
       color: #fff;
@@ -2265,11 +2265,11 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       margin-bottom: 5px;
     }
     .approval-reasoning {
-      background: #0f1425;
+      background: #0b1626;
       padding: 15px;
       border-radius: 5px;
       margin-bottom: 15px;
-      color: #d0d0d0;
+      color: #d7e3f4;
       font-size: 0.9rem;
       max-height: 150px;
       overflow-y: auto;
@@ -2289,35 +2289,35 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
     .btn:hover { opacity: 0.8; }
     .btn-approve {
-      background: #10b981;
+      background: #22c55e;
       color: white;
     }
     .btn-reject {
-      background: #ef4444;
+      background: #fb7185;
       color: white;
     }
     details {
       margin-bottom: 15px;
     }
     summary {
-      background: #0f1425;
+      background: #0b1626;
       padding: 15px;
       border-radius: 8px;
       cursor: pointer;
       font-weight: bold;
-      color: #667eea;
-      border-left: 4px solid #667eea;
+      color: #14b8a6;
+      border-left: 4px solid #14b8a6;
       user-select: none;
     }
     summary:hover {
       background: #151a2e;
     }
     .analysis-content {
-      background: #0f1425;
+      background: #0b1626;
       padding: 20px;
       margin-top: 10px;
       border-radius: 8px;
-      color: #d0d0d0;
+      color: #d7e3f4;
       font-size: 0.95rem;
       line-height: 1.8;
       max-height: 600px;
@@ -2340,14 +2340,14 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     .analysis-content li { margin-bottom: 5px; }
     .analysis-content p { margin-bottom: 10px; }
     .analysis-content code {
-      background: #1a1f3a;
+      background: #0f1b2d;
       padding: 2px 6px;
       border-radius: 3px;
       font-family: 'Courier New', monospace;
-      color: #10b981;
+      color: #22c55e;
     }
     .analysis-content pre {
-      background: #1a1f3a;
+      background: #0f1b2d;
       padding: 15px;
       border-radius: 5px;
       overflow-x: auto;
@@ -2377,7 +2377,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       border-collapse: collapse;
     }
     th {
-      background: #0f1425;
+      background: #0b1626;
       padding: 12px;
       text-align: left;
       color: #888;
@@ -2387,10 +2387,10 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
     td {
       padding: 12px;
-      border-bottom: 1px solid #2a2f4a;
+      border-bottom: 1px solid #1d3557;
     }
     tr:hover {
-      background: #0f1425;
+      background: #0b1626;
     }
     .badge {
       display: inline-block;
@@ -2399,15 +2399,15 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       font-size: 0.85rem;
       font-weight: 600;
     }
-    .badge.buy { background: #10b98120; color: #10b981; }
-    .badge.sell { background: #ef444420; color: #ef4444; }
+    .badge.buy { background: #22c55e20; color: #22c55e; }
+    .badge.sell { background: #fb718520; color: #fb7185; }
     .badge.short { background: #f9731620; color: #f97316; }
-    .badge.cover { background: #60a5fa20; color: #60a5fa; }
+    .badge.cover { background: #22d3ee20; color: #22d3ee; }
     .badge.deposit { background: #22c55e20; color: #22c55e; }
     .badge.withdraw { background: #f59e0b20; color: #f59e0b; }
     .badge.hold { background: #f59e0b20; color: #f59e0b; }
     .refresh-btn {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%);
       color: white;
       border: none;
       padding: 12px 24px;
@@ -2421,7 +2421,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       opacity: 0.9;
     }
     .analyze-btn {
-      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
       color: white;
       border: none;
       padding: 12px 24px;
@@ -2451,8 +2451,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       color: white;
       padding: 16px 18px;
       border-radius: 12px;
-      border: 1px solid #2a2f4a;
-      background: #1a1f3a;
+      border: 1px solid #1d3557;
+      background: #0f1b2d;
       transition: transform 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
     }
     .nav-card:hover {
@@ -2467,7 +2467,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       color: #fff;
     }
     .nav-card-copy {
-      color: #94a3b8;
+      color: #8fb3d9;
       font-size: 0.88rem;
       line-height: 1.45;
     }
@@ -2481,11 +2481,11 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       font-size: 0.85rem;
     }
     .detail-block {
-      background: #0f1425;
+      background: #0b1626;
       padding: 15px;
       border-radius: 5px;
       margin-bottom: 15px;
-      color: #d0d0d0;
+      color: #d7e3f4;
       line-height: 1.5;
     }
     .detail-block ul {
@@ -2497,14 +2497,14 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
     .compact-trade-card {
       background: #11182b;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       border-left-width: 4px;
       border-radius: 8px;
       padding: 14px 16px;
       margin: 14px 0;
     }
-    .compact-trade-card.buy { border-left-color: #10b981; }
-    .compact-trade-card.short { border-left-color: #ef4444; }
+    .compact-trade-card.buy { border-left-color: #22c55e; }
+    .compact-trade-card.short { border-left-color: #fb7185; }
     .compact-trade-header {
       display: flex;
       justify-content: space-between;
@@ -2546,8 +2546,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       word-break: break-word;
     }
     .phase4-section {
-      background: #0f1425;
-      border: 1px solid #2a2f4a;
+      background: #0b1626;
+      border: 1px solid #1d3557;
       border-radius: 8px;
       padding: 16px;
       margin: 16px 0;
@@ -2565,7 +2565,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
     .metric-card {
       background: #11182b;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       border-radius: 8px;
       padding: 12px;
     }
@@ -2586,7 +2586,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     .detail-section {
       margin-top: 14px;
       padding-top: 14px;
-      border-top: 1px solid #2a2f4a;
+      border-top: 1px solid #1d3557;
     }
     .detail-section-title {
       color: #fff;
@@ -2594,7 +2594,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       margin-bottom: 8px;
     }
     .detail-section-body {
-      color: #d0d0d0;
+      color: #d7e3f4;
       line-height: 1.6;
     }
     .detail-list {
@@ -2610,8 +2610,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       gap: 10px;
     }
     .detail-kv-row {
-      background: #0f1425;
-      border: 1px solid #2a2f4a;
+      background: #0b1626;
+      border: 1px solid #1d3557;
       border-radius: 10px;
       padding: 10px 12px;
     }
@@ -2640,15 +2640,15 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       padding: 6px 10px;
       border-radius: 999px;
       background: #11182b;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       color: #cbd5e1;
       text-decoration: none;
       font-size: 0.9rem;
       word-break: break-all;
     }
     .recommended-position-card {
-      background: linear-gradient(180deg, #0f1425 0%, #0c1220 100%);
-      border: 1px solid #2a2f4a;
+      background: linear-gradient(180deg, #0b1626 0%, #0c1220 100%);
+      border: 1px solid #1d3557;
       border-radius: 14px;
       padding: 18px;
       box-shadow: 0 8px 24px rgba(2, 6, 23, 0.28);
@@ -2658,8 +2658,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       gap: 14px;
     }
     .active-recommendation-card {
-      background: linear-gradient(180deg, #0f1425 0%, #0c1220 100%);
-      border: 1px solid #2a2f4a;
+      background: linear-gradient(180deg, #0b1626 0%, #0c1220 100%);
+      border: 1px solid #1d3557;
       border-radius: 14px;
       padding: 16px;
       box-shadow: 0 8px 24px rgba(2, 6, 23, 0.24);
@@ -2703,7 +2703,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
     .active-recommendation-meta-item {
       background: #11182b;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       border-radius: 10px;
       padding: 10px 12px;
     }
@@ -2784,7 +2784,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
     .recommended-position-size-card {
       background: #11182b;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       border-radius: 10px;
       padding: 12px;
     }
@@ -2802,7 +2802,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     }
     .recommended-position-decision-cell {
       background: #11182b;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       border-radius: 10px;
       padding: 12px;
     }
@@ -2918,7 +2918,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       }
     }
     .portfolio-hub-collapsible-section {
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       border-radius: 12px;
       background: rgba(15, 20, 37, 0.78);
       overflow: hidden;
@@ -2950,7 +2950,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
       transform: rotate(-90deg);
     }
     .news-link:hover {
-      border-color: #667eea;
+      border-color: #14b8a6;
       color: #fff;
     }
     .override-banner {
@@ -3014,7 +3014,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
     <div class="section" style="margin-top:20px;">
       <div class="section-title">🔎 Global Symbol Search</div>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
-        <input id="globalSymbolSearch" type="text" placeholder="Search AAPL, NVDA, TSLA..." style="flex:1; min-width:260px; padding:12px; border-radius:8px; border:1px solid #2a2f4a; background:#0f1425; color:#fff;" />
+        <input id="globalSymbolSearch" type="text" placeholder="Search AAPL, NVDA, TSLA..." style="flex:1; min-width:260px; padding:12px; border-radius:8px; border:1px solid #1d3557; background:#0b1626; color:#fff;" />
         <button class="refresh-btn" onclick="jumpToFeature('overview')">Open Overview</button>
         <button class="refresh-btn" onclick="jumpToFeature('adhoc')">Open Adhoc</button>
         <button class="refresh-btn" onclick="jumpToFeature('options')">Open Options</button>
@@ -3255,7 +3255,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
 
     <div class="section">
       <div class="section-title">⚙️ Bot Status</div>
-      <p style="color: #10b981; font-weight: bold;">✅ Running in Paper Trading Mode</p>
+      <p style="color: #22c55e; font-weight: bold;">✅ Running in Paper Trading Mode</p>
       <p style="margin-top: 10px;">
         <strong>Analysis Schedule (Mon-Fri):</strong><br>
         • 9:00 AM ET - Pre-market gap scan<br>
@@ -3388,8 +3388,8 @@ function generateLogsHTML(analyses, trades, alerts) {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0a0e27;
-      color: #e0e0e0;
+      background: #07111f;
+      color: #e6eef8;
       padding: 20px;
       line-height: 1.6;
     }
@@ -3397,7 +3397,7 @@ function generateLogsHTML(analyses, trades, alerts) {
     h1 {
       font-size: 2.5rem;
       margin-bottom: 10px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
@@ -3407,11 +3407,11 @@ function generateLogsHTML(analyses, trades, alerts) {
       font-size: 1.1rem;
     }
     .section {
-      background: #1a1f3a;
+      background: #0f1b2d;
       padding: 25px;
       border-radius: 12px;
       margin-bottom: 25px;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
     }
     .section-title {
       font-size: 1.5rem;
@@ -3419,15 +3419,15 @@ function generateLogsHTML(analyses, trades, alerts) {
       color: #fff;
     }
     .log-entry {
-      background: #0f1425;
+      background: #0b1626;
       padding: 15px;
       border-radius: 8px;
       margin-bottom: 10px;
-      border-left: 4px solid #667eea;
+      border-left: 4px solid #14b8a6;
     }
-    .log-entry.trade { border-left-color: #10b981; }
+    .log-entry.trade { border-left-color: #22c55e; }
     .log-entry.alert { border-left-color: #f59e0b; }
-    .log-entry.error { border-left-color: #ef4444; }
+    .log-entry.error { border-left-color: #fb7185; }
     .log-time {
       color: #888;
       font-size: 0.85rem;
@@ -3441,16 +3441,16 @@ function generateLogsHTML(analyses, trades, alerts) {
       font-weight: 600;
       margin-right: 10px;
     }
-    .log-type.analysis { background: #667eea20; color: #667eea; }
-    .log-type.trade { background: #10b98120; color: #10b981; }
+    .log-type.analysis { background: #14b8a620; color: #14b8a6; }
+    .log-type.trade { background: #22c55e20; color: #22c55e; }
     .log-type.alert { background: #f59e0b20; color: #f59e0b; }
     .log-content {
-      color: #d0d0d0;
+      color: #d7e3f4;
       margin-top: 10px;
       font-size: 0.9rem;
     }
     .back-btn {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%);
       color: white;
       border: none;
       padding: 12px 24px;
@@ -3562,8 +3562,8 @@ function generateOptionsAnalyzerHTML(runs = [], query = {}) {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0a0e27;
-      color: #e0e0e0;
+      background: #07111f;
+      color: #e6eef8;
       padding: 20px;
       line-height: 1.6;
     }
@@ -3575,7 +3575,7 @@ function generateOptionsAnalyzerHTML(runs = [], query = {}) {
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
-    .subtitle { color: #94a3b8; margin-bottom: 24px; }
+    .subtitle { color: #8fb3d9; margin-bottom: 24px; }
     .actions { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
     .btn-link {
       display: inline-block;
@@ -3665,7 +3665,7 @@ function generateOptionsAnalyzerHTML(runs = [], query = {}) {
       margin-bottom: 12px;
     }
     .result-title { font-size: 1.2rem; font-weight: 700; color: #f8fafc; }
-    .muted { color: #94a3b8; font-size: 0.92rem; }
+    .muted { color: #8fb3d9; font-size: 0.92rem; }
     .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
     .pill {
       display: inline-flex;
@@ -3689,7 +3689,7 @@ function generateOptionsAnalyzerHTML(runs = [], query = {}) {
       padding: 12px;
     }
     .metric-label {
-      color: #94a3b8;
+      color: #8fb3d9;
       font-size: 0.76rem;
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -3722,7 +3722,7 @@ function generateOptionsAnalyzerHTML(runs = [], query = {}) {
       padding: 10px 8px;
       border-bottom: 1px solid #22304f;
     }
-    th { color: #94a3b8; font-size: 0.78rem; text-transform: uppercase; }
+    th { color: #8fb3d9; font-size: 0.78rem; text-transform: uppercase; }
     code {
       background: #020617;
       border: 1px solid #1e293b;
@@ -4000,7 +4000,7 @@ router.get('/approvals', async (req, res) => {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #0f1425 0%, #1a1f3a 100%);
+      background: linear-gradient(135deg, #0b1626 0%, #0f1b2d 100%);
       color: #fff;
       padding: 20px;
       min-height: 100vh;
@@ -4015,16 +4015,16 @@ router.get('/approvals', async (req, res) => {
       margin-bottom: 30px;
     }
     .stat-card {
-      background: #1a1f3a;
+      background: #0f1b2d;
       padding: 20px;
       border-radius: 10px;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
     }
-    .stat-value { font-size: 2rem; font-weight: bold; color: #667eea; }
+    .stat-value { font-size: 2rem; font-weight: bold; color: #14b8a6; }
     .stat-label { color: #a0a0a0; font-size: 0.9rem; margin-top: 5px; }
     .trade-card {
-      background: #1a1f3a;
-      border: 2px solid #2a2f4a;
+      background: #0f1b2d;
+      border: 2px solid #1d3557;
       border-radius: 10px;
       padding: 20px;
       margin-bottom: 20px;
@@ -4038,7 +4038,7 @@ router.get('/approvals', async (req, res) => {
     .trade-symbol {
       font-size: 1.5rem;
       font-weight: bold;
-      color: #667eea;
+      color: #14b8a6;
     }
     .trade-action {
       padding: 5px 15px;
@@ -4057,8 +4057,8 @@ router.get('/approvals', async (req, res) => {
       font-weight: 700;
       letter-spacing: 0.03em;
     }
-    .action-buy { background: #10b98120; color: #10b981; }
-    .action-sell { background: #ef444420; color: #ef4444; }
+    .action-buy { background: #22c55e20; color: #22c55e; }
+    .action-sell { background: #fb718520; color: #fb7185; }
     .trade-details {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -4066,26 +4066,26 @@ router.get('/approvals', async (req, res) => {
       margin-bottom: 15px;
     }
     .detail-item {
-      background: #0f1425;
+      background: #0b1626;
       padding: 10px;
       border-radius: 5px;
     }
     .detail-label { color: #a0a0a0; font-size: 0.85rem; }
     .detail-value { color: #fff; font-size: 1.1rem; font-weight: 600; margin-top: 5px; }
     .reasoning {
-      background: #0f1425;
+      background: #0b1626;
       padding: 15px;
       border-radius: 5px;
       margin-bottom: 15px;
-      color: #d0d0d0;
+      color: #d7e3f4;
       line-height: 1.6;
     }
     .detail-block {
-      background: #0f1425;
+      background: #0b1626;
       padding: 15px;
       border-radius: 5px;
       margin-bottom: 15px;
-      color: #d0d0d0;
+      color: #d7e3f4;
       line-height: 1.5;
     }
     .detail-block ul {
@@ -4096,15 +4096,15 @@ router.get('/approvals', async (req, res) => {
       color: #fff;
     }
     .compact-trade-card {
-      background: #0f1425;
-      border: 1px solid #2a2f4a;
+      background: #0b1626;
+      border: 1px solid #1d3557;
       border-left-width: 4px;
       border-radius: 8px;
       padding: 14px 16px;
       margin: 14px 0;
     }
-    .compact-trade-card.buy { border-left-color: #10b981; }
-    .compact-trade-card.short { border-left-color: #ef4444; }
+    .compact-trade-card.buy { border-left-color: #22c55e; }
+    .compact-trade-card.short { border-left-color: #fb7185; }
     .compact-trade-header {
       display: flex;
       justify-content: space-between;
@@ -4145,8 +4145,8 @@ router.get('/approvals', async (req, res) => {
       font-weight: 600;
     }
     .phase4-section {
-      background: #0f1425;
-      border: 1px solid #2a2f4a;
+      background: #0b1626;
+      border: 1px solid #1d3557;
       border-radius: 8px;
       padding: 16px;
       margin: 16px 0;
@@ -4164,7 +4164,7 @@ router.get('/approvals', async (req, res) => {
     }
     .metric-card {
       background: #11182b;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       border-radius: 8px;
       padding: 12px;
     }
@@ -4185,7 +4185,7 @@ router.get('/approvals', async (req, res) => {
     .detail-section {
       margin-top: 14px;
       padding-top: 14px;
-      border-top: 1px solid #2a2f4a;
+      border-top: 1px solid #1d3557;
     }
     .detail-section-title {
       color: #fff;
@@ -4193,7 +4193,7 @@ router.get('/approvals', async (req, res) => {
       margin-bottom: 8px;
     }
     .detail-section-body {
-      color: #d0d0d0;
+      color: #d7e3f4;
       line-height: 1.6;
     }
     .detail-list {
@@ -4215,14 +4215,14 @@ router.get('/approvals', async (req, res) => {
       padding: 6px 10px;
       border-radius: 999px;
       background: #11182b;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       color: #cbd5e1;
       text-decoration: none;
       font-size: 0.9rem;
       word-break: break-all;
     }
     .news-link:hover {
-      border-color: #667eea;
+      border-color: #14b8a6;
       color: #fff;
     }
     .override-banner {
@@ -4253,7 +4253,7 @@ router.get('/approvals', async (req, res) => {
       margin: 18px 0;
       padding: 14px;
       background: #11182b;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
       border-radius: 10px;
     }
     .batch-toolbar .btn {
@@ -4270,17 +4270,17 @@ router.get('/approvals', async (req, res) => {
     }
     .btn:hover { opacity: 0.8; }
     .btn-approve {
-      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
       color: white;
       flex: 1;
     }
     .btn-reject {
-      background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+      background: linear-gradient(135deg, #fb7185 0%, #e11d48 100%);
       color: white;
       flex: 1;
     }
     .btn-back {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%);
       color: white;
       text-decoration: none;
       display: inline-block;
@@ -4857,8 +4857,8 @@ function generateCronStatusHTML(executions, days) {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0a0e27;
-      color: #e0e0e0;
+      background: #07111f;
+      color: #e6eef8;
       padding: 20px;
       line-height: 1.6;
     }
@@ -4866,7 +4866,7 @@ function generateCronStatusHTML(executions, days) {
     h1 {
       font-size: 2.5rem;
       margin-bottom: 10px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
@@ -4876,7 +4876,7 @@ function generateCronStatusHTML(executions, days) {
       font-size: 1.1rem;
     }
     .back-btn {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #14b8a6 0%, #2563eb 100%);
       color: white;
       border: none;
       padding: 12px 24px;
@@ -4890,11 +4890,11 @@ function generateCronStatusHTML(executions, days) {
     }
     .back-btn:hover { opacity: 0.9; }
     .section {
-      background: #1a1f3a;
+      background: #0f1b2d;
       padding: 25px;
       border-radius: 12px;
       margin-bottom: 25px;
-      border: 1px solid #2a2f4a;
+      border: 1px solid #1d3557;
     }
     .section-title {
       font-size: 1.5rem;
@@ -4906,7 +4906,7 @@ function generateCronStatusHTML(executions, days) {
       border-collapse: collapse;
     }
     th {
-      background: #0f1425;
+      background: #0b1626;
       padding: 12px;
       text-align: left;
       color: #888;
@@ -4916,10 +4916,10 @@ function generateCronStatusHTML(executions, days) {
     }
     td {
       padding: 12px;
-      border-bottom: 1px solid #2a2f4a;
+      border-bottom: 1px solid #1d3557;
     }
     tr:hover {
-      background: #0f1425;
+      background: #0b1626;
     }
     .status-badge {
       display: inline-block;
@@ -4928,8 +4928,8 @@ function generateCronStatusHTML(executions, days) {
       font-size: 0.85rem;
       font-weight: 600;
     }
-    .status-completed { background: #10b98120; color: #10b981; }
-    .status-failed { background: #ef444420; color: #ef4444; }
+    .status-completed { background: #22c55e20; color: #22c55e; }
+    .status-failed { background: #fb718520; color: #fb7185; }
     .status-running { background: #f59e0b20; color: #f59e0b; }
     .status-pending { background: #6b728020; color: #9ca3af; }
     .job-type-badge {
@@ -4940,14 +4940,14 @@ function generateCronStatusHTML(executions, days) {
       font-weight: 600;
     }
     .type-daily { background: #3b82f620; color: #3b82f6; }
-    .type-weekly { background: #8b5cf620; color: #8b5cf6; }
+    .type-weekly { background: #3b82f620; color: #3b82f6; }
     .error-message {
-      color: #ef4444;
+      color: #fb7185;
       font-size: 0.85rem;
       margin-top: 5px;
     }
     .btn-run-now {
-      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
       color: white;
       border: none;
       padding: 12px 24px;
@@ -5078,7 +5078,7 @@ function generateCronStatusHTML(executions, days) {
           if (existingMsg) existingMsg.remove();
           const msg = document.createElement('div');
           msg.className = 'run-msg';
-          msg.style = 'color: #10b981; font-size: 0.8rem; margin-top: 4px;';
+          msg.style = 'color: #22c55e; font-size: 0.8rem; margin-top: 4px;';
           msg.textContent = data.message;
           btn.parentElement.appendChild(msg);
 
@@ -5164,18 +5164,18 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: radial-gradient(circle at top, rgba(91, 81, 255, 0.14), transparent 32%), linear-gradient(180deg, #070b1b 0%, #0a0e27 55%, #060814 100%); color: #e0e0e0; padding: 20px; line-height: 1.5; min-height:100vh; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: radial-gradient(circle at top, rgba(91, 81, 255, 0.14), transparent 32%), linear-gradient(180deg, #070b1b 0%, #07111f 55%, #060814 100%); color: #e6eef8; padding: 20px; line-height: 1.5; min-height:100vh; }
     .container { max-width: 1180px; margin: 0 auto; }
     h1 { font-size: 2.3rem; margin-bottom: 10px; color: #fff; }
-    .subtitle { color: #94a3b8; margin-bottom: 24px; }
+    .subtitle { color: #8fb3d9; margin-bottom: 24px; }
     .back-btn { background: linear-gradient(135deg, rgba(102,126,234,0.85) 0%, rgba(118,75,162,0.85) 100%); color: white; border: 1px solid rgba(255,255,255,0.16); padding: 12px 24px; border-radius: 999px; cursor: pointer; font-size: 1rem; font-weight: 600; margin-bottom: 20px; text-decoration: none; display: inline-block; box-shadow: 0 10px 40px rgba(76, 29, 149, 0.28); backdrop-filter: blur(18px); }
     .layout { display: grid; grid-template-columns: 420px 1fr; gap: 24px; align-items: start; }
     .panel { background: rgba(18, 24, 48, 0.62); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 22px; padding: 22px; backdrop-filter: blur(22px); box-shadow: 0 18px 50px rgba(8, 15, 40, 0.42); }
     .panel h2 { margin-bottom: 16px; font-size: 1.25rem; }
-    input, textarea, select { width: 100%; background: rgba(15, 20, 37, 0.72); color: #e0e0e0; border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 14px; padding: 12px; font-size: 0.95rem; backdrop-filter: blur(16px); }
+    input, textarea, select { width: 100%; background: rgba(15, 20, 37, 0.72); color: #e6eef8; border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 14px; padding: 12px; font-size: 0.95rem; backdrop-filter: blur(16px); }
     textarea { min-height: 140px; resize: vertical; }
     label { display: block; margin: 14px 0 8px; color: #cbd5e1; font-size: 0.92rem; }
-    .helper { color: #94a3b8; font-size: 0.85rem; margin-top: 8px; }
+    .helper { color: #8fb3d9; font-size: 0.85rem; margin-top: 8px; }
     .btn { margin-top: 16px; background: linear-gradient(135deg, rgba(236,72,153,0.92) 0%, rgba(190,24,93,0.92) 100%); color: #fff; border: 1px solid rgba(255,255,255,0.12); border-radius: 14px; padding: 12px 18px; font-weight: 700; cursor: pointer; box-shadow: 0 14px 34px rgba(190,24,93,0.25); }
     .btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .suggestions { margin-top: 10px; border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 16px; overflow: hidden; background: rgba(8, 15, 40, 0.78); backdrop-filter: blur(18px); }
@@ -5184,19 +5184,19 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
     .suggestion:hover { background: #151c33; }
     .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
     .detail-card { background: rgba(8, 15, 40, 0.62); border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 16px; padding: 12px; }
-    .detail-label { color: #94a3b8; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .detail-label { color: #8fb3d9; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
     .detail-value { color: #fff; font-weight: 700; }
     .summary-box, .notes-box { background: rgba(8, 15, 40, 0.62); border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 16px; padding: 14px; white-space: pre-wrap; color: #dbe4f0; }
     .markdown-box { background: rgba(8, 15, 40, 0.62); border: 1px solid rgba(148, 163, 184, 0.12); border-radius: 16px; padding: 14px; color: #dbe4f0; line-height: 1.6; }
     .predictor-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:16px; }
     .predictor-card { background:rgba(8, 15, 40, 0.62); border:1px solid rgba(148, 163, 184, 0.12); border-radius:16px; padding:14px; }
     .predictor-card .value { font-size:1.35rem; font-weight:800; margin-top:6px; color:#fff; }
-    .direction-up { color:#10b981 !important; }
-    .direction-down { color:#ef4444 !important; }
+    .direction-up { color:#22c55e !important; }
+    .direction-down { color:#fb7185 !important; }
     .direction-neutral { color:#f59e0b !important; }
     table { width: 100%; border-collapse: collapse; }
     th, td { padding: 14px 12px; border-bottom: 1px solid rgba(148, 163, 184, 0.1); vertical-align: top; }
-    th { color: #94a3b8; text-transform: uppercase; font-size: 0.78rem; text-align: left; letter-spacing: 0.06em; }
+    th { color: #8fb3d9; text-transform: uppercase; font-size: 0.78rem; text-align: left; letter-spacing: 0.06em; }
     .status-pill { display: inline-block; padding: 6px 12px; border-radius: 999px; background: rgba(236,72,153,0.15); color: #f9a8d4; font-size: 0.8rem; font-weight: 700; border: 1px solid rgba(249, 168, 212, 0.18); }
     .message { margin-top: 12px; font-size: 0.9rem; }
     .message.error { color: #fca5a5; }
@@ -5208,9 +5208,9 @@ function generateEarningsRemindersHTML(reminders, pendingGrades = []) {
     .sortable span { opacity:0.65; margin-left:6px; font-size:0.72rem; }
     .metric-row { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:14px; margin-bottom:22px; }
     .metric-card { padding:16px; border-radius:18px; background: rgba(18, 24, 48, 0.58); border:1px solid rgba(148,163,184,0.14); box-shadow: inset 0 1px 0 rgba(255,255,255,0.05); }
-    .metric-card .label { color:#94a3b8; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; }
+    .metric-card .label { color:#8fb3d9; font-size:0.8rem; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; }
     .metric-card .value { color:#fff; font-size:1.45rem; font-weight:800; }
-    .secondary-line { color:#94a3b8; font-size:0.78rem; margin-top:6px; }
+    .secondary-line { color:#8fb3d9; font-size:0.78rem; margin-top:6px; }
     @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
   </style>
 </head>
