@@ -1,4 +1,5 @@
 import tradier from './tradier.js';
+import fmp from './fmp.js';
 
 /**
  * Sector Rotation Analyzer
@@ -23,6 +24,18 @@ const SECTOR_ETFS = {
 };
 
 class SectorRotation {
+  async getHistory(symbol, startDate, endDate) {
+    try {
+      const history = await fmp.getHistoricalPriceEodFull(symbol, startDate, endDate);
+      if (Array.isArray(history) && history.length) {
+        return history;
+      }
+    } catch (error) {
+      console.warn(`FMP sector history unavailable for ${symbol}:`, error.message);
+    }
+
+    return tradier.getHistory(symbol, 'daily', startDate, endDate);
+  }
 
   /**
    * Calculate 4-week and 12-week performance for each sector ETF
@@ -39,8 +52,8 @@ class SectorRotation {
       const fmt = d => d.toISOString().split('T')[0];
 
       // Fetch SPY performance as benchmark
-      const spyHistory4w = await tradier.getHistory('SPY', 'daily', fmt(date4w), fmt(today));
-      const spyHistory12w = await tradier.getHistory('SPY', 'daily', fmt(date12w), fmt(today));
+      const spyHistory4w = await this.getHistory('SPY', fmt(date4w), fmt(today));
+      const spyHistory12w = await this.getHistory('SPY', fmt(date12w), fmt(today));
       const spyReturn4w = this.calculateReturn(spyHistory4w);
       const spyReturn12w = this.calculateReturn(spyHistory12w);
 
@@ -49,8 +62,8 @@ class SectorRotation {
         if (sector === 'Benchmark') continue;
 
         try {
-          const history4w = await tradier.getHistory(etf, 'daily', fmt(date4w), fmt(today));
-          const history12w = await tradier.getHistory(etf, 'daily', fmt(date12w), fmt(today));
+          const history4w = await this.getHistory(etf, fmt(date4w), fmt(today));
+          const history12w = await this.getHistory(etf, fmt(date12w), fmt(today));
 
           const return4w = this.calculateReturn(history4w);
           const return12w = this.calculateReturn(history12w);

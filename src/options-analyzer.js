@@ -158,8 +158,9 @@ class OptionsAnalyzer {
     return currentPrice * ivDecimal * Math.sqrt(daysToExpiration / 365);
   }
 
-  getStockContextSummary(profile, watchlistEntry, approval, positions) {
-    const hasLongPosition = positions.some(position => position.symbol === approval?.symbol && position.position_type !== 'short');
+  getStockContextSummary(profile, watchlistEntry, latestTradeIntent, positions, symbol) {
+    const normalizedSymbol = String(symbol || '').toUpperCase();
+    const hasLongPosition = positions.some(position => String(position.symbol || '').toUpperCase() === normalizedSymbol && position.position_type !== 'short');
     return {
       profileSummary: profile ? {
         businessModel: profile.business_model?.slice(0, 400) || '',
@@ -173,20 +174,21 @@ class OptionsAnalyzer {
         score: watchlistEntry.score || null,
         intent: watchlistEntry.intent || null
       } : null,
-      latestApproval: approval ? {
-        action: approval.action,
-        strategyType: approval.strategy_type,
-        confidence: approval.confidence,
-        thesisState: approval.thesis_state
+      latestTradeIntent: latestTradeIntent ? {
+        action: latestTradeIntent.action,
+        strategyType: latestTradeIntent.strategy_type,
+        confidence: latestTradeIntent.confidence,
+        thesisState: latestTradeIntent.thesis_state,
+        status: latestTradeIntent.status
       } : null,
       hasLongPosition
     };
   }
 
-  async buildThesis(symbol, intentHorizon, profile, fundamentals, quote, news, watchlistEntry, approval, positions) {
+  async buildThesis(symbol, intentHorizon, profile, fundamentals, quote, news, watchlistEntry, latestTradeIntent, positions) {
     const horizon = HORIZON_CONFIG[intentHorizon];
-    const contextSummary = this.getStockContextSummary(profile, watchlistEntry, approval, positions);
-    const prompt = `You are evaluating ${symbol} for a ${horizon.label.toLowerCase()} options/equity decision.\n\nHorizon windows:\n- Near term: 2-6 weeks\n- Mid term: 2-4 months\n- Long term: 6-18 months\n\nUser-selected horizon: ${horizon.label} (${horizon.thesisWindow}).\n\nReturn ONLY valid JSON with this exact shape:\n{\n  "direction_call": "bullish|bearish|neutral|volatile",\n  "conviction": "low|medium|high",\n  "equity_preference": "buy_shares|short_shares|use_options|no_trade",\n  "thesis_summary": "string",\n  "near_term_catalysts": ["..."],\n  "mid_term_catalysts": ["..."],\n  "long_term_catalysts": ["..."],\n  "risks": ["..."],\n  "guardrails": ["..."],\n  "why_options_or_not": "string"\n}\n\nUse stock profile, fundamentals, recent context, and trading practicality. If options are a bad fit because of horizon, expected move, or likely premium inefficiency, say so in equity_preference and why_options_or_not.\n\nStock profile summary:\n${JSON.stringify(contextSummary.profileSummary || {}, null, 2)}\n\nWatchlist / prior approval context:\n${JSON.stringify({ watchlist: contextSummary.watchlist, latestApproval: contextSummary.latestApproval, positions: positions.filter(p => p.symbol === symbol) }, null, 2)}\n\nFundamentals:\n${JSON.stringify(fundamentals || {}, null, 2)}\n\nQuote:\n${JSON.stringify(quote || {}, null, 2)}\n\nRecent context:\n${JSON.stringify(news.slice(0, 5).map(item => ({ title: item.title, content: item.content?.slice(0, 280) || '' })), null, 2)}`;
+    const contextSummary = this.getStockContextSummary(profile, watchlistEntry, latestTradeIntent, positions, symbol);
+    const prompt = `You are evaluating ${symbol} for a ${horizon.label.toLowerCase()} options/equity decision.\n\nHorizon windows:\n- Near term: 2-6 weeks\n- Mid term: 2-4 months\n- Long term: 6-18 months\n\nUser-selected horizon: ${horizon.label} (${horizon.thesisWindow}).\n\nReturn ONLY valid JSON with this exact shape:\n{\n  "direction_call": "bullish|bearish|neutral|volatile",\n  "conviction": "low|medium|high",\n  "equity_preference": "buy_shares|short_shares|use_options|no_trade",\n  "thesis_summary": "string",\n  "near_term_catalysts": ["..."],\n  "mid_term_catalysts": ["..."],\n  "long_term_catalysts": ["..."],\n  "risks": ["..."],\n  "guardrails": ["..."],\n  "why_options_or_not": "string"\n}\n\nUse stock profile, fundamentals, recent context, and trading practicality. If options are a bad fit because of horizon, expected move, or likely premium inefficiency, say so in equity_preference and why_options_or_not.\n\nStock profile summary:\n${JSON.stringify(contextSummary.profileSummary || {}, null, 2)}\n\nWatchlist / latest trade-intent context:\n${JSON.stringify({ watchlist: contextSummary.watchlist, latestTradeIntent: contextSummary.latestTradeIntent, positions: positions.filter(p => String(p.symbol || '').toUpperCase() === symbol) }, null, 2)}\n\nFundamentals:\n${JSON.stringify(fundamentals || {}, null, 2)}\n\nQuote:\n${JSON.stringify(quote || {}, null, 2)}\n\nRecent context:\n${JSON.stringify(news.slice(0, 5).map(item => ({ title: item.title, content: item.content?.slice(0, 280) || '' })), null, 2)}`;
 
     const response = await claude.sendMessage(
       [{ role: 'user', content: prompt }],
@@ -452,14 +454,18 @@ class OptionsAnalyzer {
     if (!HORIZON_CONFIG[intentHorizon]) throw new Error('Invalid intent horizon');
     const normalizedEventMode = String(eventMode || '').trim().toLowerCase();
 
-    const [quote, fundamentals, profile, watchlistEntry, approval, positions, news, expirations] = await Promise.all([
+    const [quote, fundamentals, profile, watchlistEntry, latestTradeIntent, positions, news, expirations] = await Promise.all([
       quoteService.getQuote(normalizedSymbol),
       fmp.getFundamentals(normalizedSymbol),
       db.getLatestStockProfile(normalizedSymbol),
       db.getLatestSaturdayWatchlistEntry(normalizedSymbol),
-      db.getLatestPendingApprovalForSymbol(normalizedSymbol),
+      db.getLatestTradeIntentForSymbol(normalizedSymbol),
       db.getPositions(),
-      newsCacheService.getStructuredStockContext(normalizedSymbol, { maxResults: 5, timeRange: 'month' }).catch(() => []),
+      newsCacheService.getStructuredStockContext(normalizedSymbol, {
+        maxResults: 5,
+        timeRange: 'week',
+        activity: normalizedEventMode === 'earnings' ? 'profile_context' : 'stock_context'
+      }).catch(() => []),
       tradier.getOptionsExpirations(normalizedSymbol)
     ]);
 
@@ -475,7 +481,7 @@ class OptionsAnalyzer {
     });
     let rawThesis = opusCacheService.get(thesisCacheKey);
     if (!rawThesis) {
-      rawThesis = await this.buildThesis(normalizedSymbol, intentHorizon, profile, fundamentals, quote, news, watchlistEntry, approval, positions);
+      rawThesis = await this.buildThesis(normalizedSymbol, intentHorizon, profile, fundamentals, quote, news, watchlistEntry, latestTradeIntent, positions);
       opusCacheService.set(thesisCacheKey, rawThesis);
     }
     const thesis = this.applyThesisRiskOverrides(rawThesis);
@@ -617,8 +623,8 @@ class OptionsAnalyzer {
         catalysts: profile.catalysts?.slice(0, 350) || ''
       } : null,
       sourceContext: {
-        latestApprovalIntent: approval?.intent || null,
-        latestApprovalStrategyType: approval?.strategy_type || null,
+        latestTradeIntent: latestTradeIntent?.intent || null,
+        latestTradeStrategyType: latestTradeIntent?.strategy_type || null,
         watchlistPathway: watchlistEntry?.primary_pathway || watchlistEntry?.pathway || null,
         nextEarningsDate: nextEarnings?.earnings_date || null,
         nextEarningsTiming: nextEarnings?.earnings_time || null,

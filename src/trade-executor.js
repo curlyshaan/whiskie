@@ -14,14 +14,19 @@ import { resolveMarketPrice } from './utils.js';
 
 /**
  * Trade Execution Service
- * Processes approved trades from the approval queue
- * Runs every 5 minutes to check for approved trades
+ * Processes autonomous trades staged in the execution queue
  */
 
 class TradeExecutor {
   isWorkingOrderError(error) {
     const message = String(error?.message || '').toLowerCase();
     return message.includes('fill timeout');
+  }
+
+  shouldReturnToApproved(error, approval) {
+    if (!approval) return false;
+    if (approval.status === 'approved') return true;
+    return Boolean(approval.approved_at);
   }
 
   isExecutionRaceError(error) {
@@ -33,11 +38,11 @@ class TradeExecutor {
   }
 
   /**
-   * Process all approved trades
+   * Process all approved autonomous trade intents
    */
   async processApprovedTrades() {
     try {
-      // Get all approved trades
+      // Get all approved queue items
       const result = await db.query(
         `SELECT * FROM trade_approvals
          WHERE status = 'approved' AND executed_at IS NULL
@@ -50,14 +55,14 @@ class TradeExecutor {
         return;
       }
 
-      console.log(`\n💼 Processing ${approvedTrades.length} approved trades...`);
+      console.log(`\n💼 Processing ${approvedTrades.length} approved trade intents...`);
 
       for (const trade of approvedTrades) {
         try {
           await this.executeApprovalById(trade.id);
         } catch (error) {
           if (this.isExecutionRaceError(error)) {
-            console.warn(`⚠️ Skipping duplicate execution attempt for approval ${trade.id}: ${error.message}`);
+            console.warn(`⚠️ Skipping duplicate execution attempt for trade intent ${trade.id}: ${error.message}`);
             continue;
           }
           console.error(`❌ Failed to execute trade ${trade.id}:`, error.message);
@@ -65,10 +70,10 @@ class TradeExecutor {
         }
       }
 
-      console.log(`✅ Approved trades processed`);
+      console.log(`✅ Approved trade intents processed`);
 
     } catch (error) {
-      console.error('❌ Error processing approved trades:', error);
+      console.error('❌ Error processing approved trade intents:', error);
     }
   }
 
@@ -81,19 +86,19 @@ class TradeExecutor {
 
     const approval = result.rows?.[0];
     if (!approval) {
-      throw new Error(`Approval ${approvalId} not found`);
+      throw new Error(`Trade intent ${approvalId} not found`);
     }
 
     if (approval.status === 'executing') {
-      throw new Error(`Approval ${approvalId} is already processing`);
+      throw new Error(`Trade intent ${approvalId} is already processing`);
     }
 
     if (approval.status === 'executed') {
-      throw new Error(`Approval ${approvalId} is already executed`);
+      throw new Error(`Trade intent ${approvalId} is already executed`);
     }
 
     if (!['approved', 'pending'].includes(approval.status)) {
-      throw new Error(`Approval ${approvalId} is already ${approval.status}`);
+      throw new Error(`Trade intent ${approvalId} is already ${approval.status}`);
     }
 
     if (approval.status === 'pending') {
@@ -111,7 +116,7 @@ class TradeExecutor {
       );
       const refreshedApproval = refreshed.rows?.[0];
       if (!refreshedApproval || refreshedApproval.status !== 'approved') {
-        throw new Error(`Approval ${approvalId} could not be moved to approved state`);
+        throw new Error(`Trade intent ${approvalId} could not be moved to approved state`);
       }
 
       Object.assign(approval, refreshedApproval);
@@ -134,7 +139,7 @@ class TradeExecutor {
         [approvalId]
       );
       const currentStatus = current.rows?.[0]?.status || 'unknown';
-      throw new Error(`Approval ${approvalId} could not be locked for execution (status: ${currentStatus})`);
+      throw new Error(`Trade intent ${approvalId} could not be locked for execution (status: ${currentStatus})`);
     }
 
     try {
@@ -147,14 +152,16 @@ class TradeExecutor {
            WHERE id = $1 AND status = 'executing' AND executed_at IS NULL`,
           [approvalId]
         );
-        throw new Error(`Approval ${approvalId} has a working broker order pending fill`);
+        throw new Error(`Trade intent ${approvalId} has a working broker order pending fill`);
       }
 
+      const returnToApproved = this.shouldReturnToApproved(error, lockedApproval);
       await db.query(
         `UPDATE trade_approvals
-         SET status = 'pending', approved_at = NULL
+         SET status = $2,
+             approved_at = CASE WHEN $2 = 'approved' THEN COALESCE(approved_at, NOW()) ELSE NULL END
          WHERE id = $1 AND status = 'executing' AND executed_at IS NULL`,
-        [approvalId]
+        [approvalId, returnToApproved ? 'approved' : 'pending']
       );
       throw error;
     }
@@ -185,10 +192,10 @@ class TradeExecutor {
       const marketOpen = await tradier.isMarketOpen().catch(() => false);
       const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: 0 });
 
-      // Check if price is still within acceptable range (±5% from approval price)
+      // Check if price is still within acceptable range (±5% from queued entry price)
       const priceChange = Math.abs((currentPrice - approval.entry_price) / approval.entry_price);
       if (priceChange > 0.05) {
-        console.log(`   ⚠️ Price moved ${(priceChange * 100).toFixed(1)}% since approval - skipping`);
+        console.log(`   ⚠️ Price moved ${(priceChange * 100).toFixed(1)}% since queueing - skipping`);
         await db.query(
           `UPDATE trade_approvals
            SET status = 'expired', rejection_reason = 'Price moved >5% since approval'

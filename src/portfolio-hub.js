@@ -24,7 +24,8 @@ export const DEFAULT_PORTFOLIO_HUB_ACCOUNTS = [
 
 const PORTFOLIO_HUB_LOCKS = {
   opusReview: 'portfolio_hub_opus_review',
-  recommendedPositions: 'portfolio_hub_recommended_positions'
+  recommendedPositions: 'portfolio_hub_recommended_positions',
+  cycle: 'portfolio_hub_cycle'
 };
 
 const PORTFOLIO_HUB_RECOMMENDATION_MIN_SCORE = 60;
@@ -467,7 +468,14 @@ function scoreRecommendedPositionItem(item = {}, portfolioHub = {}, stockInfoMap
     diversification: relationship === 'complementary' ? 12 : relationship === 'replacement_candidate' ? 7 : 3,
     sectorPenalty: sectorWeight >= PORTFOLIO_HUB_POLICY.long.sectorConcentrationThresholdPct ? -12 : Math.max(0, 8 - Math.round(sectorWeight / 5)),
     cashSupport: cashPct >= 10 ? 8 : cashPct >= 5 ? 4 : 0,
-    pathwayBonus: item.pathway ? 5 : 0
+    pathwayBonus: item.pathway ? 5 : 0,
+    postEarningsSignal: item.postEarningsSignal?.recommendation === 'BUY_DIP'
+      ? 14
+      : item.postEarningsSignal?.recommendation === 'ADD_TO_WATCHLIST'
+        ? 9
+        : item.postEarningsSignal?.recommendation === 'PASS'
+          ? -8
+          : 0
   };
 
   const score = Object.values(breakdown).reduce((sum, value) => sum + Number(value || 0), 0);
@@ -562,7 +570,12 @@ function scoreReviewItem(item = {}, holding = {}) {
     actionUrgency: ['trim', 'reduce', 'cover'].includes(action) ? 12 : action === 'add' ? 8 : 2,
     concentration: Math.min(12, Math.round(weightPct)),
     pnlMagnitude: Math.min(10, Math.round(pnlPct / 2)),
-    ruleClarity: item.shareCountText ? 6 : 2
+    ruleClarity: item.shareCountText ? 6 : 2,
+    postEarningsSignal: holding.postEarningsSignal?.recommendation === 'BUY_DIP'
+      ? 12
+      : holding.postEarningsSignal?.recommendation === 'PASS'
+        ? 6
+        : 0
   };
   const score = Object.values(breakdown).reduce((sum, value) => sum + Number(value || 0), 0);
   return { score, breakdown };
@@ -747,6 +760,70 @@ function buildRecommendedPositionCandidates({ holdings = [], saturdayRows = [], 
     .slice(0, 20);
 }
 
+function parsePostEarningsReasoning(text = '') {
+  const normalized = String(text || '').trim();
+  if (!normalized) return '';
+  const whyMatch = normalized.match(/WHY:\s*([\s\S]*?)(?:TRIGGER:|$)/i);
+  return (whyMatch?.[1] || normalized).trim();
+}
+
+function parsePostEarningsTrigger(text = '') {
+  const normalized = String(text || '').trim();
+  const triggerMatch = normalized.match(/TRIGGER:\s*([\s\S]*?)$/i);
+  return (triggerMatch?.[1] || '').trim();
+}
+
+function getTradingDayDifference(fromDate, toDate = new Date()) {
+  const start = new Date(fromDate);
+  const end = new Date(toDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return Number.POSITIVE_INFINITY;
+  if (start > end) return 0;
+
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  end.setHours(0, 0, 0, 0);
+
+  let tradingDays = 0;
+  while (cursor < end) {
+    cursor.setDate(cursor.getDate() + 1);
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) {
+      tradingDays += 1;
+    }
+  }
+
+  return tradingDays;
+}
+
+function normalizePostEarningsSignal(row = null) {
+  if (!row) return null;
+  const ageTradingDays = getTradingDayDifference(row.created_at, new Date());
+  if (ageTradingDays > 2) return null;
+
+  const recommendation = String(row.recommendation || '').toUpperCase();
+  const signalSnapshot = row.signal_snapshot || null;
+  return {
+    symbol: String(row.symbol || '').toUpperCase(),
+    recommendation,
+    reasoning: String(row.reasoning || '').trim(),
+    why: parsePostEarningsReasoning(row.reasoning || ''),
+    trigger: parsePostEarningsTrigger(row.reasoning || ''),
+    reactionSnapshot: signalSnapshot,
+    createdAt: row.created_at || null,
+    ageTradingDays,
+    isFresh: ageTradingDays <= 2,
+    holdingBias: recommendation === 'BUY_DIP'
+      ? 'add_on_post_earnings_weakness'
+      : recommendation === 'PASS'
+        ? 'avoid_new_exposure'
+        : recommendation === 'HOLD'
+          ? 'stay_patient'
+          : recommendation === 'ADD_TO_WATCHLIST'
+            ? 'watch_for_follow_through'
+            : null
+  };
+}
+
 function inferRelatedHoldingForRecommendation(item, holdings = [], stockInfoMap = new Map()) {
   const symbol = String(item.symbol || '').toUpperCase();
   const candidateInfo = stockInfoMap.get(symbol) || null;
@@ -862,10 +939,10 @@ function buildRecommendedPositionsFreshness(run) {
 }
 
 async function buildPortfolioHubMarketContext(portfolioHub) {
-  const [regime, spyRegime, macroNews] = await Promise.all([
+  const [regime, spyRegime, macroHealth] = await Promise.all([
     vixRegime.getRegime().catch(() => null),
     riskManager.getMarketRegime().catch(() => 'unknown'),
-    newsSearch.searchStructuredMacroContext({ maxResults: 5, timeRange: 'week' }).catch(() => [])
+    newsSearch.getStructuredMacroContextWithHealth({ maxResults: 5, timeRange: 'week' })
   ]);
 
   const allocationGuide = riskManager.getTargetAllocation(spyRegime || 'unknown');
@@ -889,7 +966,7 @@ async function buildPortfolioHubMarketContext(portfolioHub) {
       shortExposurePct: portfolioHub.summary.shortExposurePct,
       netExposurePct: portfolioHub.summary.netExposurePct
     },
-    macroNews: macroNews.map(item => ({
+    macroNews: (macroHealth.results || []).map(item => ({
       title: item.title,
       url: item.url,
       content: item.content,
@@ -899,7 +976,14 @@ async function buildPortfolioHubMarketContext(portfolioHub) {
 
   return {
     summary,
-    formattedMacroNews: newsSearch.formatResults(macroNews)
+    searchHealth: {
+      providerStatus: macroHealth.providerStatus,
+      degraded: macroHealth.degraded,
+      warning: macroHealth.warning || null
+    },
+    formattedMacroNews: macroHealth.degraded
+      ? `SERPER STATUS: ${macroHealth.providerStatus}${macroHealth.warning ? ` — ${macroHealth.warning}` : ''}\n` + newsSearch.formatResults(macroHealth.results || [])
+      : newsSearch.formatResults(macroHealth.results || [])
   };
 }
 
@@ -926,22 +1010,28 @@ async function buildPortfolioHubStockNewsContext(holdings = [], sectorTrimCandid
 
   const stockNewsRows = await Promise.all(
     ranked.map(async row => {
-      const results = await newsCacheService.getStructuredStockContext(row.symbol, {
+      const health = await newsSearch.getStructuredStockContextWithHealth(row.symbol, {
         maxResults: 4,
-        timeRange: 'month',
+        timeRange: 'week',
         context: {
+          workflow: 'portfolio_hub',
           holdingPosture: row.whiskieHoldingPosture,
           pathway: row.whiskiePathway,
           actionLabel: row.whiskieActionLabel
         }
-      }).catch(() => []);
+      });
+      const results = health.results || [];
 
       return {
         symbol: row.symbol,
         positionType: row.positionType,
         actionLabel: row.whiskieActionLabel,
         weightPct: row.weightPct,
-        formattedNews: newsSearch.formatResults(results),
+        postEarningsSignal: row.postEarningsSignal,
+        searchHealth: { providerStatus: health.providerStatus, degraded: health.degraded, warning: health.warning || null },
+        formattedNews: health.degraded
+          ? `SERPER STATUS: ${health.providerStatus}${health.warning ? ` — ${health.warning}` : ''}\n` + newsSearch.formatResults(results)
+          : newsSearch.formatResults(results),
         items: results.map(item => ({
           title: item.title,
           url: item.url,
@@ -1029,6 +1119,11 @@ export async function buildPortfolioHubView(options = {}) {
     db.getLatestPortfolioHubRecommendedPositionRun().catch(() => null),
     db.getLatestPortfolioHubReviewRun().catch(() => null)
   ]);
+  const latestCycleRun = await db.getLatestPortfolioHubCycleRun().catch(() => null);
+  const holdingPlans = await db.getPortfolioHubHoldingPlans().catch(() => []);
+  const holdingPlanMap = new Map(
+    (holdingPlans || []).map(plan => [`${String(plan.symbol || '').toUpperCase()}:${String(plan.position_type || 'long').toLowerCase()}`, plan])
+  );
 
   if (!transactions.length && !accounts.length) {
     return {
@@ -1095,6 +1190,12 @@ export async function buildPortfolioHubView(options = {}) {
 
   const symbols = [...new Set([...grouped.values()].map(row => row.symbol))];
   const { earningsMap, stockInfoMap, quoteMap, whiskieContextMap } = await buildPortfolioHubSymbolContext(symbols);
+  const postEarningsRows = await db.getLatestPostEarningsAnalyses(symbols, 3).catch(() => []);
+  const postEarningsMap = new Map(
+    (postEarningsRows || [])
+      .map(row => [String(row.symbol || '').toUpperCase(), normalizePostEarningsSignal(row)])
+      .filter(([, value]) => Boolean(value))
+  );
   const latestAdviceRows = await db.getLatestPortfolioHubAdviceHistory(symbols).catch(() => []);
   const latestAdviceMap = new Map(
     (latestAdviceRows || []).map(row => [buildAdviceKey(row.symbol, row.position_type), row])
@@ -1193,6 +1294,7 @@ export async function buildPortfolioHubView(options = {}) {
       unrealizedPnLPct,
       sector,
       nextEarningsDate: earningsMap.get(symbol) || null,
+      postEarningsSignal: postEarningsMap.get(symbol) || null,
       whiskiePathway: whiskieContext?.pathway || null,
       whiskieNotes: whiskieContext?.thesisSummary || null,
       whiskieCatalysts: whiskieContext?.catalystSummary || null,
@@ -1200,8 +1302,13 @@ export async function buildPortfolioHubView(options = {}) {
       whiskieLastAction: whiskieContext?.lastAction || null,
       whiskieHoldingPosture: whiskieContext?.holdingPosture || null,
       sectorSource: stockInfo?.sectorSource || (stockInfo?.sector ? 'stock_universe' : quote?.sector ? 'quote' : 'unknown'),
-      stopLoss: persistedOpusReview?.stopLoss ?? directionalLevels.stopLoss,
-      takeProfit: persistedOpusReview?.takeProfit ?? directionalLevels.takeProfit,
+      userStopLoss: holdingPlanMap.get(`${symbol}:${row.positionType}`)?.user_stop_loss ?? null,
+      userTakeProfit: holdingPlanMap.get(`${symbol}:${row.positionType}`)?.user_take_profit ?? null,
+      holdingPlanNotes: holdingPlanMap.get(`${symbol}:${row.positionType}`)?.notes ?? null,
+      advisoryStopLoss: persistedOpusReview?.stopLoss ?? directionalLevels.stopLoss,
+      advisoryTakeProfit: persistedOpusReview?.takeProfit ?? directionalLevels.takeProfit,
+      stopLoss: holdingPlanMap.get(`${symbol}:${row.positionType}`)?.user_stop_loss ?? null,
+      takeProfit: holdingPlanMap.get(`${symbol}:${row.positionType}`)?.user_take_profit ?? null,
       whiskieView: '',
       whiskieActionLabel: 'Hold',
       opusReview: persistedOpusReview,
@@ -1244,8 +1351,10 @@ export async function buildPortfolioHubView(options = {}) {
     row.whiskieShareCountText = recommendation.shareCountText || null;
     row.whiskiePlanProgressText = recommendation.planProgressText || null;
     row.sectorWeightPct = sectorWeightPct;
-    row.stopLoss = recommendation.stopLoss ?? row.stopLoss;
-    row.takeProfit = recommendation.takeProfit ?? row.takeProfit;
+    row.advisoryStopLoss = recommendation.stopLoss ?? row.advisoryStopLoss;
+    row.advisoryTakeProfit = recommendation.takeProfit ?? row.advisoryTakeProfit;
+    row.stopLoss = row.userStopLoss ?? row.stopLoss;
+    row.takeProfit = row.userTakeProfit ?? row.takeProfit;
     row.whiskieSource = recommendation.source || (row.opusReview ? 'opus' : 'policy');
     row.whiskieConfidence = recommendation.confidence || row.opusReview?.confidence || null;
     row.taxAwareNote = buildTaxAwareNote(row);
@@ -1343,6 +1452,10 @@ export async function buildPortfolioHubView(options = {}) {
   if (summary.cashPct > 20) insights.push(`Cash is ${summary.cashPct.toFixed(1)}% of the combined portfolio, which provides meaningful dry powder.`);
   const upcomingEarnings = holdings.filter(row => row.nextEarningsDate).slice(0, 5);
   if (upcomingEarnings.length) insights.push(`Upcoming earnings to monitor: ${upcomingEarnings.map(row => `${row.symbol} (${row.nextEarningsDate})`).join(', ')}.`);
+  const freshPostEarnings = holdings.filter(row => row.postEarningsSignal?.isFresh).slice(0, 5);
+  if (freshPostEarnings.length) {
+    insights.push(`Fresh post-earnings signals: ${freshPostEarnings.map(row => `${row.symbol} ${row.postEarningsSignal.recommendation}`).join(', ')}.`);
+  }
   if (sectorAllocation[0]) insights.push(`Top sector exposure is ${sectorAllocation[0].sector} at ${sectorAllocation[0].weightPct.toFixed(1)}% of portfolio value.`);
   if (etfRotationContext.leading?.length) {
     insights.push(`Leading ETF rotation groups: ${etfRotationContext.leading.slice(0, 3).map(item => `${item.sector} (${item.etf})`).join(', ')}.`);
@@ -1449,6 +1562,7 @@ export async function buildPortfolioHubView(options = {}) {
     etfRotationContext,
     performanceRange,
     performanceMetric,
+    latestCycleRun,
     latestFullReviewAt,
     latestReviewRun,
     recommendationChanges,
@@ -1461,7 +1575,8 @@ export async function buildPortfolioHubView(options = {}) {
   };
 }
 
-export async function runPortfolioHubRecommendedPositions() {
+export async function runPortfolioHubRecommendedPositions(options = {}) {
+  const cycleRunId = options.cycleRunId ?? null;
   const run = await db.withPortfolioHubAdvisoryLock(
     PORTFOLIO_HUB_LOCKS.recommendedPositions,
     `pid-${process.pid}-recommended`,
@@ -1478,7 +1593,10 @@ export async function runPortfolioHubRecommendedPositions() {
         holdings: portfolioHub.holdings || [],
         saturdayRows,
         dailyStates
-      });
+      }).map(item => ({
+        ...item,
+        postEarningsSignal: (portfolioHub.holdings || []).find(row => row.symbol === item.symbol)?.postEarningsSignal || null
+      }));
 
       const candidateSymbols = candidates.map(item => item.symbol);
       const { quoteMap, whiskieContextMap, stockInfoMap, technicalsMap } = await buildPortfolioHubSymbolContext(candidateSymbols);
@@ -1491,6 +1609,7 @@ Goal:
 - avoid short-term trades, day trades, scalp trades, or intraday churn
 - prefer early discovery of future compounders when justified
 - keep shorts highly selective
+- incorporate fresh post-earnings signals from the last 2 trading days when they exist
 
 Return an array of up to 5 ideas. Each idea must include:
 - symbol
@@ -1522,6 +1641,11 @@ Rules:
 - Be selective and practical
 - If a candidate overlaps with an existing holding by sector, industry, or pathway, explicitly decide whether it is complementary or a replacement candidate
 - If it is a replacement candidate, identify the related held symbol and what action should be considered
+- If a symbol has a fresh post-earnings signal:
+  - BUY_DIP should materially increase willingness to recommend it
+  - ADD_TO_WATCHLIST should modestly increase willingness to recommend it
+  - PASS should materially decrease willingness to recommend it
+  - HOLD should be treated as neutral-to-slightly constructive context
 
 Portfolio summary:
 ${JSON.stringify(portfolioHub.summary, null, 2)}
@@ -1544,7 +1668,8 @@ ${JSON.stringify((portfolioHub.holdings || []).map(row => ({
   sector: row.sector,
   whiskiePathway: row.whiskiePathway,
   whiskieHoldingPosture: row.whiskieHoldingPosture,
-  accountContext: row.accountContext || null
+  accountContext: row.accountContext || null,
+  postEarningsSignal: row.postEarningsSignal || null
 })), null, 2)}
 
 Candidates:
@@ -1553,7 +1678,8 @@ ${JSON.stringify(candidates.map(item => ({
   quote: quoteMap.get(item.symbol) || null,
   technicals: technicalsMap.get(item.symbol) || null,
   whiskieContext: whiskieContextMap.get(item.symbol) || null,
-  stockInfo: stockInfoMap.get(item.symbol) || null
+  stockInfo: stockInfoMap.get(item.symbol) || null,
+  postEarningsSignal: item.postEarningsSignal || null
 })), null, 2)}`;
 
       const response = await claude.analyze(prompt, { model: 'opus' });
@@ -1595,6 +1721,7 @@ ${JSON.stringify(candidates.map(item => ({
           const accountSuggestion = buildRecommendedAccountSuggestion(item, portfolioHub.accountStrategyContext || {});
           return {
             ...item,
+            technicals: technicalsMap.get(item.symbol) || null,
             actionTaxonomy: classifyRecommendedPositionTaxonomy(item),
             recommendedAccountType: accountSuggestion.accountType,
             recommendedAccountReason: accountSuggestion.reason,
@@ -1612,6 +1739,7 @@ ${JSON.stringify(candidates.map(item => ({
 
       const savedRun = await db.createPortfolioHubRecommendedPositionRun({
         sourceLabel: 'opus',
+        cycleRunId,
         marketContext: marketContext.summary,
         portfolioSnapshot: {
           summary: portfolioHub.summary,
@@ -1647,6 +1775,11 @@ ${JSON.stringify(candidates.map(item => ({
 }
 
 export async function runPortfolioHubOpusReview() {
+  return await runPortfolioHubOpusReviewWithOptions({});
+}
+
+export async function runPortfolioHubOpusReviewWithOptions(options = {}) {
+  const cycleRunId = options.cycleRunId ?? null;
   const reviewResult = await db.withPortfolioHubAdvisoryLock(
     PORTFOLIO_HUB_LOCKS.opusReview,
     `pid-${process.pid}-review`,
@@ -1706,6 +1839,11 @@ Rules:
   - if taxableHoldingDays > 300, treat it as close to long-term treatment and prefer patience unless risk is urgent
   - if taxableHoldingDays > 365, treat tax urgency as reduced because the position is already long-term
 - Use those thresholds as a real decision input, not just a reporting note, while still allowing urgent risk management to override tax patience.
+- Fresh post-earnings signals from the last 2 trading days are shared intelligence inputs:
+  - BUY_DIP should make you more willing to Add or Hold through volatility if the thesis still fits
+  - PASS should make you more conservative and can support Reduce/Trim/Hold-with-caution
+  - ADD_TO_WATCHLIST should be mildly constructive but weaker than BUY_DIP
+  - HOLD should be neutral-to-constructive
 
 Portfolio summary:
 ${JSON.stringify(portfolioHub.summary, null, 2)}
@@ -1744,6 +1882,10 @@ ${JSON.stringify(holdingsToReview.map(row => ({
     accountContext: row.accountContext || null,
     taxableHoldingDays: row.taxableHoldingDays,
     taxAwareNote: row.taxAwareNote || null,
+    userStopLoss: row.userStopLoss,
+    userTakeProfit: row.userTakeProfit,
+    holdingPlanNotes: row.holdingPlanNotes,
+    postEarningsSignal: row.postEarningsSignal || null,
     technicals: technicalsMap.get(row.symbol) || null,
     existingPolicyView: row.whiskieView,
     allocationBucketHint: row.whiskieHoldingPosture && /core|long/i.test(String(row.whiskieHoldingPosture)) ? 'core_long_term' : row.positionType === 'short' ? 'tactical_short' : 'tactical_or_unclear'
@@ -1796,6 +1938,7 @@ ${JSON.stringify(holdingsToReview.map(row => ({
       const reviewRun = await db.createPortfolioHubReviewRun({
         sourceLabel: 'opus',
         reviewType: 'holding_review',
+        cycleRunId,
         marketContext: marketContext.summary,
         portfolioSnapshot: {
           summary: portfolioHub.summary,
@@ -1859,4 +2002,71 @@ ${JSON.stringify(holdingsToReview.map(row => ({
   }
 
   return reviewResult;
+}
+
+export async function runPortfolioHubCycle(options = {}) {
+  const triggerType = options.triggerType || 'manual';
+  const performanceRange = options.performanceRange || 'day';
+  const performanceMetric = options.performanceMetric || 'pct';
+
+  const cycle = await db.withPortfolioHubAdvisoryLock(
+    PORTFOLIO_HUB_LOCKS.cycle,
+    `pid-${process.pid}-cycle`,
+    { type: 'portfolio_hub_cycle', triggerType },
+    async () => {
+      const precomputedView = await buildPortfolioHubView({
+        performanceRange,
+        performanceMetric,
+        persistHistory: true
+      });
+      const marketContext = await buildPortfolioHubMarketContext(precomputedView);
+      const cycleRun = await db.createPortfolioHubCycleRun({
+        sourceLabel: 'system',
+        triggerType,
+        performanceRange,
+        performanceMetric,
+        status: 'completed',
+        summary: precomputedView.summary,
+        marketContext: marketContext.summary,
+        portfolioSnapshot: {
+          summary: precomputedView.summary,
+          holdingsCount: Array.isArray(precomputedView.holdings) ? precomputedView.holdings.length : 0,
+          sectorAllocation: precomputedView.sectorAllocation || []
+        },
+        notes: 'Unified Portfolio Hub cycle run',
+        rawPayload: {
+          insights: precomputedView.insights || [],
+          latestFullReviewAt: precomputedView.latestFullReviewAt || null
+        }
+      });
+
+      const [reviewRun, recommendedRun] = await Promise.all([
+        runPortfolioHubOpusReviewWithOptions({ cycleRunId: cycleRun.id }),
+        runPortfolioHubRecommendedPositions({ cycleRunId: cycleRun.id })
+      ]);
+
+      const view = await buildPortfolioHubView({
+        performanceRange,
+        performanceMetric,
+        persistHistory: false
+      });
+
+      return {
+        cycleRun,
+        reviewRun,
+        recommendedRun,
+        portfolioHub: view
+      };
+    }
+  ).catch(() => null);
+
+  if (!cycle) {
+    return {
+      skipped: 'already_running',
+      cycleRun: await db.getLatestPortfolioHubCycleRun().catch(() => null),
+      portfolioHub: await buildPortfolioHubView({ performanceRange, performanceMetric, persistHistory: false }).catch(() => null)
+    };
+  }
+
+  return cycle;
 }

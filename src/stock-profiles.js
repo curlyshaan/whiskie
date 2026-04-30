@@ -340,7 +340,14 @@ export async function getStaleProfiles(daysOld = 14) {
   }
 }
 
-export function getProfileFreshness(profile, staleAfterDays = 14) {
+function toDateOnly(dateLike) {
+  if (!dateLike) return null;
+  const date = new Date(dateLike);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+export function getProfileFreshness(profile, staleAfterDays = 14, nextEarningsDate = null) {
   if (!profile?.last_updated) {
     return {
       hasProfile: false,
@@ -348,13 +355,25 @@ export function getProfileFreshness(profile, staleAfterDays = 14) {
       isStale: false,
       daysOld: null,
       staleAfterDays,
+      nextEarningsDate,
+      earningsWithinRefreshWindow: false,
       needsBuild: true,
       needsRefresh: false
     };
   }
 
   const daysOld = Math.floor((Date.now() - new Date(profile.last_updated).getTime()) / (1000 * 60 * 60 * 24));
-  const isStale = daysOld >= staleAfterDays;
+  const today = toDateOnly(new Date());
+  const earningsDate = toDateOnly(nextEarningsDate);
+  const daysToEarnings = today && earningsDate
+    ? Math.floor((earningsDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+  const earningsWithinRefreshWindow = daysToEarnings != null && daysToEarnings >= -2 && daysToEarnings <= 3;
+  const profileUpdatedToday = today
+    ? toDateOnly(profile.last_updated)?.getTime() === today.getTime()
+    : false;
+  const shouldRefreshForEarningsWindow = earningsWithinRefreshWindow && !profileUpdatedToday;
+  const isStale = daysOld >= staleAfterDays || shouldRefreshForEarningsWindow;
 
   return {
     hasProfile: true,
@@ -362,6 +381,11 @@ export function getProfileFreshness(profile, staleAfterDays = 14) {
     isStale,
     daysOld,
     staleAfterDays,
+    nextEarningsDate,
+    daysToEarnings,
+    earningsWithinRefreshWindow,
+    profileUpdatedToday,
+    shouldRefreshForEarningsWindow,
     needsBuild: false,
     needsRefresh: isStale
   };
@@ -374,7 +398,8 @@ export async function ensureFreshStockProfile(symbol, options = {}) {
   } = options;
 
   const existingProfile = await getStockProfile(symbol);
-  const freshness = getProfileFreshness(existingProfile, staleAfterDays);
+  const nextEarning = await db.getNextEarning(symbol).catch(() => null);
+  const freshness = getProfileFreshness(existingProfile, staleAfterDays, nextEarning?.earnings_date || null);
 
   if (!existingProfile) {
     const profile = await buildStockProfile(symbol, { staleAfterDays: incrementalRefreshDays });
@@ -413,7 +438,8 @@ export async function buildStockProfile(symbol, options = {}) {
     }
 
     if (existingProfile) {
-      const freshness = getProfileFreshness(existingProfile, staleAfterDays);
+      const nextEarning = await db.getNextEarning(symbol).catch(() => null);
+      const freshness = getProfileFreshness(existingProfile, staleAfterDays, nextEarning?.earnings_date || null);
       const daysOld = freshness.daysOld ?? 0;
 
       // If profile is fresh (<14 days), do incremental update (5k tokens)
@@ -468,9 +494,9 @@ export async function buildStockProfile(symbol, options = {}) {
     throwIfProfileBuildCancelled(symbol);
 
     console.log('  📰 Fetching recent news...');
-    const news = await newsSearch.searchStructuredStockContext(symbol, {
+    const news = await newsSearch.searchStructuredProfileContext(symbol, {
       maxResults: 5,
-      timeRange: 'month'
+      timeRange: 'week'
     });
     timer.step('fetch-news');
     throwIfProfileBuildCancelled(symbol);
@@ -535,7 +561,7 @@ async function updateStockProfile(symbol, existingProfile = null, options = {}) 
     throwIfProfileBuildCancelled(symbol);
 
     console.log('  📰 Fetching recent news...');
-    const news = await newsSearch.searchStructuredStockContext(symbol, { maxResults: 3 });
+    const news = await newsSearch.searchStructuredProfileContext(symbol, { maxResults: 3, timeRange: 'week' });
     timer.step('fetch-news');
     throwIfProfileBuildCancelled(symbol);
 
@@ -556,14 +582,23 @@ ${JSON.stringify(fundamentals, null, 2)}
 ${news.map(n => `- ${n.title}\n  ${n.content?.substring(0, 150)}...`).join('\n\n')}
 
 **Your Task:** Provide ONLY updates to the profile. Focus on:
-1. **CATALYSTS_UPDATE**: Any new catalysts or changes to existing ones
-2. **RISKS_UPDATE**: New risks or changes to risk severity
-3. **FUNDAMENTALS_UPDATE**: Material changes in financial metrics
-4. **BUSINESS_UPDATE**: Any strategic shifts or business model changes
+1. CATALYSTS_UPDATE: Any new catalysts or changes to existing ones
+2. RISKS_UPDATE: New risks or changes to risk severity
+3. FUNDAMENTALS_UPDATE: Material changes in financial metrics
+4. BUSINESS_UPDATE: Any strategic shifts or business model changes
 
 If nothing material has changed in a section, write "No material changes."
 
-Keep it concise - this is an incremental update, not a full rebuild.`;
+Keep it concise - this is an incremental update, not a full rebuild.
+
+Return EXACTLY this plain-text format with these exact uppercase headers and no markdown, bullets, numbering, bolding, or extra sections:
+
+CATALYSTS_UPDATE: <text>
+RISKS_UPDATE: <text>
+FUNDAMENTALS_UPDATE: <text>
+BUSINESS_UPDATE: <text>
+
+Each header must appear exactly once. Do not use **, ##, -, or numbered lists.`;
 
     console.log('  🤔 Running Gemini 3.1 Pro incremental update (5k tokens)...');
     const updateStart = Date.now();
@@ -580,6 +615,9 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
     throwIfProfileBuildCancelled(symbol);
     const updateText = update?.content?.map(block => block?.text || '').join('\n').trim() || '';
 
+    const extractedRisks = extractIncrementalSection(updateText, 'RISKS_UPDATE');
+    const extractedCatalysts = extractIncrementalSection(updateText, 'CATALYSTS_UPDATE');
+
     // Merge updates with existing profile (apply cleanText to enforce character limits)
     const updatedProfile = {
       symbol,
@@ -590,12 +628,8 @@ Keep it concise - this is an incremental update, not a full rebuild.`;
       management_quality: profileToUpdate.management_quality,
       valuation_framework: profileToUpdate.valuation_framework,
       fundamentals: fundamentals || profileToUpdate.fundamentals,
-      risks: updateText.includes('RISKS_UPDATE') ?
-        cleanText(updateText.match(/RISKS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || profileToUpdate.risks, 2000) :
-        profileToUpdate.risks,
-      catalysts: updateText.includes('CATALYSTS_UPDATE') ?
-        cleanText(updateText.match(/CATALYSTS_UPDATE[:\s]*([\s\S]*?)(?=\n\n[A-Z_]+UPDATE|$)/)?.[1]?.trim() || profileToUpdate.catalysts, 2000) :
-        profileToUpdate.catalysts,
+      risks: extractedRisks ? cleanText(extractedRisks, 2000) : profileToUpdate.risks,
+      catalysts: extractedCatalysts ? cleanText(extractedCatalysts, 2000) : profileToUpdate.catalysts,
       industry_sector: profileToUpdate.industry_sector,
       market_cap_category: profileToUpdate.market_cap_category,
       growth_stage: profileToUpdate.growth_stage,
@@ -666,6 +700,48 @@ function cleanText(text, maxChars = 2000) {
   }
 
   return cleaned;
+}
+
+function extractIncrementalSection(updateText, sectionName) {
+  const normalizedText = String(updateText || '').replace(/\r\n/g, '\n');
+  const target = String(sectionName || '').trim().toUpperCase();
+  if (!target) return '';
+
+  const lines = normalizedText.split('\n');
+  let collecting = false;
+  const collected = [];
+
+  for (const rawLine of lines) {
+    const line = String(rawLine || '');
+    const normalizedLine = line
+      .replace(/\*\*/g, '')
+      .replace(/^#+\s*/, '')
+      .trim();
+
+    const headerMatch = normalizedLine.match(/^([A-Z_]+_UPDATE)\s*:?\s*(.*)$/);
+    if (headerMatch) {
+      const header = headerMatch[1].toUpperCase();
+      const remainder = headerMatch[2] || '';
+
+      if (collecting && header !== target) {
+        break;
+      }
+
+      if (header === target) {
+        collecting = true;
+        if (remainder.trim()) {
+          collected.push(remainder.trim());
+        }
+        continue;
+      }
+    }
+
+    if (collecting) {
+      collected.push(line);
+    }
+  }
+
+  return collected.join('\n').trim();
 }
 
 /**

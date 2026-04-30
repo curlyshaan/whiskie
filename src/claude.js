@@ -10,9 +10,9 @@ const QUATARLY_BASE_URL = process.env.QUATARLY_BASE_URL;
  * Claude AI Models
  */
 export const MODELS = {
-  OPUS: 'claude-opus-4-6-thinking',      // Use for everything - consistent decisions
-  SONNET: 'claude-sonnet-4-6-thinking',  // Deprecated - use Opus instead
-  HAIKU: 'claude-haiku-4-5-20251001',    // Deprecated - use Opus instead
+  OPUS: 'claude-opus-4-6-thinking',      // Primary decision model for major trading and portfolio workflows
+  SONNET: 'claude-sonnet-4-6-thinking',  // Used for fast article summarization and non-Opus fallback analysis paths
+  HAIKU: 'claude-haiku-4-5-20251001',    // Available lightweight model for future low-cost utility tasks
   GEMINI_PRO: 'gemini-3.1-pro'
 };
 

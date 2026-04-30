@@ -6,21 +6,33 @@ class NewsCacheService {
     this.ttlMs = 15 * 60 * 1000;
   }
 
+  buildStockKey(symbol, options = {}) {
+    return JSON.stringify({
+      type: 'stock',
+      symbol,
+      activity: options.activity || 'stock_context',
+      maxResults: options.maxResults || 5,
+      timeRange: options.timeRange || 'week',
+      context: options.context || null,
+      companyName: options.companyName || null,
+      includeDomains: options.includeDomains || [],
+      excludeDomains: options.excludeDomains || []
+    });
+  }
+
   async getStructuredStockContext(symbol, options = {}) {
     const normalizedSymbol = String(symbol || '').trim().toUpperCase();
-    const key = JSON.stringify({
-      symbol: normalizedSymbol,
-      maxResults: options.maxResults || 5,
-      timeRange: options.timeRange || 'month',
-      context: options.context || null
-    });
+    const key = this.buildStockKey(normalizedSymbol, options);
 
     const cached = this.cache.get(key);
     if (cached && Date.now() - cached.timestamp < this.ttlMs) {
       return cached.data;
     }
 
-    const data = await newsSearch.searchStructuredStockContext(normalizedSymbol, options);
+    const activity = options.activity || 'stock_context';
+    const data = activity === 'profile_context'
+      ? await newsSearch.searchStructuredProfileContext(normalizedSymbol, options)
+      : await newsSearch.searchStructuredStockContext(normalizedSymbol, options);
     this.cache.set(key, { data, timestamp: Date.now() });
     return data;
   }

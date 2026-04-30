@@ -1,6 +1,6 @@
 # Whiskie
 
-Whiskie is an AI-assisted long/short US equities portfolio manager built around weekly screening, reusable stock research profiles, a daily 4-phase decision pipeline, and a manual approval gate before execution.
+Whiskie is an AI-assisted long/short US equities portfolio manager built around weekly screening, reusable stock research profiles, a daily 4-phase decision pipeline, an autonomous trade-intent execution queue, and a separate Portfolio Hub advisory surface for household portfolio management.
 
 ## Canonical docs
 
@@ -15,6 +15,28 @@ Start every new session with these files:
 
 Everything else should be treated as supporting or archival context unless these files explicitly point to it.
 
+## Product architecture in one view
+
+Whiskie now has two intentionally separate operating modes:
+
+1. **Live bot**
+   - researches, ranks, and proposes trades
+   - routes those trades into an autonomous trade-intent queue
+   - executes approved intents against Tradier
+   - manages exits, reconciliation, and risk controls
+
+2. **Portfolio Hub (PHUB)**
+   - manual multi-account household portfolio dashboard
+   - advisory only
+   - does not place broker trades
+   - consumes shared Whiskie intelligence such as news, pathway context, post-earnings signals, technicals, and risk context
+
+This separation is intentional:
+
+- Whiskie live bot can trade
+- PHUB can advise
+- both share the same research/intelligence spine
+
 ## Current system summary
 
 Whiskie currently does the following:
@@ -23,11 +45,15 @@ Whiskie currently does the following:
 - runs weekly screening into `saturday_watchlist`
 - builds stock profiles for watchlist names using FMP + Serper + Gemini
 - runs weekday daily analysis using a 4-phase pipeline
-- queues trades into `trade_approvals` for manual approval
+- queues trades into `trade_approvals` as autonomous trade intents
+- auto-approves normal system-generated intents for execution while retaining operator override paths
 - executes approved trades and monitors exits during market hours
 - auto-builds missing stock profiles inside the Adhoc Analyzer before running analysis
 - refreshes stale adhoc profiles before analysis
 - runs a persisted earnings prediction and grading workflow backed by `earnings_calendar` + `earnings_reminders`
+- uses DoltHub as the session-timing source for earnings (`pre_market` / `post_market`)
+- runs a unified Portfolio Hub cycle that recomputes PHUB state, holdings review, and recommended new positions
+- logs deterministic post-earnings signals that PHUB can use for add/pass decisions
 
 ## Current operating workflow
 
@@ -57,6 +83,29 @@ Whiskie currently does the following:
 - **6:00 PM ET** — daily summary
 - **Hourly** — expire stale approvals
 
+## Shared intelligence model
+
+Whiskie’s design now centers on a shared-intelligence layer rather than isolated feature silos.
+
+That shared layer includes:
+
+- stock profiles
+- pathway/watchlist context
+- technical indicators
+- structured Serper macro/news context
+- deterministic earnings timing and post-earnings signals
+- market regime and risk context
+
+Consumers of that intelligence include:
+
+- daily 4-phase live analysis
+- adhoc analysis
+- options analyzer
+- earnings predictor
+- post-earnings analysis
+- Portfolio Hub holdings review
+- Portfolio Hub recommended new positions
+
 ## Stock profile behavior
 
 Stock profiles are operationally important and currently work like this:
@@ -71,6 +120,7 @@ Stock profiles are operationally important and currently work like this:
 - profiles overwrite the current row in `stock_profiles` using a canonical current-record model
 - incremental refresh updates the existing row rather than appending a second current row
 - adhoc flows now block on stale-profile refresh instead of analyzing against stale profile data
+- post-earnings analysis now explicitly refreshes profile context before final analysis
 
 ## Current analysis universe rules
 
@@ -81,6 +131,23 @@ Stock profiles are operationally important and currently work like this:
 - daily analysis core universe is `active` watchlist names
 - during market hours, daily pre-ranking can also merge in broader momentum/discovery names
 - missing profiles do **not** block analysis; some flows continue without them
+
+## Autonomous execution model
+
+The old human approval gate is no longer the primary operating model.
+
+Current behavior:
+
+- analysis proposes trades
+- trades are persisted in `trade_approvals` (legacy table name)
+- system-generated intents can be auto-approved immediately through `submitForExecution(...)`
+- executor processes approved trade intents on schedule
+- operator can still inspect or reject pending/manual-review items through the Trade Queue UI
+
+Important note:
+
+- `trade_approvals` now functions as a **trade-intent queue**
+- “manual approval” is an override/fallback path, not the default architecture
 
 ## Daily analysis decision model
 
@@ -101,6 +168,107 @@ Daily decisions use multiple inputs together, not stock profiles alone:
 - earnings timing / risk context
 - market regime and portfolio construction constraints
 
+## Earnings system and post-earnings workflow
+
+Whiskie now treats earnings as a structured lifecycle with deterministic timing and session-aware post-analysis.
+
+### Timing sources
+
+- FMP provides core earnings dates
+- DoltHub provides session timing:
+  - `pre_market`
+  - `post_market`
+  - `unknown` fallback only when no reliable session exists
+
+### Reminder / predictor workflow
+
+- `earnings_calendar` stores event timing
+- `earnings_reminders` stores persisted predictor lifecycle
+- predictors are generated, emailed, and later graded
+
+### Post-earnings analysis
+
+`analyzeAfterEarnings(...)` now:
+
+- refreshes the stock profile before final analysis
+- respects session-aware timing gates
+- uses trading-day-aware recency instead of naive calendar-day filtering
+- prevents `post_market` names from finalizing too early
+- computes deterministic reaction metrics including:
+  - `preEarningsClose`
+  - `gapPct`
+  - `closeToCloseReactionPct`
+  - `intradayReactionPct`
+  - `liveReactionPct`
+  - `dipBasisPct`
+
+### PHUB interaction
+
+Fresh post-earnings signals are persisted and later consumed by PHUB.
+
+That means PHUB can:
+
+- see whether a recent earnings reaction looks buyable
+- suppress adds when the post-earnings signal is `PASS`
+- incorporate refreshed thesis/profile/news context into holding review and recommendations
+
+### One-time deploy prep endpoint
+
+There is now a one-time operator endpoint for post-earnings prep:
+
+- `POST /api/trigger-earnings-post-prep-once`
+
+Default target dates:
+
+- `2026-04-28`
+- `2026-04-29`
+
+Purpose:
+
+- refresh profiles for those earnings cohorts
+- attempt post-earnings analysis when already eligible
+- pre-stage data for the next valid 10:00 AM session-aware run
+
+Optional body:
+
+```json
+{
+  "earningsDates": ["2026-04-28", "2026-04-29"]
+}
+```
+
+## Portfolio Hub (PHUB)
+
+Portfolio Hub is a manual household portfolio operating surface, not a brokerage execution engine.
+
+It now includes:
+
+- multi-account transaction ledger
+- account cash tracking
+- holdings review with Whiskie context
+- recommended new positions
+- manual holding stop/target plans
+- advisory stop/target overlays
+- post-earnings signals in holdings context
+- account-type-aware recommendation context
+- unified cycle tracking
+
+### Unified cycle
+
+The unified cycle is the main PHUB recomputation workflow.
+
+It:
+
+1. rebuilds PHUB view/context
+2. runs holdings review
+3. runs recommended new positions
+4. persists cycle metadata for audit/debugging
+
+### Important PHUB design boundary
+
+- PHUB does not execute broker trades
+- PHUB uses Whiskie intelligence, but remains advisory only
+
 ## Provider/API reference and local environment map
 
 The goal of this section is that a future session should not need you to restate the basic provider setup again.
@@ -111,7 +279,8 @@ The goal of this section is that a future session should not need you to restate
 | --- | --- | --- | --- | --- |
 | Quatarly | Claude/Opus/Gemini gateway | `https://www.quatarly.cloud/docs` | `QUATARLY_API_KEY`, `QUATARLY_BASE_URL` | Current base URL is `https://api.quatarly.cloud/` |
 | FMP | Fundamentals, quotes, historical prices, earnings, core market data | `https://site.financialmodelingprep.com/developer/docs/stable` | `FMP_API_KEY_1` | Current code assumes a paid single-key setup and `/stable` endpoints |
-| Serper | Google-style discovery for structured search/news retrieval | `https://serper.dev` | `SERPER_API_KEY` | `src/serper.js` finds URLs and `src/news-search.js` fetches + summarizes top articles via Quatarly |
+| Serper | Google-style discovery for structured search/news retrieval | `https://serper.dev` | `SERPER_API_KEY` | Used through workflow-aware search helpers with tiered source retrieval and degradation tracking |
+| DoltHub | Earnings session timing (`pre_market` / `post_market`) | `https://www.dolthub.com/repositories/post-no-preference/earnings/data/master/earnings_calendar` | none | Used as the earnings session timing source layered on top of earnings dates |
 | Tradier | Brokerage, market open state, order/account actions | `https://documentation.tradier.com/brokerage-api` | `TRADIER_API_KEY`, `TRADIER_BASE_URL`, `TRADIER_SANDBOX_API_KEY`, `TRADIER_SANDBOX_URL`, `TRADIER_ACCOUNT_ID`, `TRADIER_SANDBOX_ACCOUNT_ID` | Supports live and sandbox/paper flows |
 | Resend | Email delivery | `https://resend.com/docs` | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `ALERT_EMAIL` | Used for alerts and reminder email delivery |
 | FRED | Macro calendar/economic support | `https://fred.stlouisfed.org/docs/api/fred/` | `FRED_API_KEY` | Present in env for macro/economic data support |
@@ -174,6 +343,7 @@ still exists in `package.json`, but it points to the deprecated hardcoded univer
 `npm test` is not configured. Current useful validation commands are:
 
 ```bash
+node tests/safeguard.test.js
 node test/test-4phase.js
 node test/test-analysis.js
 node test/test-fmp.js
@@ -199,6 +369,7 @@ Current important routes include:
 - `POST /api/update-etb-status`
 - `POST /api/trigger-eod-summary`
 - `POST /api/trigger-earnings-reminders`
+- `POST /api/trigger-earnings-post-prep-once`
 - `POST /api/trigger-trade-executor`
 - `GET /adhoc-analyzer`
 - `POST /adhoc-analyzer/analyze`
@@ -246,11 +417,13 @@ Current short-risk implementation notes:
 Recent reliability/performance updates:
 
 - adhoc analysis now degrades gracefully when profile building fails and can reuse cached Opus responses
-- pathway exit actions that reduce or close positions now route into `trade_approvals` instead of bypassing approval flow
+- pathway exit actions that reduce or close positions now route into the autonomous trade-intent queue instead of bypassing queue state
 - circuit breaker now checks both weekly loss and daily drawdown
 - options analyzer keeps low-conviction options ideas as warnings instead of force-converting them to `no_trade`
 - earnings trim lot changes now execute inside a DB transaction
 - shared services now provide reusable profile-build coordination, Serper/news caching, quote caching, and Opus-response caching
+- post-earnings analysis now uses trading-day-aware eligibility and session-aware deterministic dip logic
+- PHUB recommended-position persistence now retains technical snapshots and recommended-account context
 
 Paper/sandbox deployments should always set:
 

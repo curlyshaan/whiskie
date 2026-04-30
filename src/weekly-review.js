@@ -128,7 +128,11 @@ export async function reviewPosition(symbol, lots) {
       : 'No upcoming earnings';
 
     // Get structured recent news/context
-    const news = await newsSearch.searchStructuredStockContext(symbol, { maxResults: 5 });
+    const news = await newsSearch.searchStructuredStockContext(symbol, {
+      maxResults: 5,
+      timeRange: 'week',
+      context: { workflow: 'weekly_review' }
+    });
     const newsText = newsSearch.formatResults(news);
 
     // Build lot details
@@ -351,7 +355,7 @@ export async function executeReviewRecommendations(review) {
 
     // If thesis broken, consider selling
     if (!recommendations.thesisValid) {
-      console.log(`⚠️ Thesis broken for ${symbol} - flagging for manual review`);
+      console.log(`⚠️ Thesis broken for ${symbol} - flagging for operator review`);
       await email.sendEmail(
         `⚠️ Thesis Broken: ${symbol}`,
         `

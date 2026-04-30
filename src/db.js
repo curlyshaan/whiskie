@@ -128,6 +128,20 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_holding_plans (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        position_type VARCHAR(10) NOT NULL DEFAULT 'long',
+        user_stop_loss DECIMAL(14, 4),
+        user_take_profit DECIMAL(14, 4),
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(symbol, position_type)
+      );
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS portfolio_hub_transactions (
         id SERIAL PRIMARY KEY,
         account_id INTEGER NOT NULL REFERENCES portfolio_hub_accounts(id) ON DELETE CASCADE,
@@ -315,6 +329,7 @@ export async function initDatabase() {
       CREATE TABLE IF NOT EXISTS portfolio_hub_recommended_position_runs (
         id SERIAL PRIMARY KEY,
         source_label VARCHAR(100) DEFAULT 'opus',
+        cycle_run_id INTEGER,
         generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         market_context JSONB,
         portfolio_snapshot JSONB,
@@ -366,10 +381,18 @@ export async function initDatabase() {
     `);
 
     await client.query(`
+      ALTER TABLE portfolio_hub_recommended_position_items
+      ADD COLUMN IF NOT EXISTS recommended_account_type VARCHAR(50),
+      ADD COLUMN IF NOT EXISTS recommended_account_reason TEXT,
+      ADD COLUMN IF NOT EXISTS technicals_snapshot JSONB;
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS portfolio_hub_review_runs (
         id SERIAL PRIMARY KEY,
         source_label VARCHAR(100) DEFAULT 'opus',
         review_type VARCHAR(30) DEFAULT 'holding_review',
+        cycle_run_id INTEGER,
         generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         market_context JSONB,
         portfolio_snapshot JSONB,
@@ -449,6 +472,23 @@ export async function initDatabase() {
         acquired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_heartbeat_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         metadata JSONB
+      );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS portfolio_hub_cycle_runs (
+        id SERIAL PRIMARY KEY,
+        source_label VARCHAR(100) DEFAULT 'system',
+        trigger_type VARCHAR(30) DEFAULT 'scheduled',
+        status VARCHAR(30) DEFAULT 'completed',
+        generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        performance_range VARCHAR(20) DEFAULT 'day',
+        performance_metric VARCHAR(20) DEFAULT 'pct',
+        summary JSONB,
+        market_context JSONB,
+        portfolio_snapshot JSONB,
+        notes TEXT,
+        raw_payload JSONB
       );
     `);
 
@@ -1887,8 +1927,14 @@ export async function initDatabase() {
         position_snapshot JSONB,
         earnings_snapshot JSONB,
         options_snapshot JSONB,
+        signal_snapshot JSONB,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    await client.query(`
+      ALTER TABLE earnings_analysis_log
+      ADD COLUMN IF NOT EXISTS signal_snapshot JSONB;
     `);
 
     await client.query(`
@@ -2222,6 +2268,57 @@ export async function upsertPortfolioHubAccount(account) {
     ]
   );
   return result.rows[0];
+}
+
+export async function getPortfolioHubHoldingPlans() {
+  const result = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_holding_plans
+     ORDER BY symbol ASC, position_type ASC`
+  );
+  return result.rows || [];
+}
+
+export async function upsertPortfolioHubHoldingPlan(plan) {
+  const symbol = String(plan.symbol || '').trim().toUpperCase();
+  const positionType = String(plan.position_type || 'long').trim().toLowerCase();
+  if (!symbol) {
+    throw new Error('Portfolio Hub holding plan symbol is required');
+  }
+  if (!['long', 'short'].includes(positionType)) {
+    throw new Error('Portfolio Hub holding plan position_type must be long or short');
+  }
+
+  const stopLoss = plan.user_stop_loss == null || plan.user_stop_loss === '' ? null : Number(plan.user_stop_loss);
+  const takeProfit = plan.user_take_profit == null || plan.user_take_profit === '' ? null : Number(plan.user_take_profit);
+
+  if (stopLoss != null && (!Number.isFinite(stopLoss) || stopLoss <= 0)) {
+    throw new Error('User stop loss must be a positive number');
+  }
+  if (takeProfit != null && (!Number.isFinite(takeProfit) || takeProfit <= 0)) {
+    throw new Error('User take profit must be a positive number');
+  }
+
+  const result = await pool.query(
+    `INSERT INTO portfolio_hub_holding_plans (
+       symbol, position_type, user_stop_loss, user_take_profit, notes, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+     ON CONFLICT (symbol, position_type)
+     DO UPDATE SET
+       user_stop_loss = EXCLUDED.user_stop_loss,
+       user_take_profit = EXCLUDED.user_take_profit,
+       notes = EXCLUDED.notes,
+       updated_at = CURRENT_TIMESTAMP
+     RETURNING *`,
+    [
+      symbol,
+      positionType,
+      stopLoss,
+      takeProfit,
+      plan.notes || null
+    ]
+  );
+  return result.rows[0] || null;
 }
 
 export async function listPortfolioHubTransactions() {
@@ -2748,12 +2845,13 @@ export async function recordPortfolioHubAdviceHistory(entries = []) {
 export async function createPortfolioHubReviewRun(entry = {}) {
   const result = await pool.query(
     `INSERT INTO portfolio_hub_review_runs (
-      source_label, review_type, market_context, portfolio_snapshot, notes, raw_model_payload
-    ) VALUES ($1, $2, $3, $4, $5, $6)
+      source_label, review_type, cycle_run_id, market_context, portfolio_snapshot, notes, raw_model_payload
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
     RETURNING *`,
     [
       entry.sourceLabel || 'opus',
       entry.reviewType || 'holding_review',
+      entry.cycleRunId ?? null,
       entry.marketContext ? JSON.stringify(entry.marketContext) : null,
       entry.portfolioSnapshot ? JSON.stringify(entry.portfolioSnapshot) : null,
       entry.notes || null,
@@ -2931,11 +3029,12 @@ export async function setPortfolioHubRecommendationChangeImplemented(id, impleme
 export async function createPortfolioHubRecommendedPositionRun(entry = {}) {
   const result = await pool.query(
     `INSERT INTO portfolio_hub_recommended_position_runs (
-      source_label, market_context, portfolio_snapshot, notes, raw_model_payload
-    ) VALUES ($1, $2, $3, $4, $5)
+      source_label, cycle_run_id, market_context, portfolio_snapshot, notes, raw_model_payload
+    ) VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING *`,
     [
       entry.sourceLabel || 'opus',
+      entry.cycleRunId ?? null,
       entry.marketContext ? JSON.stringify(entry.marketContext) : null,
       entry.portfolioSnapshot ? JSON.stringify(entry.portfolioSnapshot) : null,
       entry.notes || null,
@@ -2961,8 +3060,9 @@ export async function replacePortfolioHubRecommendedPositionItems(runId, items =
         pathway, thesis, why_now, portfolio_fit, sector_impact, invalidation,
         relationship_type, related_holding_symbol, related_holding_action,
         model_reasoning, action_taxonomy, deterministic_score, deterministic_rank,
-        scoring_breakdown, raw_model_payload, sort_order
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)`,
+        scoring_breakdown, raw_model_payload, recommended_account_type,
+        recommended_account_reason, technicals_snapshot, sort_order
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)`,
       [
         runId,
         item.symbol,
@@ -2990,6 +3090,9 @@ export async function replacePortfolioHubRecommendedPositionItems(runId, items =
         item.deterministicRank ?? null,
         item.scoringBreakdown ? JSON.stringify(item.scoringBreakdown) : null,
         item.rawModelPayload ? JSON.stringify(item.rawModelPayload) : null,
+        item.recommendedAccountType || null,
+        item.recommendedAccountReason || null,
+        item.technicals ? JSON.stringify(item.technicals) : null,
         index
       ]
     );
@@ -3018,6 +3121,39 @@ export async function getLatestPortfolioHubRecommendedPositionRun() {
     ...run,
     items: itemsResult.rows || []
   };
+}
+
+export async function createPortfolioHubCycleRun(entry = {}) {
+  const result = await pool.query(
+    `INSERT INTO portfolio_hub_cycle_runs (
+      source_label, trigger_type, status, performance_range, performance_metric,
+      summary, market_context, portfolio_snapshot, notes, raw_payload
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    RETURNING *`,
+    [
+      entry.sourceLabel || 'system',
+      entry.triggerType || 'scheduled',
+      entry.status || 'completed',
+      entry.performanceRange || 'day',
+      entry.performanceMetric || 'pct',
+      entry.summary ? JSON.stringify(entry.summary) : null,
+      entry.marketContext ? JSON.stringify(entry.marketContext) : null,
+      entry.portfolioSnapshot ? JSON.stringify(entry.portfolioSnapshot) : null,
+      entry.notes || null,
+      entry.rawPayload ? JSON.stringify(entry.rawPayload) : null
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getLatestPortfolioHubCycleRun() {
+  const result = await pool.query(
+    `SELECT *
+     FROM portfolio_hub_cycle_runs
+     ORDER BY generated_at DESC, id DESC
+     LIMIT 1`
+  );
+  return result.rows[0] || null;
 }
 
 export async function cleanupPortfolioHubRecommendedPositionRuns(daysOld = 30) {
@@ -3357,7 +3493,7 @@ export async function savePendingApproval(approval) {
 }
 
 /**
- * Get pending approvals
+ * Get pending manual-review trade intents
  */
 export async function getPendingApprovals() {
   try {
@@ -3368,7 +3504,7 @@ export async function getPendingApprovals() {
     );
     return result.rows;
   } catch (error) {
-    console.error('Error fetching pending approvals:', error);
+    console.error('Error fetching pending trade intents:', error);
     throw error;
   }
 }
@@ -3395,7 +3531,7 @@ export async function updateApprovalStatus(approvalId, status) {
 }
 
 /**
- * Expire old pending approvals
+ * Expire old pending manual-review trade intents
  */
 export async function expireOldApprovals() {
   try {
@@ -3671,6 +3807,30 @@ export async function getUpcomingEarnings(days = 30) {
     return result.rows;
   } catch (error) {
     console.error('Error fetching upcoming earnings:', error);
+    throw error;
+  }
+}
+
+export async function getRecentAndUpcomingEarnings(pastDays = 2, futureDays = 2) {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT ON (ec.symbol)
+        ec.*,
+        su.company_name,
+        su.market_cap
+       FROM earnings_calendar ec
+       LEFT JOIN stock_universe su ON su.symbol = ec.symbol
+       WHERE ec.earnings_date >= CURRENT_DATE - ($1::text || ' days')::interval
+         AND ec.earnings_date <= CURRENT_DATE + ($2::text || ' days')::interval
+       ORDER BY ec.symbol,
+                ec.earnings_date DESC,
+                ec.source_priority DESC,
+                ec.last_verified_at DESC`,
+      [pastDays, futureDays]
+    );
+    return result.rows;
+  } catch (error) {
+    console.error('Error fetching recent and upcoming earnings:', error);
     throw error;
   }
 }
@@ -4125,8 +4285,8 @@ export async function enrichEarningTiming(symbol, earningsDate, timing = {}) {
 
   const sessionNormalized = timing.earningsSession || 'unknown';
   const timingRaw = timing.earningsTimeRaw || null;
-  const timingSource = timing.source || 'earnings_whispers';
-  const sourcePriority = timingSource === 'manual' ? 300 : (timingSource === 'yahoo' || timingSource === 'earnings_whispers') ? 200 : 100;
+  const timingSource = timing.source || 'dolthub';
+  const sourcePriority = timingSource === 'manual' ? 300 : timingSource === 'dolthub' ? 200 : 100;
   const manualOverride = timingSource === 'manual';
 
   try {
@@ -4701,7 +4861,7 @@ export async function getLatestSaturdayWatchlistEntry(symbol) {
   return result.rows[0] || null;
 }
 
-export async function getLatestPendingApprovalForSymbol(symbol) {
+export async function getLatestTradeIntentForSymbol(symbol) {
   const result = await pool.query(
     `SELECT *
      FROM trade_approvals
@@ -4750,8 +4910,8 @@ export async function logEarningsAnalysis(entry) {
   const result = await pool.query(
     `INSERT INTO earnings_analysis_log (
       symbol, analysis_phase, recommendation, reasoning,
-      position_snapshot, earnings_snapshot, options_snapshot
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      position_snapshot, earnings_snapshot, options_snapshot, signal_snapshot
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     RETURNING *`,
     [
       entry.symbol,
@@ -4760,11 +4920,31 @@ export async function logEarningsAnalysis(entry) {
       entry.reasoning || null,
       entry.positionSnapshot ? JSON.stringify(entry.positionSnapshot) : null,
       entry.earningsSnapshot ? JSON.stringify(entry.earningsSnapshot) : null,
-      entry.optionsSnapshot ? JSON.stringify(entry.optionsSnapshot) : null
+      entry.optionsSnapshot ? JSON.stringify(entry.optionsSnapshot) : null,
+      entry.signalSnapshot ? JSON.stringify(entry.signalSnapshot) : null
     ]
   );
 
   return result.rows[0];
+}
+
+export async function getLatestPostEarningsAnalyses(symbols = [], daysBack = 3) {
+  const normalizedSymbols = [...new Set((symbols || []).map(symbol => String(symbol || '').trim().toUpperCase()).filter(Boolean))];
+  if (!normalizedSymbols.length) {
+    return [];
+  }
+
+  const result = await pool.query(
+    `SELECT DISTINCT ON (symbol) *
+     FROM earnings_analysis_log
+     WHERE analysis_phase = 'post_earnings'
+       AND symbol = ANY($1)
+       AND created_at >= NOW() - ($2::text || ' days')::interval
+     ORDER BY symbol, created_at DESC, id DESC`,
+    [normalizedSymbols, String(daysBack)]
+  );
+
+  return result.rows || [];
 }
 
 export async function getRecentOptionsAnalysisRuns(limit = 20) {

@@ -15,7 +15,7 @@ Core subsystems:
 - live long/short trading workflow
 - weekly screening and watchlist promotion
 - stock-profile research pipeline
-- daily 4-phase analysis and approval queue
+- daily 4-phase analysis and autonomous trade-intent queue
 - Portfolio Hub advisory workflow
 - earnings prediction and grading workflow
 - dashboard and operator-trigger surfaces
@@ -28,7 +28,7 @@ Primary code areas:
 - `src/portfolio-hub.js` — Portfolio Hub recomputation, review, and recommendation logic
 - `src/earnings-reminders.js` — earnings prediction, lifecycle, and grading logic
 - `src/analysis.js` and related modules — daily market/trade analysis pipeline
-- `src/serper.js` and `src/news-search.js` — news discovery, article extraction, and Quatarly summarization pipeline
+- `src/serper.js` and `src/news-search.js` — tiered Serper news discovery, article extraction, and Quatarly summarization pipeline
 
 ## Runtime model
 
@@ -50,7 +50,7 @@ External providers:
 
 - Quatarly / Claude-family models for reasoning and structured generation
 - FMP for fundamentals, quotes, technicals, and earnings data
-- Serper for news and web context
+- Serper for news and web context, using workflow-specific recency windows (`day`/`week`) and tiered source retrieval (primary factual sources first, broader fallback second)
 - Tradier for brokerage state, order placement, and market-hours checks
 - Resend for email alerts
 
@@ -99,6 +99,7 @@ Profile behavior:
 - one canonical current row per symbol
 - refresh updates the current record instead of creating parallel “current” rows
 - next-day earnings names are proactively prepared
+- post-earnings cohorts can be proactively refreshed through operator-triggered prep
 - adhoc analysis can trigger missing or stale profile rebuilds
 
 Important persistence:
@@ -120,7 +121,7 @@ High-level business logic:
 1. pre-rank candidates deterministically
 2. perform deeper long/short analysis
 3. construct portfolio-aware final actions
-4. send actions to manual approval rather than directly forcing execution
+4. send actions into the autonomous trade-intent queue, with manual override available only as an operator fallback
 
 Important design rule:
 
@@ -128,30 +129,31 @@ Important design rule:
 
 Important persistence:
 
-- analysis/history tables and approval-related tables in `src/db.js`
-- `trade_approvals` is the live approval queue
+- analysis/history tables and trade-intent queue-related tables in `src/db.js`
+- `trade_approvals` is the live trade-intent queue despite its legacy table name
 
 Business role:
 
 - this is the main decision engine for live Whiskie trading
 
-### 4. Trade approval and execution workflow
+### 4. Trade-intent and execution workflow
 
 Main purpose:
 
-- ensure trades remain human-approved before brokerage execution
+- track proposed trades through autonomous execution lifecycle, while preserving optional operator intervention for edge cases
 
 Flow:
 
 1. daily analysis proposes actions
 2. actions enter `trade_approvals`
-3. operator approves/rejects
-4. executor submits approved trades through Tradier
-5. positions, lots, and trade history are updated in Postgres
+3. the normal autonomous flow auto-approves queue items immediately
+4. operator can still inspect/approve/reject queued items when needed
+5. executor submits approved trades through Tradier
+6. positions, lots, and trade history are updated in Postgres
 
 Important design rule:
 
-- execution is gated by approval state; analysis and execution are intentionally separated
+- analysis and execution remain intentionally separated by queue state, even though human approval is no longer the primary path
 
 ### 5. Portfolio Hub advisory system
 
@@ -180,6 +182,17 @@ Current recommendation/review behavior:
 - implemented recommendation-change rows should no longer remain the active source for the holdings-table `Whiskie View`
 - account rows persist `account_type`, and that context now flows into both holdings review and Recommended New Positions prompts
 - taxable-heavy holdings now bias toward less churn, while IRA/HSA exposure can tolerate more medium-term tactical turnover when justified
+- fresh post-earnings signals can feed PHUB holdings context so add/pass decisions reflect recent earnings reactions
+- recommended-position persistence now keeps technical snapshot data and recommended-account metadata for subsequent reloads
+
+Portfolio Hub unified cycle behavior:
+
+1. build current PHUB view
+2. compute PHUB market context
+3. persist a cycle-run record
+4. run holdings review
+5. run Recommended New Positions
+6. rebuild final PHUB view for UI consumption
 
 Important persistence:
 
@@ -189,7 +202,7 @@ Important persistence:
 
 Design boundary:
 
-- Portfolio Hub does not auto-place trades
+- Portfolio Hub does not auto-place trades and never auto-executes broker orders
 - it is intentionally decoupled from the live bot execution path
 
 ### 6. Earnings reminder system
@@ -206,6 +219,15 @@ High-level flow:
 4. persist predictions in `earnings_reminders`
 5. grade predictions after the correct session-dependent window
 
+Timing model:
+
+- earnings dates come from the FMP-backed calendar refresh
+- earnings session timing is enriched from DoltHub
+- normalized sessions are:
+  - `pre_market`
+  - `post_market`
+  - `unknown`
+
 Lifecycle states:
 
 - `active`
@@ -218,6 +240,27 @@ Important design rule:
 - date-only earnings values are handled as literal calendar dates to avoid timezone drift
 - auto-synced reminder metadata should only carry forward when the existing reminder belongs to the same earnings event date
 
+Post-earnings workflow:
+
+1. identify recent candidates using trading-day-aware eligibility
+2. gate by session-aware readiness
+3. refresh stock profile before final analysis
+4. compute deterministic reaction metrics
+5. run Opus post-earnings analysis
+6. persist the signal into `earnings_analysis_log`
+7. expose the signal to PHUB as shared intelligence
+
+Deterministic reaction metrics include:
+
+- `preEarningsClose`
+- `gapPct`
+- `closeToCloseReactionPct`
+- `intradayReactionPct`
+- `liveReactionPct`
+- `dipBasisPct`
+
+`dipBasisPct` is the primary deterministic dip signal for buyable post-earnings weakness.
+
 ## Scheduling architecture
 
 Cron scheduling is configured in `src/index.js` using `node-cron`.
@@ -227,7 +270,11 @@ Key scheduled families:
 - weekday pre-market and intraday analysis
 - earnings refresh / prediction / grading
 - weekly screening and weekly review jobs
-- Portfolio Hub snapshots
+- Portfolio Hub unified cycles
+
+Important operator-triggered earnings support:
+
+- one-time post-earnings prep endpoint for profile refresh and deploy-time cohort preparation
 
 The scheduler does not create a separate worker process. The server itself runs the cron jobs.
 
@@ -265,18 +312,28 @@ Important route families:
 - Portfolio Hub endpoints
 - earnings-reminder endpoints
 - adhoc analyzer endpoints
+- trade-queue routes (`/approvals`, with `/trade-approvals` compatibility redirect)
 
 The dashboard serves two roles:
 
 1. observability console
 2. operator control panel
 
+Important operator surfaces now include:
+
+- main dashboard
+- Trade Queue
+- Portfolio Hub
+- Earnings Predictor
+- Symbol Overview
+- Cron Status
+
 ## Concurrency and safety controls
 
 Current safety concepts include:
 
 - advisory locks for Portfolio Hub generation paths
-- approval gating before live execution
+- queue-state gating before live execution
 - circuit-breaker and risk-manager controls
 - sector concentration and exposure logic
 - stateful earnings lifecycle transitions
@@ -288,8 +345,9 @@ These controls are important because several subsystems use LLM output, but the 
 
 ### Live bot vs Portfolio Hub
 
-- live bot can lead to broker execution after approval
+- live bot can lead to broker execution after trade-intent queue processing
 - Portfolio Hub is advisory only
+- both consume the same research/intelligence spine, but only the live bot can submit broker orders
 
 ### Heuristic local scoring vs model conviction
 

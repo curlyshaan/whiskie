@@ -1,5 +1,4 @@
 import axios from 'axios';
-import * as cheerio from 'cheerio';
 import * as db from './db.js';
 import fmp from './fmp.js';
 import newsSearch from './news-search.js';
@@ -221,29 +220,6 @@ function summarizeTimingValue(value, maxLength) {
   return normalized.slice(0, maxLength).trim();
 }
 
-function parseYahooEarningsCallTime(html = '') {
-  const text = String(html || '');
-  const patterns = [
-    /[A-Z]{1,6}\s+Q[1-4]\s+\d{4}\s+earnings call[\s\S]{0,250}?\b([A-Z][a-z]{2,8}\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}(?::\d{2})?\s*[AP]M\s*(?:EDT|EST|ET)?)\b/i,
-    /\b([A-Z][a-z]{2,8}\s+\d{1,2},\s+\d{4}\s+at\s+\d{1,2}(?::\d{2})?\s*[AP]M\s*(?:EDT|EST|ET)?)\b/i
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    const raw = match?.[1];
-    if (!raw) continue;
-    return {
-      earningsTimeRaw: summarizeTimingValue(raw, TIMING_RAW_LIMIT),
-      earningsSession: normalizeSession(raw) || 'unknown'
-    };
-  }
-
-  return {
-    earningsTimeRaw: null,
-    earningsSession: 'unknown'
-  };
-}
-
 function normalizeTimingPayload(rawTiming, fallbackDate) {
   const earningsDate = toIsoDate(rawTiming?.earningsDate) || toIsoDate(fallbackDate) || fallbackDate || null;
   const rawTimeInput = String(rawTiming?.earningsTimeRaw || '').trim();
@@ -384,37 +360,38 @@ function classifyReaction(movePct, threshold = 1) {
   return movePct > 0 ? 'up' : 'down';
 }
 
-let yahooTimingFailureCount = 0;
+let doltHubTimingFailureCount = 0;
 
-export async function enrichEarningsWhispersTiming(symbol) {
+export async function enrichDoltHubTiming(symbol) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
   try {
-    const response = await axios.get(`https://finance.yahoo.com/quote/${normalizedSymbol}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
-      },
+    const query = `SELECT act_symbol, date, \`when\`
+FROM \`earnings_calendar\`
+WHERE act_symbol = '${normalizedSymbol.replace(/'/g, "''")}'
+ORDER BY \`date\` DESC
+LIMIT 1;`;
+    const response = await axios.get('https://www.dolthub.com/api/v1alpha1/post-no-preference/earnings/master', {
+      params: { q: query },
       timeout: 10000
     });
 
-    const html = String(response.data || '');
-    const parsedCallTime = parseYahooEarningsCallTime(html);
-    const quotedMatch = html.match(/"earningsDate"\s*:\s*\[[^\]]*"fmt"\s*:\s*"([^"]+)"/i);
-    const rawText = quotedMatch?.[1] || '';
+    const row = response?.data?.rows?.[0] || null;
+    const rawText = String(row?.when || '').trim();
     const normalizedSession = normalizeSession(rawText);
     const summarizedRaw = summarizeTimingValue(rawText, TIMING_RAW_LIMIT);
 
     return {
       symbol: normalizedSymbol,
-      earningsTimeRaw: parsedCallTime.earningsTimeRaw || summarizedRaw,
-      earningsSession: parsedCallTime.earningsSession !== 'unknown' ? parsedCallTime.earningsSession : (normalizedSession || 'unknown'),
-      source: 'yahoo'
+      earningsTimeRaw: summarizedRaw,
+      earningsSession: normalizedSession || 'unknown',
+      source: 'dolthub'
     };
   } catch (error) {
-    yahooTimingFailureCount += 1;
-    if (yahooTimingFailureCount <= 3) {
-      console.warn(`⚠️ Yahoo timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
-    } else if (yahooTimingFailureCount === 4) {
-      console.warn('⚠️ Yahoo timing enrichment failures are recurring; suppressing additional per-symbol warnings for this run');
+    doltHubTimingFailureCount += 1;
+    if (doltHubTimingFailureCount <= 3) {
+      console.warn(`⚠️ DoltHub timing enrichment failed for ${normalizedSymbol}: ${error.message}`);
+    } else if (doltHubTimingFailureCount === 4) {
+      console.warn('⚠️ DoltHub timing enrichment failures are recurring; suppressing additional per-symbol warnings for this run');
     }
   }
 
@@ -422,19 +399,31 @@ export async function enrichEarningsWhispersTiming(symbol) {
     symbol: normalizedSymbol,
     earningsTimeRaw: null,
     earningsSession: 'unknown',
-    source: 'yahoo'
+    source: 'dolthub'
   };
 }
 
 export async function buildEarningsCatalystSummary(symbol, options = {}) {
   const companyName = options.companyName || '';
-  const [earningsContext, stockContext] = await Promise.all([
-    newsSearch.searchStructuredEarningsContext(symbol, { maxResults: 4, companyName }).catch(() => []),
-    newsSearch.searchStructuredStockContext(symbol, { maxResults: 3, companyName, timeRange: 'week' }).catch(() => [])
+  const [earningsHealth, stockHealth] = await Promise.all([
+    newsSearch.getStructuredEarningsContextWithHealth(symbol, { maxResults: 4, companyName }),
+    newsSearch.getStructuredStockContextWithHealth(symbol, { maxResults: 3, companyName, timeRange: 'week' })
   ]);
 
-  const filtered = filterResultsForSymbolIdentity(symbol, companyName, [...earningsContext, ...stockContext]);
-  return summarizeCatalystResults(symbol, filtered);
+  const filtered = filterResultsForSymbolIdentity(
+    symbol,
+    companyName,
+    [...(earningsHealth.results || []), ...(stockHealth.results || [])]
+  );
+  const summary = summarizeCatalystResults(symbol, filtered);
+  if (!earningsHealth.degraded && !stockHealth.degraded) {
+    return summary;
+  }
+  const warnings = [earningsHealth, stockHealth]
+    .filter(item => item.degraded)
+    .map(item => `${item.providerStatus}${item.warning ? ` (${item.warning})` : ''}`)
+    .join('; ');
+  return `[SERPER DEGRADED: ${warnings}] ${summary}`;
 }
 
 export async function getEarningsReminderDetails(symbol) {
@@ -518,22 +507,22 @@ export async function syncAutoEarningsReminders(options = {}) {
       const existingMatchesSameEvent = existing && earningsDate
         ? toIsoDate(existing.earnings_date) === earningsDate
         : false;
-      const shouldRefreshYahooTiming = !existing
+      const shouldRefreshTiming = !existing
         || !existingMatchesSameEvent
         || existing.earnings_session === 'unknown'
         || (existing.earnings_date && earningsDate && toIsoDate(existing.earnings_date) !== earningsDate);
-      const yahooTiming = shouldRefreshYahooTiming
-        ? await enrichEarningsWhispersTiming(item.symbol)
+      const doltHubTiming = shouldRefreshTiming
+        ? await enrichDoltHubTiming(item.symbol)
         : null;
       const saved = await saveEarningsReminder({
         symbol: item.symbol,
         notes: existingMatchesSameEvent ? (existing?.notes || '') : '',
-        earningsSession: yahooTiming?.earningsSession && yahooTiming.earningsSession !== 'unknown'
-          ? yahooTiming.earningsSession
+        earningsSession: doltHubTiming?.earningsSession && doltHubTiming.earningsSession !== 'unknown'
+          ? doltHubTiming.earningsSession
           : (existingMatchesSameEvent ? existing?.earnings_session : undefined),
-        earningsTimeRaw: yahooTiming?.earningsTimeRaw || (existingMatchesSameEvent ? existing?.earnings_time_raw : undefined),
-        earningsSessionSource: yahooTiming?.earningsSession && yahooTiming.earningsSession !== 'unknown'
-          ? yahooTiming.source
+        earningsTimeRaw: doltHubTiming?.earningsTimeRaw || (existingMatchesSameEvent ? existing?.earnings_time_raw : undefined),
+        earningsSessionSource: doltHubTiming?.earningsSession && doltHubTiming.earningsSession !== 'unknown'
+          ? doltHubTiming.source
           : (existingMatchesSameEvent ? existing?.earnings_session_source : undefined),
         catalystSummary: existingMatchesSameEvent ? existing?.catalyst_summary : undefined,
         emailEnabled: existingMatchesSameEvent ? existing?.email_enabled !== false : true
@@ -605,18 +594,22 @@ export async function runOfficialReminderPrediction(reminder) {
   const profile = ensured?.profile || null;
   const stockInfo = await db.getStockInfo(symbol);
   const marketOpen = false;
-  const [quote, rawCatalystSummary, latestNews] = await Promise.all([
+  const [quote, rawCatalystSummary, latestNewsHealth] = await Promise.all([
     fmp.getQuote(symbol).catch(() => null),
     Promise.resolve(reminder.catalyst_summary || '').then(async existing => existing || buildEarningsCatalystSummary(symbol, {
       companyName: stockInfo?.company_name
     })),
-    newsSearch.searchStructuredStockContext(symbol, {
+    newsSearch.getStructuredStockContextWithHealth(symbol, {
       maxResults: 4,
       companyName: stockInfo?.company_name,
       timeRange: 'week'
-    }).catch(() => [])
+    })
   ]);
-  const filteredNews = filterResultsForSymbolIdentity(symbol, stockInfo?.company_name, latestNews).slice(0, 4);
+  const filteredNews = filterResultsForSymbolIdentity(
+    symbol,
+    stockInfo?.company_name,
+    latestNewsHealth?.results || []
+  ).slice(0, 4);
   const currentPrice = resolveMarketPrice(quote, { marketOpen, fallback: null });
   const catalystBrief = await buildEarningsCatalystBrief(symbol, rawCatalystSummary)
     .catch(() => rawCatalystSummary);
@@ -786,7 +779,7 @@ export default {
   buildEarningsCatalystSummary,
   buildEarningsCatalystBrief,
   buildLiveReminderPreview,
-  enrichEarningsWhispersTiming,
+  enrichDoltHubTiming,
   calculateScheduledSendAt,
   calculateGradeEligibleAt
 };

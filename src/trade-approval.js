@@ -2,17 +2,17 @@ import * as db from './db.js';
 import email from './email.js';
 
 /**
- * Trade Approval System
- * Manages pending trades requiring user approval via web UI
+ * Trade Intent Queue
+ * Persists autonomous trade intents and optionally supports manual operator intervention
  *
  * Flow:
- * 1. Bot generates trade recommendations
- * 2. Trades are queued as "pending_approval"
- * 3. Email sent to user with trade details
- * 4. User approves/rejects via web UI
+ * 1. Bot generates trade intents
+ * 2. Trades are queued in trade_approvals for execution lifecycle tracking
+ * 3. Autonomous flow can auto-approve intents immediately
+ * 4. Optional operator UI can still inspect, approve, or reject edge cases
  * 5. Approved trades are executed
  *
- * Note: OCO/OTOCO orders only require approval for initial entry order
+ * Note: OCO/OTOCO orders only require a tracked entry intent for the initial entry order
  * Stop-loss and take-profit legs are automatically placed after entry fills
  */
 
@@ -22,7 +22,7 @@ class TradeApprovalManager {
   }
 
   /**
-   * Initialize trade approval table
+   * Initialize trade-intent queue table
    */
   async initDatabase() {
     await db.query(`
@@ -107,12 +107,12 @@ class TradeApprovalManager {
       ADD COLUMN IF NOT EXISTS quantity_adjustment_note TEXT
     `);
 
-    console.log('✅ Trade approval table initialized');
+    console.log('✅ Trade intent table initialized');
   }
 
   /**
-   * Submit trade for approval
-   * Returns approval ID
+   * Submit trade intent
+   * Returns queue ID
    */
   async submitForApproval(trade, skipEmail = false) {
     const {
@@ -157,7 +157,7 @@ class TradeApprovalManager {
       quantityAdjustmentNote
     } = trade;
 
-    // Calculate expiration (24 hours from now)
+    // Retain expiry for optional manual intervention workflows
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + this.AUTO_EXPIRE_HOURS);
 
@@ -206,12 +206,29 @@ class TradeApprovalManager {
       await this.sendApprovalEmail(approvalId, trade);
     }
 
-    console.log(`📧 Trade approval ${approvalId} submitted for ${symbol}`);
+    console.log(`📥 Trade intent ${approvalId} queued for ${symbol}`);
+    return approvalId;
+  }
+
+  async submitForExecution(trade, skipEmail = true) {
+    const approvalId = await this.submitForApproval(trade, skipEmail);
+
+    await db.query(
+      `UPDATE trade_approvals
+       SET status = 'approved',
+           approved_at = NOW()
+       WHERE id = $1
+         AND status = 'pending'
+       RETURNING id`,
+      [approvalId]
+    );
+
+    console.log(`🤖 Trade intent ${approvalId} auto-approved for autonomous execution`);
     return approvalId;
   }
 
   /**
-   * Submit multiple trades for approval (batch)
+   * Submit multiple trade intents (batch)
    */
   async submitBatchForApproval(trades) {
     const approvalIds = [];
@@ -223,7 +240,7 @@ class TradeApprovalManager {
 
     await this.sendBatchApprovalEmail(approvalIds, trades);
 
-    console.log(`📧 Batch of ${trades.length} trades submitted for approval`);
+    console.log(`📥 Batch of ${trades.length} trade intents queued`);
     return approvalIds;
   }
 
@@ -258,16 +275,16 @@ class TradeApprovalManager {
   }
 
   /**
-   * Send email notification for single trade approval
+   * Send email notification for single manual-review trade
    */
   async sendApprovalEmail(approvalId, trade) {
     const { symbol, action, quantity, entryPrice, stopLoss, takeProfit, reasoning } = trade;
 
-    const subject = `Trade Approval Required: ${action.toUpperCase()} ${quantity} ${symbol}`;
+    const subject = `Manual Trade Review Requested: ${action.toUpperCase()} ${quantity} ${symbol}`;
 
     const html = `
-      <h2>Trade Approval Required</h2>
-      <p>The bot has identified a trading opportunity that requires your approval.</p>
+      <h2>Manual Trade Review Requested</h2>
+      <p>The bot has identified a trading opportunity that was routed for operator review.</p>
 
       <h3>Trade Details:</h3>
       <ul>
@@ -283,18 +300,18 @@ class TradeApprovalManager {
       <p>${reasoning}</p>
 
       <h3>Action Required:</h3>
-      <p>Please review and approve/reject this trade in the dashboard:</p>
+      <p>Please inspect this queued trade in the dashboard:</p>
       <p><a href="${process.env.DASHBOARD_URL || 'http://localhost:8080'}/approvals"
          style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
-         Review Trade
+         Open Trade Queue
       </a></p>
 
-      <p><em>This approval request expires in 24 hours.</em></p>
+      <p><em>This queued review expires in 24 hours if not acted on.</em></p>
 
       <hr>
       <p style="font-size: 12px; color: #666;">
-        Approval ID: ${approvalId}<br>
-        Note: For OCO/OTOCO orders, you only approve the entry order.
+        Queue ID: ${approvalId}<br>
+        Note: For OCO/OTOCO orders, the queue tracks the entry order.
         Stop-loss and take-profit orders are automatically placed after entry fills.
       </p>
     `;
@@ -306,7 +323,7 @@ class TradeApprovalManager {
    * Send batch email notification for multiple trades
    */
   async sendBatchApprovalEmail(approvalIds, trades) {
-    const subject = `${trades.length} Trades Require Your Approval`;
+    const subject = `${trades.length} Trades Need Manual Review`;
 
     let tradesHtml = '';
     trades.forEach((trade, i) => {
@@ -325,26 +342,26 @@ class TradeApprovalManager {
     });
 
     const html = `
-      <h2>${trades.length} Trades Require Your Approval</h2>
-      <p>The bot has identified multiple trading opportunities that require your approval.</p>
+      <h2>${trades.length} Trades Need Manual Review</h2>
+      <p>The bot has identified multiple trading opportunities that were routed for operator review.</p>
 
       ${tradesHtml}
 
       <h3>Action Required:</h3>
-      <p>Please review and approve/reject these trades in the dashboard:</p>
+      <p>Please inspect these queued trades in the dashboard:</p>
       <p><a href="${process.env.DASHBOARD_URL || 'http://localhost:8080'}/approvals"
          style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">
-         Review All Trades
+         Open Trade Queue
       </a></p>
 
-      <p><em>These approval requests expire in 24 hours.</em></p>
+      <p><em>These queued reviews expire in 24 hours.</em></p>
     `;
 
     await email.sendEmail(email.alertEmail, subject, html);
   }
 
   /**
-   * Get all pending approvals
+   * Get all pending manual-review trade intents
    */
   async getPendingApprovals() {
     const result = await db.query(
@@ -357,7 +374,7 @@ class TradeApprovalManager {
   }
 
   /**
-   * Get approval by ID
+   * Get trade intent by ID
    */
   async getApproval(approvalId) {
     const result = await db.query(
@@ -375,11 +392,11 @@ class TradeApprovalManager {
     const approval = await this.getApproval(approvalId);
 
     if (!approval) {
-      throw new Error(`Approval ${approvalId} not found`);
+      throw new Error(`Trade intent ${approvalId} not found`);
     }
 
     if (approval.status !== 'pending') {
-      throw new Error(`Approval ${approvalId} is already ${approval.status}`);
+      throw new Error(`Trade intent ${approvalId} is already ${approval.status}`);
     }
 
     // Check if expired
@@ -392,7 +409,7 @@ class TradeApprovalManager {
          WHERE id = $1`,
         [approvalId]
       );
-      throw new Error(`Approval ${approvalId} has expired`);
+      throw new Error(`Trade intent ${approvalId} has expired`);
     }
 
     // Mark as approved
@@ -403,11 +420,11 @@ class TradeApprovalManager {
       [approvalId]
     );
 
-    console.log(`✅ Trade ${approvalId} approved by ${userId}`);
+    console.log(`✅ Trade intent ${approvalId} approved by ${userId}`);
 
     return {
       success: true,
-      message: 'Trade approved and ready for execution',
+      message: 'Trade intent approved and ready for execution',
       approvalId
     };
   }
@@ -419,11 +436,11 @@ class TradeApprovalManager {
     const approval = await this.getApproval(approvalId);
 
     if (!approval) {
-      throw new Error(`Approval ${approvalId} not found`);
+      throw new Error(`Trade intent ${approvalId} not found`);
     }
 
     if (approval.status !== 'pending') {
-      throw new Error(`Approval ${approvalId} is already ${approval.status}`);
+      throw new Error(`Trade intent ${approvalId} is already ${approval.status}`);
     }
 
     // Mark as rejected
@@ -434,11 +451,11 @@ class TradeApprovalManager {
       [approvalId, reason]
     );
 
-    console.log(`❌ Trade ${approvalId} rejected by ${userId}: ${reason}`);
+    console.log(`❌ Trade intent ${approvalId} rejected by ${userId}: ${reason}`);
 
     return {
       success: true,
-      message: 'Trade rejected',
+      message: 'Trade intent rejected',
       approvalId
     };
   }
@@ -454,11 +471,11 @@ class TradeApprovalManager {
       [approvalId]
     );
 
-    console.log(`✅ Trade ${approvalId} executed (order ${orderId})`);
+    console.log(`✅ Trade intent ${approvalId} executed (order ${orderId})`);
   }
 
   /**
-   * Auto-expire old pending approvals
+   * Auto-expire old pending manual-review trade intents
    * Run this periodically (e.g., hourly cron)
    */
   async expirePendingApprovals() {
@@ -474,7 +491,7 @@ class TradeApprovalManager {
     const expired = result.rows || [];
 
     if (expired.length > 0) {
-      console.log(`⏰ Expired ${expired.length} pending trade approvals`);
+      console.log(`⏰ Expired ${expired.length} pending trade intents`);
       expired.forEach(t => console.log(`   - ${t.symbol} (ID: ${t.id})`));
     }
 
@@ -482,7 +499,7 @@ class TradeApprovalManager {
   }
 
   /**
-   * Clear all pending approvals
+   * Clear all pending manual-review trade intents
    * Marks all pending trades as rejected with reason "Cleared by user"
    */
   async clearAllPending() {
@@ -496,7 +513,7 @@ class TradeApprovalManager {
     const cleared = result.rows || [];
 
     if (cleared.length > 0) {
-      console.log(`🗑️ Cleared ${cleared.length} pending trade approvals`);
+      console.log(`🗑️ Cleared ${cleared.length} pending trade intents`);
       cleared.forEach(t => console.log(`   - ${t.symbol} (ID: ${t.id})`));
     }
 
@@ -508,7 +525,7 @@ class TradeApprovalManager {
   }
 
   /**
-   * Get approval statistics
+   * Get trade-intent queue statistics
    */
   async getApprovalStats() {
     const result = await db.query(`

@@ -3,7 +3,7 @@ import * as db from './db.js';
 import { stripThinkingBlocks } from './utils.js';
 import earningsReminders from './earnings-reminders.js';
 import analysisEngine from './analysis.js';
-import { buildPortfolioHubView, DEFAULT_PORTFOLIO_HUB_ACCOUNTS, runPortfolioHubOpusReview, runPortfolioHubRecommendedPositions } from './portfolio-hub.js';
+import { buildPortfolioHubView, DEFAULT_PORTFOLIO_HUB_ACCOUNTS, runPortfolioHubCycle, runPortfolioHubOpusReview, runPortfolioHubRecommendedPositions } from './portfolio-hub.js';
 import { getEarningsReminderDetails } from './earnings-reminders.js';
 
 const router = express.Router();
@@ -425,6 +425,23 @@ function formatDateTime(value) {
   });
 }
 
+function formatCycleTriggerLabel(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) return '-';
+  if (normalized === 'manual') return 'Manual';
+  if (normalized === 'scheduled') return 'Scheduled';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function formatCycleStatusLabel(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) return '-';
+  if (normalized === 'completed') return 'Completed';
+  if (normalized === 'running') return 'Running';
+  if (normalized === 'failed') return 'Failed';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
 function formatPortfolioHubTransactionType(value) {
   const normalized = String(value || '').trim().toLowerCase();
   const labels = {
@@ -461,6 +478,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
   const performanceRange = portfolioHub.performanceRange || 'week';
   const performanceMetric = portfolioHub.performanceMetric || 'pct';
   const latestFullReviewAt = portfolioHub.latestFullReviewAt || null;
+  const latestCycleRun = portfolioHub.latestCycleRun || null;
   const accountOptions = DEFAULT_PORTFOLIO_HUB_ACCOUNTS;
   const accountTypeOptions = ['Taxable Cash', 'Taxable Margin', 'IRA', 'HSA', 'Other'];
   const nextSortDirection = column => (
@@ -475,11 +493,12 @@ function renderPortfolioHubSection(portfolioHub = {}) {
       <div class="section-title">🧭 Portfolio Hub</div>
       <p class="subtitle" style="margin-top:0;">Separate from Whiskie live trading. Manual multi-account holdings with portfolio-wide analytics.</p>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
-        <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Recalculate Portfolio Hub</button>
-        <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Run Opus Portfolio Review</button>
+        <button class="analyze-btn" onclick="refreshPortfolioHub()" id="portfolioHubRefreshBtn">Run Unified Cycle</button>
+        <button class="analyze-btn" onclick="runPortfolioHubOpusReview()" id="portfolioHubOpusBtn">Run Holding Review Only</button>
         <button class="analyze-btn" onclick="togglePortfolioHubAdminPanel()">Toggle Admin / Debug</button>
       </div>
-      <div class="position-summary-note" style="margin-bottom:14px;">Last full Opus review: ${latestFullReviewAt ? escapeHtml(formatDateTime(latestFullReviewAt)) : 'Not run yet'}</div>
+      <div class="position-summary-note" style="margin-bottom:8px;">Last full holding review: ${latestFullReviewAt ? escapeHtml(formatDateTime(latestFullReviewAt)) : 'Not run yet'}</div>
+      <div class="position-summary-note" style="margin-bottom:14px;">Latest unified cycle: ${latestCycleRun?.generated_at ? `${escapeHtml(formatDateTime(latestCycleRun.generated_at))} • ${escapeHtml(formatCycleTriggerLabel(latestCycleRun.trigger_type))} • ${escapeHtml(formatCycleStatusLabel(latestCycleRun.status))}` : 'Not run yet'}</div>
 
       <div class="stats" style="margin-top:16px;">
         <div class="stat-card"><div class="stat-label">Total Value</div><div class="stat-value">${formatMoney(summary.totalValue || 0)}</div></div>
@@ -524,6 +543,20 @@ function renderPortfolioHubSection(portfolioHub = {}) {
             <button class="analyze-btn" onclick="savePortfolioHubTransaction()">Save Transaction</button>
           </div>
           <div class="position-summary-note" style="margin-top:10px;">Transactions now auto-update account cash: buy/cover/withdraw reduce cash, sell/short/deposit increase cash. Use the cash override only to sync Portfolio Hub back to the broker's exact live cash balance.</div>
+
+          <div class="detail-section-title" style="margin-top:16px;">Holding Stop / Target Plan</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <input id="phPlanSymbol" placeholder="Symbol" maxlength="10" />
+            <select id="phPlanPositionType">
+              <option value="long">Long</option>
+              <option value="short">Short</option>
+            </select>
+            <input id="phPlanStopLoss" type="number" step="0.0001" placeholder="My stop loss" />
+            <input id="phPlanTakeProfit" type="number" step="0.0001" placeholder="My price target" />
+            <input id="phPlanNotes" placeholder="Optional plan notes" />
+            <button class="analyze-btn" onclick="savePortfolioHubHoldingPlan()">Save Plan</button>
+          </div>
+          <div class="position-summary-note" style="margin-top:10px;">These stop-loss and target fields are your manual Portfolio Hub plan values. Opus can recommend different advisory levels, but Combined Holdings will show your saved plan.</div>
         </div>
       </details>
 
@@ -592,9 +625,9 @@ function renderPortfolioHubSection(portfolioHub = {}) {
         <summary>Recommended New Positions</summary>
         <div style="margin-top:12px;">
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin:10px 0 12px;">
-            <button class="analyze-btn" onclick="refreshPortfolioHubRecommendedPositions()" id="portfolioHubRecommendedBtn">Refresh Recommendations</button>
+            <button class="analyze-btn" onclick="refreshPortfolioHubRecommendedPositions()" id="portfolioHubRecommendedBtn">Run Unified Cycle</button>
           </div>
-          <div class="position-summary-note" style="margin-bottom:12px;">Last generated: ${recommendedPositionsRun?.generated_at ? escapeHtml(formatDateTime(recommendedPositionsRun.generated_at)) : 'Not run yet'}${recommendedPositionsRun?.freshness?.label ? ` • ${escapeHtml(recommendedPositionsRun.freshness.label)}` : ''}</div>
+          <div class="position-summary-note" style="margin-bottom:12px;">Last generated by unified cycle: ${recommendedPositionsRun?.generated_at ? escapeHtml(formatDateTime(recommendedPositionsRun.generated_at)) : 'Not run yet'}${recommendedPositionsRun?.freshness?.label ? ` • ${escapeHtml(recommendedPositionsRun.freshness.label)}` : ''}</div>
           ${recommendedPositions.length === 0 ? '<div class="no-data">No recommended new positions yet. Run a refresh to generate long-term and medium-term ideas.</div>' : `
             <div style="display:grid; gap:14px;">
               ${recommendedPositions.map(item => `
@@ -668,8 +701,8 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                   <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('unrealizedPnLPct', '${nextSortDirection('unrealizedPnLPct')}')">P/L${sortIndicator('unrealizedPnLPct')}</button></th>
                   <th>Earnings</th>
                   <th><button class="filter-btn" onclick="setPortfolioHubHoldingsSort('whiskiePathway', '${nextSortDirection('whiskiePathway')}')">Whiskie Pathway${sortIndicator('whiskiePathway')}</button></th>
-                  <th>Stop</th>
-                  <th>Target</th>
+                  <th>My Stop</th>
+                  <th>My Target</th>
                 </tr>
               </thead>
               <tbody>
@@ -684,8 +717,8 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                     <td class="${Number(row.unrealizedPnL || 0) >= 0 ? 'positive' : 'negative'}">${formatMoney(row.unrealizedPnL)}<br>${formatPercent(row.unrealizedPnLPct)}</td>
                     <td>${formatShortDate(row.nextEarningsDate)}</td>
                     <td>${escapeHtml(row.whiskiePathway || '-')}</td>
-                    <td>${row.stopLoss ? formatMoney(row.stopLoss) : '-'}</td>
-                    <td>${row.takeProfit ? formatMoney(row.takeProfit) : '-'}</td>
+                    <td>${row.userStopLoss ? formatMoney(row.userStopLoss) : '-'}</td>
+                    <td>${row.userTakeProfit ? formatMoney(row.userTakeProfit) : '-'}</td>
                   </tr>
                   <tr>
                     <td colspan="11" style="background:#131a30;">
@@ -699,8 +732,29 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                             <span class="detail-chip">Holding posture: ${escapeHtml(row.whiskieHoldingPosture || '-')}</span>
                             <span class="detail-chip">Guidance source: ${escapeHtml(row.whiskieSource || '-')}</span>
                             <span class="detail-chip">Confidence: ${escapeHtml(row.whiskieConfidence || '-')}</span>
+                            ${row.postEarningsSignal?.isFresh ? `<span class="detail-chip">Post-earnings: ${escapeHtml(row.postEarningsSignal.recommendation || '-')}</span>` : ''}
                           </div>
                           ${renderCombinedHoldingDecisionBar(row)}
+                          ${renderDetailSection('Fresh post-earnings signal', renderKeyValueRows([
+                            { label: 'Recommendation', value: row.postEarningsSignal?.recommendation || '-' },
+                            { label: 'Signal age', value: row.postEarningsSignal?.ageTradingDays != null ? `${row.postEarningsSignal.ageTradingDays} trading day(s)` : '-' },
+                            { label: 'Pre-earnings close', value: row.postEarningsSignal?.reactionSnapshot?.preEarningsClose ? formatMoney(row.postEarningsSignal.reactionSnapshot.preEarningsClose) : '-' },
+                            { label: 'Current price', value: row.postEarningsSignal?.reactionSnapshot?.currentPrice ? formatMoney(row.postEarningsSignal.reactionSnapshot.currentPrice) : '-' },
+                            { label: 'Reaction %', value: row.postEarningsSignal?.reactionSnapshot?.reactionPct != null ? `${Number(row.postEarningsSignal.reactionSnapshot.reactionPct).toFixed(2)}%` : '-' },
+                            { label: 'Gap %', value: row.postEarningsSignal?.reactionSnapshot?.gapPct != null ? `${Number(row.postEarningsSignal.reactionSnapshot.gapPct).toFixed(2)}%` : '-' },
+                            { label: 'Dip bucket', value: row.postEarningsSignal?.reactionSnapshot?.dipSeverity || '-' },
+                            { label: 'Why', value: row.postEarningsSignal?.why || '-' },
+                            { label: 'Trigger', value: row.postEarningsSignal?.trigger || '-' }
+                          ]))}
+                          ${renderDetailSection('Manual holding plan', renderKeyValueRows([
+                            { label: 'My stop loss', value: row.userStopLoss ? formatMoney(row.userStopLoss) : '-' },
+                            { label: 'My target', value: row.userTakeProfit ? formatMoney(row.userTakeProfit) : '-' },
+                            { label: 'Plan notes', value: row.holdingPlanNotes || '-' }
+                          ]))}
+                          ${renderDetailSection('Opus advisory risk levels', renderKeyValueRows([
+                            { label: 'Advisory stop loss', value: row.advisoryStopLoss ? formatMoney(row.advisoryStopLoss) : '-' },
+                            { label: 'Advisory target', value: row.advisoryTakeProfit ? formatMoney(row.advisoryTakeProfit) : '-' }
+                          ]))}
                           ${renderDetailSection('Detail', formatStructuredText(row.whiskieDetail || '-'))}
                           ${renderDetailSection('Thesis summary', formatStructuredText(row.whiskieNotes || '-'))}
                           ${renderDetailSection('Catalyst summary', formatStructuredText(row.whiskieCatalysts || '-'))}
@@ -991,11 +1045,35 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       }
     }
 
+    async function savePortfolioHubHoldingPlan() {
+      const payload = {
+        symbol: document.getElementById('phPlanSymbol').value,
+        position_type: document.getElementById('phPlanPositionType').value,
+        user_stop_loss: document.getElementById('phPlanStopLoss').value,
+        user_take_profit: document.getElementById('phPlanTakeProfit').value,
+        notes: document.getElementById('phPlanNotes').value
+      };
+
+      try {
+        const response = await fetch('/api/portfolio-hub/holding-plans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'Failed to save holding plan');
+        alert('Portfolio Hub holding plan saved.');
+        location.reload();
+      } catch (error) {
+        alert('Error saving Portfolio Hub holding plan: ' + error.message);
+      }
+    }
+
     async function refreshPortfolioHub() {
       const btn = document.getElementById('portfolioHubRefreshBtn');
       if (btn) {
         btn.disabled = true;
-        btn.textContent = 'Recalculating Portfolio Hub...';
+          btn.textContent = 'Running unified cycle...';
       }
 
       try {
@@ -1008,7 +1086,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Recalculate Portfolio Hub';
+          btn.textContent = 'Run Unified Cycle';
         }
       }
     }
@@ -1026,7 +1104,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
         if (!response.ok || !data.success) throw new Error(data.error || 'Failed to run Opus portfolio review');
         const reviewedCount = Array.isArray(data.result?.holdings) ? data.result.holdings.length : 0;
         alert(reviewedCount > 0
-          ? ('Opus portfolio review completed for ' + reviewedCount + ' holding(s) and saved.')
+          ? ('Holding review completed for ' + reviewedCount + ' holding(s) and saved.')
           : 'No Portfolio Hub holdings needed an Opus refresh right now.');
         location.reload();
       } catch (error) {
@@ -1034,7 +1112,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Run Opus Portfolio Review';
+          btn.textContent = 'Run Holding Review Only';
         }
       }
     }
@@ -1043,14 +1121,18 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       const btn = document.getElementById('portfolioHubRecommendedBtn');
       if (btn) {
         btn.disabled = true;
-        btn.textContent = 'Refreshing recommendations...';
+        btn.textContent = 'Running unified cycle...';
       }
 
       try {
         const response = await fetch('/api/portfolio-hub/recommended-positions', { method: 'POST' });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.error || 'Failed to generate recommended positions');
-        const count = Array.isArray(data.result?.items) ? data.result.items.length : 0;
+        const count = Array.isArray(data.result?.items)
+          ? data.result.items.length
+          : Array.isArray(data.result?.recommendedRun?.items)
+            ? data.result.recommendedRun.items.length
+            : 0;
         alert(count > 0
           ? ('Recommended new positions refreshed for ' + count + ' idea(s).')
           : 'No new recommended positions were generated.');
@@ -1060,7 +1142,7 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
       } finally {
         if (btn) {
           btn.disabled = false;
-          btn.textContent = 'Refresh Recommendations';
+          btn.textContent = 'Run Unified Cycle';
         }
       }
     }
@@ -1112,7 +1194,8 @@ function generatePortfolioHubHTML(portfolioHub = {}) {
             '<div class="metric-card"><div class="metric-label">Active locks</div><div class="metric-value">' + escapeHtml(String((data.locks || []).length)) + '</div></div>' +
           '</div>' +
           renderDetailSection('Lock rows', renderJsonValue(data.locks || [])) +
-          renderDetailSection('Latest review run', renderJsonValue(data.latestReviewRun || null)) +
+          renderDetailSection('Latest unified cycle run', renderJsonValue(data.latestCycleRun || null)) +
+          renderDetailSection('Latest holding review run', renderJsonValue(data.latestReviewRun || null)) +
           renderDetailSection('Latest recommended-position run', renderJsonValue(data.latestRecommendedRun || null));
       } catch (error) {
         content.innerHTML = '<div class="no-data">' + escapeHtml(error.message) + '</div>';
@@ -1158,7 +1241,7 @@ function generateSymbolOverviewHTML(symbol, data = {}) {
   const quote = data.quote || null;
   const fundamentals = data.fundamentals || null;
   const technicals = data.technicals || null;
-  const latestApproval = data.latestApproval || null;
+  const latestTradeIntent = data.latestTradeIntent || null;
 
   return `
 <!DOCTYPE html>
@@ -1228,16 +1311,16 @@ function generateSymbolOverviewHTML(symbol, data = {}) {
     </div>
 
     <div class="card">
-      <h2>Latest Approval Context</h2>
-      ${latestApproval ? renderMetricGrid([
-        { label: 'Action', value: latestApproval.action },
-        { label: 'Status', value: latestApproval.status },
-        { label: 'Pathway', value: latestApproval.pathway },
-        { label: 'Intent', value: latestApproval.intent },
-        { label: 'Target Type', value: latestApproval.target_type },
-        { label: 'Stop', value: latestApproval.stop_loss ? formatMoney(latestApproval.stop_loss) : '' },
-        { label: 'Take Profit', value: latestApproval.take_profit ? formatMoney(latestApproval.take_profit) : (latestApproval.target_type === 'flexible_fundamental' ? 'Flexible' : '') }
-      ]) : '<div class="muted">No recent approval context for this symbol.</div>'}
+      <h2>Latest Trade Intent</h2>
+      ${latestTradeIntent ? renderMetricGrid([
+        { label: 'Action', value: latestTradeIntent.action },
+        { label: 'Status', value: latestTradeIntent.status },
+        { label: 'Pathway', value: latestTradeIntent.pathway },
+        { label: 'Intent', value: latestTradeIntent.intent },
+        { label: 'Target Type', value: latestTradeIntent.target_type },
+        { label: 'Stop', value: latestTradeIntent.stop_loss ? formatMoney(latestTradeIntent.stop_loss) : '' },
+        { label: 'Take Profit', value: latestTradeIntent.take_profit ? formatMoney(latestTradeIntent.take_profit) : (latestTradeIntent.target_type === 'flexible_fundamental' ? 'Flexible' : '') }
+      ]) : '<div class="muted">No recent trade intent saved for this symbol.</div>'}
     </div>
 
     <div class="card">
@@ -1544,11 +1627,11 @@ function buildTradeBlockLookup(text) {
   return lookup;
 }
 
-function renderExecutableTradesFromApprovals(approvals, analysisText) {
-  if (!approvals?.length) return '';
+function renderExecutableTradeIntents(tradeIntents, analysisText) {
+  if (!tradeIntents?.length) return '';
 
   const blockLookup = buildTradeBlockLookup(analysisText);
-  const tradeCards = approvals.map(trade => {
+  const tradeCards = tradeIntents.map(trade => {
     const block = blockLookup.get(String(trade.symbol || '').toUpperCase())?.body || '';
     const extract = (label) => {
       const fieldMatch = block.match(new RegExp(`${label}:\\s*(.+)`, 'i'));
@@ -1778,7 +1861,7 @@ router.get('/symbol/:symbol', async (req, res) => {
       return res.status(400).send('Symbol is required');
     }
 
-    const [portfolioHub, profile, watchlist, optionsRuns, earningsDetails, quote, fundamentals, technicals, latestApproval] = await Promise.all([
+    const [portfolioHub, profile, watchlist, optionsRuns, earningsDetails, quote, fundamentals, technicals, latestTradeIntent] = await Promise.all([
       buildPortfolioHubView({ performanceRange: 'week', performanceMetric: 'pct' }).catch(() => ({ holdings: [] })),
       db.getLatestStockProfile(symbol).catch(() => null),
       db.getLatestSaturdayWatchlistEntry(symbol).catch(() => null),
@@ -1787,7 +1870,7 @@ router.get('/symbol/:symbol', async (req, res) => {
       (await import('./fmp.js')).default.getQuote(symbol).catch(() => null),
       (await import('./fmp.js')).default.getFundamentals(symbol).catch(() => null),
       (await import('./fmp.js')).default.getTechnicalIndicators(symbol).catch(() => null),
-      db.getLatestPendingApprovalForSymbol(symbol).catch(() => null)
+      db.getLatestTradeIntentForSymbol(symbol).catch(() => null)
     ]);
 
     const optionsRun = (optionsRuns || []).find(run => String(run.symbol || '').toUpperCase() === symbol) || null;
@@ -1800,7 +1883,7 @@ router.get('/symbol/:symbol', async (req, res) => {
       quote,
       fundamentals,
       technicals,
-      latestApproval
+      latestTradeIntent
     }));
   } catch (error) {
     console.error('Symbol overview error:', error);
@@ -2737,8 +2820,8 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
 
     <div class="nav-grid">
       <a href="/approvals" class="nav-card approvals" id="approvalsBtn">
-        <div class="nav-card-title">⚖️ Trade Approvals</div>
-        <div class="nav-card-copy">Review queued trades before execution.</div>
+        <div class="nav-card-title">⚙️ Trade Queue</div>
+        <div class="nav-card-copy">Inspect autonomous trade intents, execution state, and manual overrides.</div>
       </a>
       <a href="/adhoc-analyzer" class="nav-card adhoc">
         <div class="nav-card-title">🔍 Adhoc Analyzer</div>
@@ -2835,7 +2918,7 @@ function generateDashboardHTML(analyses, positions, trades, snapshot, dailyState
           let htmlContent;
           if (a.decision_type === 'deep-analysis') {
             const relatedApprovals = todaysApprovals.filter(row => row.decision_run_id && row.decision_run_id === a.run_id);
-            const executableTradesHtml = renderExecutableTradesFromApprovals(relatedApprovals, cleanedRecommendation);
+            const executableTradesHtml = renderExecutableTradeIntents(relatedApprovals, cleanedRecommendation);
             htmlContent = `${executableTradesHtml}${renderPhase4Analysis(cleanedRecommendation)}`;
           } else {
             htmlContent = markdownToHtml(cleanedRecommendation);
@@ -3736,7 +3819,7 @@ function renderOptionsRun(result, createdAt) {
   `;
 }
 
-// Trade Approval Routes
+// Trade Queue Routes
 router.get('/approvals', async (req, res) => {
   try {
     const tradeApproval = (await import('./trade-approval.js')).default;
@@ -3750,7 +3833,7 @@ router.get('/approvals', async (req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Trade Approvals - Whiskie</title>
+  <title>Trade Queue - Whiskie</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -4057,8 +4140,8 @@ router.get('/approvals', async (req, res) => {
 </head>
 <body>
   <div class="container">
-    <h1>⚖️ Trade Approvals</h1>
-    <p class="subtitle">Review and approve pending trades, including pathway-exit actions now routed through approvals.</p>
+    <h1>⚙️ Trade Queue</h1>
+    <p class="subtitle">Inspect queued trade intents, autonomous execution state, and optional manual overrides.</p>
 
     <a href="/" class="btn btn-back">← Back to Dashboard</a>
     ${pending.length > 0 ? `<button class="btn btn-clear-all" onclick="clearAllPending()">🗑️ Clear All Pending</button>` : ''}
@@ -4087,7 +4170,7 @@ router.get('/approvals', async (req, res) => {
     </div>
 
     <div class="trade-card" style="margin-bottom:24px;">
-      <div class="trade-symbol">Approval Analytics</div>
+        <div class="trade-symbol">Queue Analytics</div>
       ${analytics.length ? `
         <div class="trade-details">
           ${analytics.map(row => `
@@ -4103,8 +4186,8 @@ router.get('/approvals', async (req, res) => {
 
     ${pending.length === 0 ? `
       <div class="empty-state">
-        <h2>✅ No pending approvals</h2>
-        <p>All trades have been reviewed</p>
+        <h2>✅ No pending manual actions</h2>
+        <p>Autonomous trade intents are either already processed or do not need intervention.</p>
       </div>
     ` : `
       <div class="batch-toolbar">
@@ -4126,7 +4209,7 @@ router.get('/approvals', async (req, res) => {
 
       return `
       <div class="trade-card">
-        <div style="margin-bottom:12px;"><label><input type="checkbox" class="approval-checkbox" value="${trade.id}"> Select for batch action</label></div>
+        <div style="margin-bottom:12px;"><label><input type="checkbox" class="approval-checkbox" value="${trade.id}"> Select for manual batch action</label></div>
         <div class="trade-header">
           <div class="trade-symbol">${escapeHtml(trade.symbol)}</div>
           <div>
@@ -4231,7 +4314,7 @@ router.get('/approvals', async (req, res) => {
         </div>
 
         <div class="expires">
-          Expires: ${new Date(trade.expires_at).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET
+          Manual-review expiry: ${new Date(trade.expires_at).toLocaleString('en-US', { timeZone: 'America/New_York' })} ET
         </div>
       </div>
     `;
@@ -4293,7 +4376,7 @@ router.get('/approvals', async (req, res) => {
     async function approveSelectedTrades() {
       const approvalIds = getSelectedApprovalIds();
       if (!approvalIds.length) {
-        alert('Select at least one approval first.');
+        alert('Select at least one queue item first.');
         return;
       }
       if (!confirm(\`Approve \${approvalIds.length} selected trade(s)?\`)) return;
@@ -4320,7 +4403,7 @@ router.get('/approvals', async (req, res) => {
     async function rejectSelectedTrades() {
       const approvalIds = getSelectedApprovalIds();
       if (!approvalIds.length) {
-        alert('Select at least one approval first.');
+        alert('Select at least one queue item first.');
         return;
       }
       const reason = prompt('Reason for rejecting selected trades:', 'User rejected batch');
@@ -4346,7 +4429,7 @@ router.get('/approvals', async (req, res) => {
     }
 
     async function clearAllPending() {
-      if (!confirm('Clear all pending approvals? This will reject all pending trades.')) return;
+      if (!confirm('Clear all pending manual-review items? This will reject all still-pending trade intents.')) return;
 
       try {
         const res = await fetch('/api/approvals/clear-all', { method: 'POST' });
@@ -4359,7 +4442,7 @@ router.get('/approvals', async (req, res) => {
           alert('Error: ' + data.error);
         }
       } catch (error) {
-        alert('Error clearing approvals: ' + error.message);
+        alert('Error clearing trade queue items: ' + error.message);
       }
     }
 
@@ -4370,11 +4453,15 @@ router.get('/approvals', async (req, res) => {
 </html>
     `);
   } catch (error) {
-    res.status(500).send('Error loading approvals: ' + error.message);
+    res.status(500).send('Error loading trade queue: ' + error.message);
   }
 });
 
-// API endpoints for approval actions
+router.get('/trade-approvals', async (req, res) => {
+  res.redirect('/approvals');
+});
+
+// API endpoints for optional manual trade-queue actions
 router.post('/api/approvals/batch/approve', async (req, res) => {
   try {
     const tradeApproval = (await import('./trade-approval.js')).default;
@@ -4423,6 +4510,15 @@ router.post('/api/portfolio-hub/accounts', async (req, res) => {
   }
 });
 
+router.post('/api/portfolio-hub/holding-plans', async (req, res) => {
+  try {
+    const plan = await db.upsertPortfolioHubHoldingPlan(req.body || {});
+    res.json({ success: true, plan });
+  } catch (error) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/api/portfolio-hub/transactions', async (req, res) => {
   try {
     const transaction = await db.createPortfolioHubTransaction(req.body || {});
@@ -4445,8 +4541,8 @@ router.post('/api/portfolio-hub/transactions', async (req, res) => {
 
 router.post('/api/portfolio-hub/refresh', async (req, res) => {
   try {
-    const portfolioHub = await buildPortfolioHubView();
-    res.json({ success: true, summary: portfolioHub.summary || null });
+    const result = await runPortfolioHubCycle({ triggerType: 'manual', performanceRange: 'day', performanceMetric: 'pct' });
+    res.json({ success: true, result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -4477,6 +4573,7 @@ router.get('/api/portfolio-hub/debug/state', async (req, res) => {
     res.json({
       success: true,
       latestFullReviewAt: portfolioHub.latestFullReviewAt || null,
+      latestCycleRun: await db.getLatestPortfolioHubCycleRun().catch(() => null),
       latestReviewRun: portfolioHub.latestReviewRun || null,
       latestRecommendedRun: portfolioHub.recommendedPositionsRun || null,
       locks,

@@ -7,6 +7,7 @@ import tradier from './tradier.js';
 import thesisManager from './thesis-manager.js';
 import { resolveMarketPrice } from './utils.js';
 import optionsAnalyzer from './options-analyzer.js';
+import { ensureFreshStockProfile } from './stock-profiles.js';
 
 async function getEarningsSurpriseHistory(symbol) {
   const [surprises, earningsHistory] = await Promise.all([
@@ -31,16 +32,284 @@ async function getEarningsSurpriseHistory(symbol) {
 }
 
 async function getPostEarningsContext(symbol) {
-  const [news, quote, surpriseHistory] = await Promise.all([
-    newsSearch.searchStructuredEarningsContext(symbol, { maxResults: 3 }).catch(() => []),
+  const [newsHealth, quote, surpriseHistory] = await Promise.all([
+    newsSearch.getStructuredEarningsContextWithHealth(symbol, { maxResults: 4, timeRange: 'week' }),
     fmp.getQuote(symbol).catch(() => null),
     getEarningsSurpriseHistory(symbol).catch(() => null)
   ]);
 
   return {
-    news,
+    news: newsHealth.results || [],
+    newsHealth,
     quote,
     surpriseHistory
+  };
+}
+
+function toDateOnlyString(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().split('T')[0];
+}
+
+function classifyDipSeverity(reactionPct) {
+  const numeric = Number(reactionPct);
+  if (!Number.isFinite(numeric) || numeric > -4) return 'none';
+  if (numeric <= -10) return 'deep';
+  if (numeric <= -7) return 'standard';
+  return 'mild';
+}
+
+function percentChange(baseValue, comparisonValue) {
+  const base = Number(baseValue);
+  const comparison = Number(comparisonValue);
+  if (!Number.isFinite(base) || !Number.isFinite(comparison) || base === 0) return null;
+  return Number((((comparison - base) / base) * 100).toFixed(2));
+}
+
+function normalizeEarningsSession(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['pre_market', 'bmo', 'before_market_open'].includes(normalized)) return 'pre_market';
+  if (['post_market', 'amc', 'after_market_close'].includes(normalized)) return 'post_market';
+  return 'unknown';
+}
+
+function getTodayDateOnlyString() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+}
+
+function getEasternMinutesSinceMidnight(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit'
+  }).formatToParts(date);
+  const lookup = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return (Number(lookup.hour) * 60) + Number(lookup.minute);
+}
+
+function shiftDateByDays(dateString, dayDelta) {
+  const date = new Date(`${dateString}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setUTCDate(date.getUTCDate() + dayDelta);
+  return date.toISOString().split('T')[0];
+}
+
+function nextTradingDay(dateString) {
+  let cursor = shiftDateByDays(dateString, 1);
+  while (cursor) {
+    const date = new Date(`${cursor}T12:00:00Z`);
+    const weekday = date.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) return cursor;
+    cursor = shiftDateByDays(cursor, 1);
+  }
+  return null;
+}
+
+function previousTradingDay(dateString) {
+  let cursor = shiftDateByDays(dateString, -1);
+  while (cursor) {
+    const date = new Date(`${cursor}T12:00:00Z`);
+    const weekday = date.getUTCDay();
+    if (weekday !== 0 && weekday !== 6) return cursor;
+    cursor = shiftDateByDays(cursor, -1);
+  }
+  return null;
+}
+
+function getTradingDayDifference(fromDate, toDate = new Date()) {
+  const startString = toDateOnlyString(fromDate);
+  const endString = toDateOnlyString(toDate);
+  if (!startString || !endString) return Number.POSITIVE_INFINITY;
+  if (startString === endString) return 0;
+
+  let cursor = startString;
+  let count = 0;
+  while (cursor && cursor < endString) {
+    cursor = nextTradingDay(cursor);
+    if (cursor && cursor <= endString) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function isRecentPostEarningsCandidate(row = null, maxTradingDays = 2, now = new Date()) {
+  if (!row?.earnings_date) return false;
+  const earningsDate = toDateOnlyString(row.earnings_date);
+  if (!earningsDate) return false;
+
+  const session = normalizeEarningsSession(row.session_normalized || row.earnings_time);
+  const referenceDate = session === 'post_market'
+    ? nextTradingDay(earningsDate)
+    : earningsDate;
+
+  if (!referenceDate) return false;
+  const tradingDayAge = getTradingDayDifference(referenceDate, now);
+  return Number.isFinite(tradingDayAge) && tradingDayAge >= 0 && tradingDayAge <= maxTradingDays;
+}
+
+function getPostEarningsAnalysisReadiness(earningsDate, earningsSession, now = new Date()) {
+  const normalizedDate = toDateOnlyString(earningsDate);
+  const session = normalizeEarningsSession(earningsSession);
+  const today = getTodayDateOnlyString();
+  const currentMinutes = getEasternMinutesSinceMidnight(now);
+
+  if (!normalizedDate) {
+    return {
+      ready: false,
+      session,
+      targetAnalysisDate: null,
+      fallbackUsed: false,
+      reason: 'missing_earnings_date'
+    };
+  }
+
+  if (session === 'pre_market') {
+    return {
+      ready: today > normalizedDate || (today === normalizedDate && currentMinutes >= 10 * 60),
+      session,
+      targetAnalysisDate: normalizedDate,
+      fallbackUsed: false,
+      reason: today < normalizedDate
+        ? 'pre_market_before_earnings_date'
+        : today === normalizedDate && currentMinutes < 10 * 60
+          ? 'pre_market_waiting_for_10am'
+          : 'ready'
+    };
+  }
+
+  if (session === 'post_market') {
+    const targetDate = nextTradingDay(normalizedDate);
+    return {
+      ready: Boolean(targetDate && (today > targetDate || (today === targetDate && currentMinutes >= 10 * 60))),
+      session,
+      targetAnalysisDate: targetDate,
+      fallbackUsed: false,
+      reason: !targetDate
+        ? 'missing_next_trading_day'
+        : today < targetDate
+          ? 'post_market_waiting_for_next_trading_day'
+          : today === targetDate && currentMinutes < 10 * 60
+            ? 'post_market_waiting_for_10am'
+            : 'ready'
+    };
+  }
+
+  return {
+    ready: today > normalizedDate || (today === normalizedDate && currentMinutes >= 10 * 60),
+    session: 'unknown',
+    targetAnalysisDate: normalizedDate,
+    fallbackUsed: true,
+    reason: today < normalizedDate
+      ? 'unknown_before_earnings_date'
+      : today === normalizedDate && currentMinutes < 10 * 60
+        ? 'unknown_waiting_for_10am_fallback'
+        : 'ready'
+  };
+}
+
+async function buildPostEarningsReactionSnapshot(symbol, earningsDate, earningsSession, currentPrice) {
+  const normalizedDate = toDateOnlyString(earningsDate);
+  const session = normalizeEarningsSession(earningsSession);
+  const readiness = getPostEarningsAnalysisReadiness(normalizedDate, session);
+  if (!normalizedDate) {
+    return {
+      source: 'unavailable',
+      session,
+      analysisReady: false,
+      targetAnalysisDate: null,
+      preEarningsClose: null,
+      earningsDayOpen: null,
+      earningsDayClose: null,
+      comparisonOpen: null,
+      comparisonClose: null,
+      comparisonSessionDate: null,
+      currentPrice: Number.isFinite(Number(currentPrice)) ? Number(currentPrice) : null,
+      reactionPct: null,
+      gapPct: null,
+      closeToCloseReactionPct: null,
+      intradayReactionPct: null,
+      liveReactionPct: null,
+      dipBasisPct: null,
+      dipThresholdPct: -4,
+      isDip: false,
+      dipSeverity: 'none'
+    };
+  }
+
+  const lookbackStart = new Date(normalizedDate);
+  lookbackStart.setDate(lookbackStart.getDate() - 5);
+  const comparisonDate = session === 'post_market'
+    ? nextTradingDay(normalizedDate)
+    : normalizedDate;
+  const historyEndDate = comparisonDate || normalizedDate;
+  const history = await fmp.getHistoricalPriceEodFull(
+    symbol,
+    toDateOnlyString(lookbackStart),
+    historyEndDate
+  ).catch(() => []);
+
+  const sorted = Array.isArray(history)
+    ? [...history].sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    : [];
+  const earningsIndex = sorted.findIndex(row => String(row.date) === normalizedDate);
+  const earningsRow = earningsIndex >= 0 ? sorted[earningsIndex] : null;
+  const preEarningsRow = earningsIndex > 0 ? sorted[earningsIndex - 1] : sorted[sorted.length - 2] || null;
+  const comparisonRow = comparisonDate
+    ? sorted.find(row => String(row.date) === comparisonDate) || null
+    : null;
+
+  const preEarningsClose = Number(preEarningsRow?.close || 0) || null;
+  const earningsDayOpen = Number(earningsRow?.open || 0) || null;
+  const earningsDayClose = Number(earningsRow?.close || 0) || null;
+  const comparisonOpen = Number(comparisonRow?.open || 0) || null;
+  const comparisonClose = Number(comparisonRow?.close || 0) || null;
+  const normalizedCurrentPrice = Number.isFinite(Number(currentPrice)) ? Number(currentPrice) : null;
+
+  const gapPct = percentChange(preEarningsClose, earningsDayOpen);
+  const closeToCloseReactionPct = percentChange(preEarningsClose, comparisonClose);
+  const intradayReactionPct = percentChange(comparisonOpen, comparisonClose);
+  const liveReactionPct = percentChange(preEarningsClose, normalizedCurrentPrice);
+  const dipBasisCandidates = [gapPct, closeToCloseReactionPct].filter(Number.isFinite);
+  const dipBasisPct = dipBasisCandidates.length ? Math.min(...dipBasisCandidates) : null;
+  const reactionPct = closeToCloseReactionPct ?? liveReactionPct ?? gapPct;
+  const dipSeverity = classifyDipSeverity(dipBasisPct);
+  const comparisonDataReady = session !== 'post_market' || Number.isFinite(comparisonClose);
+  const analysisReady = readiness.ready && comparisonDataReady;
+  const pendingReason = !comparisonDataReady ? 'post_market_missing_comparison_session_data' : readiness.reason;
+
+  return {
+    source: preEarningsClose ? 'fmp_eod_pre_close' : 'fallback',
+    earningsDate: normalizedDate,
+    earningsSession: session,
+    analysisReady,
+    targetAnalysisDate: readiness.targetAnalysisDate,
+    fallbackUsed: readiness.fallbackUsed,
+    pendingReason,
+    preEarningsClose,
+    earningsDayOpen,
+    earningsDayClose,
+    comparisonOpen,
+    comparisonSessionDate: comparisonDate,
+    comparisonClose,
+    currentPrice: normalizedCurrentPrice,
+    reactionPct,
+    gapPct,
+    closeToCloseReactionPct,
+    intradayReactionPct,
+    liveReactionPct,
+    dipBasisPct,
+    dipThresholdPct: -4,
+    isDip: analysisReady && Number.isFinite(dipBasisPct) && dipBasisPct <= -4,
+    dipSeverity
   };
 }
 
@@ -107,8 +376,8 @@ export async function analyzeBeforeEarnings(position) {
     console.log(`   Days until: ${position.daysUntil}`);
 
     // Get latest news
-    const news = await newsSearch.searchStructuredEarningsContext(position.symbol, { maxResults: 3 });
-    const newsText = newsSearch.formatResults(news);
+    const context = await getPostEarningsContext(position.symbol);
+    const newsText = `${context.newsHealth?.degraded ? `SERPER DEGRADED: ${context.newsHealth.providerStatus}${context.newsHealth.warning ? ` — ${context.newsHealth.warning}` : ''}\n` : ''}${newsSearch.formatResults(context.news)}`;
 
     // Get current price
     const quote = await fmp.getQuote(position.symbol);
@@ -167,13 +436,13 @@ POSITION DETAILS:
 - Investment thesis: ${thesis}
 
 RECENT NEWS:
-${newsText}
+${context.newsHealth?.degraded ? `SERPER DEGRADED: ${context.newsHealth.providerStatus}${context.newsHealth.warning ? ` — ${context.newsHealth.warning}` : ''}\n` : ''}${newsText}
 
 OPTIONS EARNINGS CONTEXT:
 ${optionsContext}
 
 EARNINGS SURPRISE HISTORY:
-${JSON.stringify(surpriseHistory || {}, null, 2)}
+${JSON.stringify(context.surpriseHistory || {}, null, 2)}
 
 QUESTION: Should we ${position.isShort ? 'cover (close short)' : 'hold through earnings'}, trim 50%, or ${position.isShort ? 'cover completely' : 'sell completely'}?
 
@@ -274,6 +543,7 @@ export async function executeEarningsDecision(analysis) {
 
       // Send notification
       await email.sendEmail(
+        email.alertEmail,
         `📊 Earnings Decision: HOLD ${analysis.symbol}`,
         `
           <h2>Holding Through Earnings</h2>
@@ -404,23 +674,80 @@ export async function analyzeAfterEarnings(symbol) {
   const normalizedSymbol = String(symbol || '').trim().toUpperCase();
   if (!normalizedSymbol) throw new Error('Symbol is required');
 
-  const [positionLots, context, nextEarning] = await Promise.all([
+  await ensureFreshStockProfile(normalizedSymbol, { staleAfterDays: 14, incrementalRefreshDays: 14 }).catch(() => null);
+
+  const [positionLots, context, nextEarning, profile, stockInfo] = await Promise.all([
     db.getPositionLots(normalizedSymbol).catch(() => []),
     getPostEarningsContext(normalizedSymbol),
-    db.getNextEarning(normalizedSymbol).catch(() => null)
+    db.getNextEarning(normalizedSymbol).catch(() => null),
+    db.getLatestStockProfile(normalizedSymbol).catch(() => null),
+    db.getStockInfo(normalizedSymbol).catch(() => null)
   ]);
 
   const currentPrice = Number(resolveMarketPrice(context.quote, { marketOpen: false, fallback: 0 }));
-  const newsText = newsSearch.formatResults(context.news || []);
+  const earningsSession = normalizeEarningsSession(nextEarning?.session_normalized || nextEarning?.earnings_time);
+  const readiness = getPostEarningsAnalysisReadiness(nextEarning?.earnings_date || null, earningsSession);
+  if (!readiness.ready) {
+    return {
+      symbol: normalizedSymbol,
+      skipped: true,
+      reason: readiness.reason,
+      readiness
+    };
+  }
+  const reactionSnapshot = await buildPostEarningsReactionSnapshot(
+    normalizedSymbol,
+    nextEarning?.earnings_date || null,
+    earningsSession,
+    currentPrice
+  ).catch(() => null);
+  if (!reactionSnapshot?.analysisReady) {
+    return {
+      symbol: normalizedSymbol,
+      skipped: true,
+      reason: reactionSnapshot?.pendingReason || 'post_earnings_snapshot_not_ready',
+      readiness,
+      reactionSnapshot
+    };
+  }
+  const newsText = `${context.newsHealth?.degraded ? `SERPER DEGRADED: ${context.newsHealth.providerStatus}${context.newsHealth.warning ? ` — ${context.newsHealth.warning}` : ''}\n` : ''}${newsSearch.formatResults(context.news || [])}`;
+  const hasPosition = Array.isArray(positionLots) && positionLots.length > 0;
+  const totalQuantity = hasPosition
+    ? positionLots.reduce((sum, lot) => sum + Math.abs(Number(lot.quantity || 0)), 0)
+    : 0;
+  const avgCostBasis = hasPosition && totalQuantity > 0
+    ? positionLots.reduce((sum, lot) => sum + (Math.abs(Number(lot.quantity || 0)) * Number(lot.cost_basis || 0)), 0) / totalQuantity
+    : null;
+  const reactionPct = avgCostBasis && currentPrice
+    ? (((currentPrice - avgCostBasis) / avgCostBasis) * 100).toFixed(2)
+    : null;
   const prompt = `
 You are reviewing ${normalizedSymbol} immediately after an earnings event.
+
+Company:
+${JSON.stringify(stockInfo || {}, null, 2)}
 
 Current price: $${currentPrice.toFixed(2)}
 Upcoming/last earnings calendar record:
 ${JSON.stringify(nextEarning || {}, null, 2)}
 
+Analysis timing gate:
+${JSON.stringify(readiness, null, 2)}
+
+Deterministic post-earnings reaction metrics:
+${JSON.stringify(reactionSnapshot || {}, null, 2)}
+
 Current lots:
 ${JSON.stringify(positionLots, null, 2)}
+
+Stock profile:
+${profile ? JSON.stringify({
+  business_model: profile.business_model,
+  catalysts: profile.catalysts,
+  risks: profile.risks,
+  valuation_framework: profile.valuation_framework,
+  profile_version: profile.profile_version
+}, null, 2) : 'No profile available'}
 
 Recent post-earnings news:
 ${newsText}
@@ -428,16 +755,30 @@ ${newsText}
 Historical earnings context:
 ${JSON.stringify(context.surpriseHistory || {}, null, 2)}
 
-Return ONLY one of: RE_ENTER, ADD_TO_WATCHLIST, HOLD, PASS
-Then give 2-3 short sentences of reasoning.
+Position context:
+- Has existing position: ${hasPosition ? 'YES' : 'NO'}
+- Average cost basis: ${avgCostBasis == null ? 'N/A' : `$${avgCostBasis.toFixed(2)}`}
+- Price vs cost basis: ${reactionPct == null ? 'N/A' : `${reactionPct}%`}
+
+Your job:
+1. Decide whether the post-earnings reaction is a buyable dip, a thesis confirmation, a broken setup, or just noise.
+1a. Treat dipBasisPct as the primary deterministic dip metric. It is the worse of gapPct and closeToCloseReactionPct relative to the pre-earnings close.
+2. Weigh earnings result, guidance, capex, margin commentary, reaction magnitude, and whether the profile still supports ownership.
+2a. If there is an existing position, explicitly decide whether adding shares fits the portfolio and current setup rather than assuming every dip is buyable.
+3. If there is no position, decide whether this should become a watchlist candidate.
+
+Return EXACTLY:
+RECOMMENDATION: BUY_DIP | ADD_TO_WATCHLIST | HOLD | PASS
+CONFIDENCE: HIGH | MEDIUM | LOW
+WHY: 2-4 concise sentences
+TRIGGER: one concise sentence describing what would confirm or invalidate the setup
 `;
 
   const response = await claude.analyze(prompt, { model: 'opus', maxTokens: 400 });
   const text = String(response?.analysis || '').trim();
-  let recommendation = 'HOLD';
-  if (text.includes('RE_ENTER')) recommendation = 'RE_ENTER';
-  else if (text.includes('ADD_TO_WATCHLIST')) recommendation = 'ADD_TO_WATCHLIST';
-  else if (text.includes('PASS')) recommendation = 'PASS';
+  const recommendation = text.match(/RECOMMENDATION:\s*(BUY_DIP|ADD_TO_WATCHLIST|HOLD|PASS)/i)?.[1]?.toUpperCase() || 'HOLD';
+  const confidence = text.match(/CONFIDENCE:\s*(HIGH|MEDIUM|LOW)/i)?.[1]?.toUpperCase() || 'MEDIUM';
+  const trigger = text.match(/TRIGGER:\s*([\s\S]*?)$/i)?.[1]?.trim() || '';
 
   await db.logEarningsAnalysis({
     symbol: normalizedSymbol,
@@ -446,15 +787,21 @@ Then give 2-3 short sentences of reasoning.
     reasoning: text,
     positionSnapshot: positionLots,
     earningsSnapshot: nextEarning,
-    optionsSnapshot: context.surpriseHistory
+    optionsSnapshot: context.surpriseHistory,
+    signalSnapshot: reactionSnapshot
   });
 
   return {
     symbol: normalizedSymbol,
     recommendation,
+    confidence,
     reasoning: text,
+    trigger,
     currentPrice,
-    surpriseHistory: context.surpriseHistory
+    readiness,
+    reactionSnapshot,
+    surpriseHistory: context.surpriseHistory,
+    hasPosition
   };
 }
 
@@ -521,7 +868,36 @@ export async function runEarningsDayAnalysis(daysAhead = 5) {
     }
 
     console.log(`\n✅ Earnings analysis complete: ${decisions.length} decisions made`);
-    return { analyzed: decisions.length, decisions };
+    console.log('\n📉 Checking for recent post-earnings opportunities...');
+    const recentEarnings = await db.getRecentAndUpcomingEarnings(4, 0).catch(() => []);
+    const recentSymbols = [...new Set(
+      (recentEarnings || [])
+        .filter(row => isRecentPostEarningsCandidate(row, 2))
+        .map(row => String(row.symbol || '').toUpperCase())
+        .filter(Boolean)
+    )];
+
+    const postEarnings = [];
+    for (const symbol of recentSymbols) {
+      try {
+        const analysis = await analyzeAfterEarnings(symbol);
+        if (analysis?.skipped) {
+          console.log(`   ⏳ ${symbol}: skipped (${analysis.reason})`);
+          continue;
+        }
+        postEarnings.push(analysis);
+        console.log(`   ✅ ${symbol}: ${analysis.recommendation} (${analysis.confidence || 'MEDIUM'})`);
+      } catch (error) {
+        console.error(`   ❌ Post-earnings analysis failed for ${symbol}: ${error.message}`);
+      }
+    }
+
+    return {
+      analyzed: decisions.length,
+      decisions,
+      postEarningsAnalyzed: postEarnings.length,
+      postEarnings
+    };
 
   } catch (error) {
     console.error('Error running earnings day analysis:', error);
@@ -561,5 +937,9 @@ export default {
   analyzeAfterEarnings,
   executeEarningsDecision,
   runEarningsDayAnalysis,
-  getWeeklyEarningsReport
+  getWeeklyEarningsReport,
+  isRecentPostEarningsCandidate,
+  getTradingDayDifference,
+  nextTradingDay,
+  previousTradingDay
 };

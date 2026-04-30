@@ -31,7 +31,8 @@ class ProfileBuildService {
   async #runBuild(symbol, options) {
     const staleAfterDays = options.staleAfterDays == null ? 14 : Number(options.staleAfterDays);
     const existing = await db.getLatestStockProfile(symbol).catch(() => null);
-    const freshness = getProfileFreshness(existing, staleAfterDays);
+    const nextEarning = await db.getNextEarning(symbol).catch(() => null);
+    const freshness = getProfileFreshness(existing, staleAfterDays, nextEarning?.earnings_date || null);
 
     if (freshness.hasProfile && !freshness.isStale) {
       return {

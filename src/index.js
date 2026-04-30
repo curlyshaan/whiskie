@@ -45,12 +45,12 @@ import { updateAllEarnings } from './earnings.js';
 import { runTrimCheck } from './trimming.js';
 import { runTaxOptimizationCheck } from './tax-optimizer.js';
 import { runTrailingStopCheck, updateTrailingStops } from './trailing-stops.js';
-import { runEarningsDayAnalysis } from './earnings-analysis.js';
+import { analyzeAfterEarnings, isRecentPostEarningsCandidate, runEarningsDayAnalysis } from './earnings-analysis.js';
 import { runWeeklyReview } from './weekly-review.js';
 import stockProfiles from './stock-profiles.js';
 import catalystResearch, { detectCatalysts } from './catalyst-research.js';
 import earningsReminders from './earnings-reminders.js';
-import { buildPortfolioHubView, runPortfolioHubRecommendedPositions } from './portfolio-hub.js';
+import { buildPortfolioHubView, runPortfolioHubCycle, runPortfolioHubRecommendedPositions } from './portfolio-hub.js';
 
 dotenv.config();
 
@@ -58,6 +58,43 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const CRON_JOBS_ENABLED = process.env.ENABLE_SCHEDULED_JOBS !== 'false';
 let profileBuildRun = null;
+
+async function runDailyProfileRefreshSweep(options = {}) {
+  const staleAfterDays = options.staleAfterDays == null ? 14 : Number(options.staleAfterDays);
+  const symbols = new Set();
+
+  const [positions, watchlist, upcomingEarnings] = await Promise.all([
+    db.getPositions().catch(() => []),
+    db.getWatchlist().catch(() => []),
+    db.getUpcomingEarnings(2).catch(() => [])
+  ]);
+
+  for (const row of positions || []) {
+    if (row?.symbol) symbols.add(String(row.symbol).toUpperCase());
+  }
+  for (const row of watchlist || []) {
+    if (row?.symbol) symbols.add(String(row.symbol).toUpperCase());
+  }
+  for (const row of upcomingEarnings || []) {
+    if (row?.symbol) symbols.add(String(row.symbol).toUpperCase());
+  }
+
+  const orderedSymbols = [...symbols].sort();
+  const results = [];
+
+  for (const symbol of orderedSymbols) {
+    try {
+      const ensured = await stockProfiles.ensureFreshStockProfile(symbol, { staleAfterDays, incrementalRefreshDays: staleAfterDays });
+      console.log(`   ✅ ${symbol}: ${ensured.action}`);
+      results.push({ symbol, action: ensured.action });
+    } catch (error) {
+      console.error(`   ❌ ${symbol}: ${error.message}`);
+      results.push({ symbol, action: 'failed', error: error.message });
+    }
+  }
+
+  return results;
+}
 
 async function capturePortfolioHubSnapshot(label, scheduledTime = new Date()) {
   const jobId = await db.logCronJobStart(label, 'daily', scheduledTime);
@@ -69,6 +106,23 @@ async function capturePortfolioHubSnapshot(label, scheduledTime = new Date()) {
     });
     console.log(`📸 ${label} saved ${Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings.length : 0} holding snapshot(s)`);
     await db.logCronJobComplete(jobId, true);
+  } catch (error) {
+    await db.logCronJobComplete(jobId, false, error.message);
+    throw error;
+  }
+}
+
+async function runScheduledPortfolioHubCycle(label, scheduledTime = new Date()) {
+  const jobId = await db.logCronJobStart(label, 'daily', scheduledTime);
+  try {
+    const result = await runPortfolioHubCycle({
+      triggerType: 'scheduled',
+      performanceRange: 'day',
+      performanceMetric: 'pct'
+    });
+    console.log(`🧭 ${label} completed (cycle run ${result?.cycleRun?.id || 'n/a'})`);
+    await db.logCronJobComplete(jobId, true);
+    return result;
   } catch (error) {
     await db.logCronJobComplete(jobId, false, error.message);
     throw error;
@@ -144,9 +198,9 @@ class WhiskieBot {
       // Initialize database
       await db.initDatabase();
 
-      // Initialize trade approval system
+      // Initialize autonomous trade-intent queue
       await tradeApproval.initDatabase();
-      console.log('✅ Trade approval system initialized\n');
+      console.log('✅ Trade intent queue initialized\n');
 
       // Load active orders from database
       await orderManager.loadActiveOrders();
@@ -304,6 +358,24 @@ class WhiskieBot {
           console.error('❌ Next-day earnings profile prep failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
           await email.sendErrorAlert(error, 'Next-day earnings profile prep failed');
+        }
+      }, {
+        timezone: 'America/New_York'
+      });
+
+      cron.schedule('0 20 * * *', async () => {
+        const scheduledTime = new Date();
+        const jobId = await db.logCronJobStart('Daily Stock Profile Refresh Sweep', 'daily', scheduledTime);
+
+        try {
+          console.log('\n⏰ 8:00 PM ET - Refreshing stock profiles older than 14 days or within 2 days of earnings');
+          const results = await runDailyProfileRefreshSweep({ staleAfterDays: 14 });
+          console.log(`✅ Daily stock profile refresh sweep complete: ${results.filter(item => item.action !== 'failed').length} processed, ${results.filter(item => item.action === 'failed').length} failed`);
+          await db.logCronJobComplete(jobId, true);
+        } catch (error) {
+          console.error('❌ Daily stock profile refresh sweep failed:', error);
+          await db.logCronJobComplete(jobId, false, error.message);
+          await email.sendErrorAlert(error, 'Daily stock profile refresh sweep failed');
         }
       }, {
         timezone: 'America/New_York'
@@ -549,26 +621,13 @@ class WhiskieBot {
       });
 
 
-      // Schedule Portfolio Hub snapshots - weekdays 11:00 AM, 1:00 PM, and 3:00 PM ET
-      cron.schedule('0 11,13,15 * * 1-5', async () => {
+      // Schedule Portfolio Hub unified cycle - weekdays 11:00 AM and 3:00 PM ET
+      cron.schedule('0 11,15 * * 1-5', async () => {
         const scheduledTime = new Date();
         try {
-          await capturePortfolioHubSnapshot('Portfolio Hub Snapshot', scheduledTime);
+          await runScheduledPortfolioHubCycle('Portfolio Hub Unified Cycle', scheduledTime);
         } catch (error) {
-          console.error('❌ Portfolio Hub snapshot failed:', error);
-        }
-      }, {
-        timezone: 'America/New_York'
-      });
-
-      // Schedule Portfolio Hub recommended new positions - weekdays 10:30 AM and 2:30 PM ET
-      cron.schedule('30 10,14 * * 1-5', async () => {
-        try {
-          await db.cleanupPortfolioHubRecommendedPositionRuns(30).catch(() => 0);
-          await runPortfolioHubRecommendedPositions();
-          console.log('🧭 Portfolio Hub recommended new positions refreshed');
-        } catch (error) {
-          console.error('❌ Portfolio Hub recommended positions refresh failed:', error);
+          console.error('❌ Portfolio Hub unified cycle failed:', error);
         }
       }, {
         timezone: 'America/New_York'
@@ -622,16 +681,6 @@ class WhiskieBot {
           console.error('❌ Exit follow-through updater failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
         }
-      });
-
-      cron.schedule('0 * * * *', async () => {
-        try {
-          await tradeApproval.expirePendingApprovals();
-        } catch (error) {
-          console.error('❌ Error expiring approvals:', error);
-        }
-      }, {
-        timezone: 'America/New_York'
       });
 
       // Schedule trade executor and pathway exit monitoring every 30 minutes during regular market hours
@@ -701,9 +750,8 @@ class WhiskieBot {
       console.log('   • 12:00 PM ET - Midday analysis + refresh checks');
       console.log('   • 2:00 PM ET - Afternoon analysis + trim/tax/trailing checks');
       console.log('   • 6:00 PM ET - Daily summary + portfolio risk metrics');
-      console.log('   • Every 5 min (9am-4pm) - Process approved trades');
+      console.log('   • Every 5 min (9am-4pm) - Process queued autonomous trades');
       console.log('   • Hourly (9am-4pm) - Order reconciliation');
-      console.log('   • Hourly - Expire old trade approvals');
       console.log('📅 Weekly earnings refresh: Friday 8:00 PM ET');
       console.log('📅 Stock universe refresh: Saturday 10:00 AM ET');
       console.log('   → Repopulate stock_universe from FMP (top 7 per industry, $7B+ market cap)');
@@ -1156,6 +1204,83 @@ class WhiskieBot {
           }
         })();
         res.json({ success: true, message: 'Earnings predictor grading started. Check logs for progress.' });
+      } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    app.post('/api/trigger-earnings-post-prep-once', async (req, res) => {
+      try {
+        const requestedDates = Array.isArray(req.body?.earningsDates) && req.body.earningsDates.length
+          ? req.body.earningsDates
+          : ['2026-04-28', '2026-04-29'];
+        const normalizedDates = [...new Set(
+          requestedDates
+            .map(value => String(value || '').trim())
+            .filter(value => /^\d{4}-\d{2}-\d{2}$/.test(value))
+        )];
+
+        if (!normalizedDates.length) {
+          res.status(400).json({ success: false, error: 'Provide at least one YYYY-MM-DD earnings date.' });
+          return;
+        }
+
+        console.log(`📡 One-time earnings post-prep triggered for: ${normalizedDates.join(', ')}`);
+        (async () => {
+          try {
+            const earningsRows = await db.query(
+              `SELECT DISTINCT ec.symbol, ec.earnings_date, ec.session_normalized, ec.earnings_time
+               FROM earnings_calendar ec
+               JOIN stock_universe su ON su.symbol = ec.symbol
+               WHERE ec.earnings_date = ANY($1::date[])
+                 AND COALESCE(su.earnings_tracking_eligible, TRUE) = TRUE
+                 AND su.status = 'active'
+               ORDER BY ec.earnings_date ASC, ec.symbol ASC`,
+              [normalizedDates]
+            );
+
+            const prepared = [];
+            for (const row of earningsRows.rows || []) {
+              const symbol = String(row.symbol || '').toUpperCase();
+              try {
+                const ensured = await stockProfiles.ensureFreshStockProfile(symbol, { staleAfterDays: 14, incrementalRefreshDays: 14 });
+                const eligibility = isRecentPostEarningsCandidate(row, 2)
+                  ? await analyzeAfterEarnings(symbol).catch(error => ({ skipped: true, reason: error.message }))
+                  : { skipped: true, reason: 'not_yet_post_earnings_eligible' };
+                prepared.push({
+                  symbol,
+                  earningsDate: row.earnings_date,
+                  earningsSession: row.session_normalized || row.earnings_time || 'unknown',
+                  profileAction: ensured?.action || 'unknown',
+                  analysisStatus: eligibility?.skipped ? 'skipped' : 'analyzed',
+                  analysisReason: eligibility?.reason || null,
+                  recommendation: eligibility?.recommendation || null
+                });
+              } catch (error) {
+                prepared.push({
+                  symbol,
+                  earningsDate: row.earnings_date,
+                  earningsSession: row.session_normalized || row.earnings_time || 'unknown',
+                  profileAction: 'failed',
+                  analysisStatus: 'failed',
+                  analysisReason: error.message,
+                  recommendation: null
+                });
+              }
+            }
+
+            console.log(`✅ One-time earnings post-prep complete for ${prepared.length} symbol(s)`);
+            console.log(JSON.stringify(prepared, null, 2));
+          } catch (error) {
+            console.error('❌ Error in one-time earnings post-prep:', error);
+          }
+        })();
+
+        res.json({
+          success: true,
+          message: `One-time earnings post-prep started for ${normalizedDates.join(', ')}. Check logs for progress.`,
+          earningsDates: normalizedDates
+        });
       } catch (error) {
         res.status(500).json({ success: false, error: error.message });
       }
@@ -1826,7 +1951,7 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       run_profile: 'reactive'
     });
 
-    console.log(`   📧 Email sent for approval`);
+    console.log(`   📧 Manual review email sent`);
   }
 
   /**
@@ -2582,7 +2707,7 @@ ${historyContext}`;
       }
       console.log('');
 
-      // Extract per-stock reasoning from Phase 2 and Phase 3 for use in trade approvals
+      // Extract per-stock reasoning from Phase 2 and Phase 3 for use in queued trade intents
       const stockReasoningMap = this.extractStockReasoningFromPhases(
         phase2Analysis.analysis,
         phase3Analysis.analysis
@@ -3055,14 +3180,12 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
           }
         ]));
 
-        // Batch submit all trades for approval
-        const submittedTrades = [];
-        const approvalIds = [];
+        // Queue all trades for autonomous execution
         const seenApprovalSymbols = new Set();
 
         for (const rec of adjustedRecs) {
           if (seenApprovalSymbols.has(rec.symbol)) {
-            console.warn(`   ⚠️ Skipping duplicate approval submission for ${rec.symbol}`);
+            console.warn(`   ⚠️ Skipping duplicate queued trade intent for ${rec.symbol}`);
             continue;
           }
           seenApprovalSymbols.add(rec.symbol);
@@ -3075,7 +3198,7 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
             && (rec.holdingPosture === 'hold' || rec.holdingPosture === 'rebalance' || rec.thesisState === 'unchanged');
 
           if (isExistingLongHold) {
-            console.log(`   ℹ️ Skipping approval for ${rec.symbol}: existing long matches current quantity (${rec.quantity}) with posture=${rec.holdingPosture || 'n/a'} thesis=${rec.thesisState || 'n/a'}`);
+            console.log(`   ℹ️ Skipping queued trade intent for ${rec.symbol}: existing long matches current quantity (${rec.quantity}) with posture=${rec.holdingPosture || 'n/a'} thesis=${rec.thesisState || 'n/a'}`);
             continue;
           }
 
@@ -3099,7 +3222,7 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
               action: rec.type === 'short' ? 'sell_short' : 'buy'
             });
 
-            const approvalId = await tradeApproval.submitForApproval({
+            await tradeApproval.submitForExecution({
               symbol: rec.symbol,
               action: rec.type === 'short' ? 'sell_short' : 'buy',
               quantity: rec.quantity,
@@ -3139,38 +3262,13 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
               quantityAdjustmentNote: rec.vixAdjusted && rec.originalQuantity && rec.originalQuantity !== rec.quantity
                 ? `VIX ${regime.name} sizing adjusted from ${rec.originalQuantity} to ${rec.quantity}`
                 : null
-            }, true);  // skipEmail = true for batch
+            }, true);
 
-            submittedTrades.push({
-              symbol: rec.symbol,
-              action: rec.type === 'short' ? 'sell_short' : 'buy',
-              quantity: rec.quantity,
-              rawModelQuantity: rec.originalQuantity || rec.quantity,
-              quantityAdjustmentNote: rec.vixAdjusted && rec.originalQuantity && rec.originalQuantity !== rec.quantity
-                ? `VIX ${regime.name} sizing adjusted from ${rec.originalQuantity} to ${rec.quantity} shares`
-                : null,
-              entryPrice: rec.entryPrice,
-              stopLoss: rec.stopLoss,
-              takeProfit: rec.takeProfit,
-              reasoning: rec.reasoning,
-              strategyType: rec.strategyType || null,
-              holdingPeriod: rec.holdingPeriod || null,
-              confidence: rec.confidence || null
-            });
-            approvalIds.push(approvalId);
-
-            console.log(`   ✅ ${rec.symbol} queued for approval`);
+            console.log(`   ✅ ${rec.symbol} queued for autonomous execution`);
           } catch (error) {
             console.error(`   ❌ Failed to submit trade for ${rec.symbol}:`, error.message);
             await email.sendErrorAlert(error, `Trade submission: ${rec.symbol}`);
           }
-        }
-
-        // Send single batch email for all trades
-        if (submittedTrades.length > 0) {
-          console.log(`\n📧 Sending batch approval email for ${submittedTrades.length} trades...`);
-          await tradeApproval.sendBatchApprovalEmail(approvalIds, submittedTrades);
-          console.log(`✅ Batch approval email sent`);
         }
 
         console.log('✅ All trades processed');
@@ -4181,6 +4279,7 @@ Before finishing, verify your LONG POSITIONS count equals your EXECUTE_BUY count
         console.log(`⏰ Processing earnings reminder for ${reminder.symbol}`);
         const prediction = await earningsReminders.runOfficialReminderPrediction(reminder);
         const updatedReminder = await db.markEarningsReminderPredicted(reminder.id, now, prediction);
+        await email.sendEarningsReminderEmail(updatedReminder);
         processed.push(updatedReminder);
       }
 

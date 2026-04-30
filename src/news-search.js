@@ -249,6 +249,11 @@ ${articleText}`;
     return await this.enrichResults(results, options);
   }
 
+  async searchStructuredProfileContext(symbol, options = {}) {
+    const results = await serper.searchStructuredProfileContext(symbol, options);
+    return await this.enrichResults(results, options);
+  }
+
   async searchStructuredMonitoringContext(symbol, options = {}) {
     const results = await serper.searchStructuredMonitoringContext(symbol, options);
     return await this.enrichResults(results, options);
@@ -267,6 +272,42 @@ ${articleText}`;
   async searchStructuredMacroContext(options = {}) {
     const results = await serper.searchStructuredMacroContext(options);
     return await this.enrichResults(results, options);
+  }
+
+
+  async getStructuredStockContextWithHealth(symbol, options = {}) {
+    return await serper.getHealthAwareResults(
+      () => this.searchStructuredStockContext(symbol, options),
+      { ...options, symbol, activity: 'stock_context' }
+    );
+  }
+
+  async getStructuredProfileContextWithHealth(symbol, options = {}) {
+    return await serper.getHealthAwareResults(
+      () => this.searchStructuredProfileContext(symbol, options),
+      { ...options, symbol, activity: 'profile_context' }
+    );
+  }
+
+  async getStructuredMacroContextWithHealth(options = {}) {
+    return await serper.getHealthAwareResults(
+      () => this.searchStructuredMacroContext(options),
+      { ...options, activity: 'macro_context' }
+    );
+  }
+
+  async getStructuredEarningsContextWithHealth(symbol, options = {}) {
+    return await serper.getHealthAwareResults(
+      () => this.searchStructuredEarningsContext(symbol, options),
+      { ...options, symbol, activity: 'earnings_context' }
+    );
+  }
+
+  async getStructuredPremarketContextWithHealth(symbol, options = {}) {
+    return await serper.getHealthAwareResults(
+      () => this.searchStructuredPremarketContext(symbol, options),
+      { ...options, symbol, activity: 'premarket_context' }
+    );
   }
 
   async searchSectorNews(sector, maxResults = 3, options = {}) {

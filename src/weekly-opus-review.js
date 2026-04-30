@@ -213,7 +213,11 @@ class WeeklyOpusReview {
       ]);
 
       // Structured recent news/context
-      const news = await newsSearch.searchStructuredStockContext(stock.symbol, { maxResults: 5 });
+      const news = await newsSearch.searchStructuredStockContext(stock.symbol, {
+        maxResults: 5,
+        timeRange: 'week',
+        context: { workflow: 'weekly_opus_review', pathway }
+      });
 
       // Build Opus prompt
       const prompt = this.buildAnalysisPrompt(stock, pathway, profile, ratios, keyMetrics, quote, news, bundle);

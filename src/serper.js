@@ -5,6 +5,32 @@ import * as db from './db.js';
 dotenv.config();
 
 const SERPER_API_KEY = process.env.SERPER_API_KEY;
+const DEFAULT_FINANCE_DOMAINS = [
+  'reuters.com',
+  'cnbc.com',
+  'marketwatch.com',
+  'finance.yahoo.com',
+  'investing.com',
+  'barrons.com',
+  'benzinga.com',
+  'bloomberg.com'
+];
+
+const COMMENTARY_HEAVY_DOMAINS = [
+  'marketbeat.com',
+  'investorplace.com',
+  'zacks.com'
+];
+
+const SOCIAL_NOISE_DOMAINS = [
+  'facebook.com',
+  'instagram.com',
+  'linkedin.com',
+  'tiktok.com',
+  'x.com',
+  'twitter.com',
+  'youtube.com'
+];
 
 class SerperAPI {
   constructor() {
@@ -12,6 +38,28 @@ class SerperAPI {
     this.defaultTTL = Number(process.env.SERPER_CACHE_TTL_MS || 10 * 60 * 1000);
     this.cache = new Map();
     this.cooldownUntil = 0;
+    this.lastStatus = this.buildStatus('idle');
+  }
+
+  buildStatus(status, extra = {}) {
+    return {
+      status,
+      timestamp: new Date().toISOString(),
+      cooldownUntil: this.cooldownUntil || null,
+      ...extra
+    };
+  }
+
+  setLastStatus(status, extra = {}) {
+    this.lastStatus = this.buildStatus(status, extra);
+    return this.lastStatus;
+  }
+
+  getStatus() {
+    return {
+      ...this.lastStatus,
+      cooldownActive: this.shouldShortCircuit()
+    };
   }
 
   normalizeSymbolToken(symbol) {
@@ -27,14 +75,28 @@ class SerperAPI {
     return normalizedCompanyName ? `"${normalizedCompanyName}" ${ticker}` : ticker;
   }
 
+  normalizeDomain(domain = '') {
+    return String(domain || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+  }
+
+  getHostname(url = '') {
+    try {
+      return new URL(String(url)).hostname.replace(/^www\./, '').toLowerCase();
+    } catch {
+      return '';
+    }
+  }
+
   getCacheKey(query, options = {}) {
     return JSON.stringify({
       engine: options.engine || 'search',
       query,
       maxResults: options.maxResults || 5,
       timeRange: options.timeRange || null,
-      includeDomains: options.includeDomains || [],
-      excludeDomains: options.excludeDomains || []
+      includeDomains: (options.includeDomains || []).map(domain => this.normalizeDomain(domain)),
+      excludeDomains: (options.excludeDomains || []).map(domain => this.normalizeDomain(domain)),
+      activity: options.activity || null,
+      context: options.context || null
     });
   }
 
@@ -94,15 +156,15 @@ class SerperAPI {
   }
 
   filterDomainResults(results = [], options = {}) {
-    const includeDomains = (options.includeDomains || []).map(domain => String(domain).toLowerCase());
-    const excludeDomains = (options.excludeDomains || []).map(domain => String(domain).toLowerCase());
+    const includeDomains = (options.includeDomains || []).map(domain => this.normalizeDomain(domain)).filter(Boolean);
+    const excludeDomains = (options.excludeDomains || []).map(domain => this.normalizeDomain(domain)).filter(Boolean);
 
     return results.filter(result => {
-      const url = String(result.url || '').toLowerCase();
-      if (includeDomains.length && !includeDomains.some(domain => url.includes(domain))) {
+      const hostname = this.getHostname(result.url);
+      if (includeDomains.length && !includeDomains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`))) {
         return false;
       }
-      if (excludeDomains.some(domain => url.includes(domain))) {
+      if (excludeDomains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`))) {
         return false;
       }
       return true;
@@ -131,18 +193,62 @@ class SerperAPI {
     return undefined;
   }
 
+  buildResultMetadata(query, options = {}, extra = {}) {
+    return {
+      provider: 'serper',
+      query: String(query || '').trim(),
+      engine: options.engine === 'news' ? 'news' : 'search',
+      activity: options.activity || 'unspecified',
+      symbol: options.symbol || null,
+      timeRange: options.timeRange || null,
+      includeDomains: options.includeDomains || [],
+      excludeDomains: options.excludeDomains || [],
+      ...extra
+    };
+  }
+
+  attachMetadata(results = [], metadata = {}) {
+    Object.defineProperty(results, '_meta', {
+      value: metadata,
+      enumerable: false,
+      configurable: true,
+      writable: true
+    });
+    return results;
+  }
+
+  async logUsage(query, options, resultCount, cacheHit, status, extra = {}) {
+    await db.logSerperUsageEvent({
+      activity: options.activity || 'unspecified',
+      symbol: options.symbol || null,
+      query,
+      searchType: options.engine || 'search',
+      maxResults: options.maxResults || 5,
+      resultCount: Array.isArray(resultCount) ? resultCount.length : Number(resultCount || 0),
+      cacheHit,
+      context: {
+        ...(options.context || {}),
+        providerStatus: status,
+        ...extra
+      }
+    });
+  }
+
   async search(query, options = {}) {
     const normalizedQuery = String(query || '').trim();
-    if (!normalizedQuery) return [];
+    if (!normalizedQuery) {
+      return this.attachMetadata([], this.buildResultMetadata(query, options, { providerStatus: 'empty_query' }));
+    }
 
     if (!SERPER_API_KEY) {
-      console.warn('Serper API key missing; skipping Serper search.');
-      return [];
+      this.setLastStatus('misconfigured', { message: 'SERPER_API_KEY missing' });
+      throw new Error('Serper API key missing');
     }
 
     if (this.shouldShortCircuit()) {
-      console.warn(`Serper search skipped during cooldown for query: ${normalizedQuery}`);
-      return [];
+      const cooldownUntil = new Date(this.cooldownUntil).toISOString();
+      this.setLastStatus('cooldown', { query: normalizedQuery, cooldownUntil });
+      throw new Error(`Serper cooldown active until ${cooldownUntil}`);
     }
 
     const cacheTtlMs = options.cacheTtlMs ?? this.defaultTTL;
@@ -152,17 +258,13 @@ class SerperAPI {
     if (useCache) {
       const cached = this.getCachedResult(cacheKey);
       if (cached) {
-        await db.logSerperUsageEvent({
-          activity: options.activity || 'unspecified',
-          symbol: options.symbol || null,
-          query: normalizedQuery,
-          searchType: options.engine || 'search',
-          maxResults: options.maxResults || 5,
-          resultCount: Array.isArray(cached) ? cached.length : 0,
+        await this.logUsage(normalizedQuery, options, cached.length, true, 'ok', { cacheHitSource: 'memory' });
+        this.setLastStatus('ok', { query: normalizedQuery, cacheHit: true, resultCount: cached.length });
+        return this.attachMetadata(cached, this.buildResultMetadata(normalizedQuery, options, {
+          providerStatus: 'ok',
           cacheHit: true,
-          context: options.context || {}
-        });
-        return cached;
+          resultCount: cached.length
+        }));
       }
     }
 
@@ -190,18 +292,14 @@ class SerperAPI {
         this.setCachedResult(cacheKey, results, cacheTtlMs);
       }
 
-      await db.logSerperUsageEvent({
-        activity: options.activity || 'unspecified',
-        symbol: options.symbol || null,
-        query: normalizedQuery,
-        searchType: engine,
-        maxResults: options.maxResults || 5,
-        resultCount: Array.isArray(results) ? results.length : 0,
-        cacheHit: false,
-        context: options.context || {}
-      });
+      await this.logUsage(normalizedQuery, options, results.length, false, 'ok');
+      this.setLastStatus('ok', { query: normalizedQuery, resultCount: results.length, cacheHit: false });
 
-      return results;
+      return this.attachMetadata(results, this.buildResultMetadata(normalizedQuery, options, {
+        providerStatus: 'ok',
+        cacheHit: false,
+        resultCount: results.length
+      }));
     } catch (error) {
       const responseStatus = error?.response?.status;
       const responseDetail = error?.response?.data || null;
@@ -215,16 +313,22 @@ class SerperAPI {
 
       if (this.isNonFatalAvailabilityError(error)) {
         this.activateCooldown(responseStatus);
-        console.warn(`Serper unavailable (status ${responseStatus}); returning empty results for now.`);
-        return [];
+        this.setLastStatus('cooldown', {
+          query: normalizedQuery,
+          responseStatus,
+          cooldownUntil: new Date(this.cooldownUntil).toISOString()
+        });
+        throw new Error(`Serper unavailable (status ${responseStatus}); cooldown active`);
       }
 
+      this.setLastStatus('error', { query: normalizedQuery, responseStatus, message: error.message });
       throw error;
     }
   }
 
   async searchWithFallbacks(queryBuilders = [], baseOptions = {}) {
     let lastError = null;
+    let anyResults = [];
 
     for (const builder of queryBuilders) {
       if (!builder) continue;
@@ -234,17 +338,25 @@ class SerperAPI {
       const nextOptions = { ...baseOptions, ...(built?.options || {}) };
 
       try {
-        return await this.search(nextQuery, nextOptions);
+        const results = await this.search(nextQuery, nextOptions);
+        anyResults = results;
+        if (results.length > 0) {
+          return this.attachMetadata(results, {
+            ...(results._meta || this.buildResultMetadata(nextQuery, nextOptions)),
+            fallbackUsed: nextQuery !== String(queryBuilders?.[0]?.query || '').trim()
+          });
+        }
       } catch (error) {
         lastError = error;
-        if (this.isNonFatalAvailabilityError(error)) {
-          return [];
-        }
       }
     }
 
+    if (anyResults.length >= 0 && anyResults._meta) {
+      return anyResults;
+    }
+
     if (lastError) throw lastError;
-    return [];
+    return this.attachMetadata([], this.buildResultMetadata('', baseOptions, { providerStatus: 'no_queries' }));
   }
 
   mergeSearchResults(resultsList = [], maxResults = 5) {
@@ -280,7 +392,9 @@ class SerperAPI {
       })
       .filter(Boolean);
 
-    if (!normalizedQueries.length) return [];
+    if (!normalizedQueries.length) {
+      return this.attachMetadata([], this.buildResultMetadata('', baseOptions, { providerStatus: 'no_queries' }));
+    }
 
     const settled = await Promise.allSettled(
       normalizedQueries.map(item => this.searchWithFallbacks([{ query: item.query, options: item.options }], item.options))
@@ -291,7 +405,12 @@ class SerperAPI {
       .map(item => item.value);
 
     if (fulfilled.length) {
-      return this.mergeSearchResults(fulfilled, baseOptions.maxResults || 5);
+      const merged = this.mergeSearchResults(fulfilled, baseOptions.maxResults || 5);
+      return this.attachMetadata(merged, this.buildResultMetadata(normalizedQueries[0]?.query || '', baseOptions, {
+        providerStatus: 'ok',
+        queryCount: normalizedQueries.length,
+        resultCount: merged.length
+      }));
     }
 
     const firstRejected = settled.find(item => item.status === 'rejected');
@@ -299,7 +418,124 @@ class SerperAPI {
       throw firstRejected.reason;
     }
 
-    return [];
+    return this.attachMetadata([], this.buildResultMetadata(normalizedQueries[0]?.query || '', baseOptions, {
+      providerStatus: 'ok',
+      queryCount: normalizedQueries.length,
+      resultCount: 0
+    }));
+  }
+
+  async getHealthAwareResults(searchPromiseFactory, options = {}) {
+    try {
+      const results = await searchPromiseFactory();
+      return {
+        ok: true,
+        degraded: false,
+        providerStatus: results?._meta?.providerStatus || 'ok',
+        warning: null,
+        results,
+        meta: results?._meta || null
+      };
+    } catch (error) {
+      const status = this.getStatus();
+      return {
+        ok: false,
+        degraded: true,
+        providerStatus: status.status || 'error',
+        warning: error.message,
+        results: this.attachMetadata([], this.buildResultMetadata('', options, {
+          providerStatus: status.status || 'error',
+          warning: error.message
+        })),
+        meta: status
+      };
+    }
+  }
+
+  buildTieredQueries(primaryQueries = [], fallbackQueries = []) {
+    return [
+      ...primaryQueries.map(item => ({ ...item, options: { ...(item.options || {}), sourceTier: 'primary' } })),
+      ...fallbackQueries.map(item => ({ ...item, options: { ...(item.options || {}), sourceTier: 'fallback' } }))
+    ];
+  }
+
+  ensureMinResults(queries = [], minResults = 4) {
+    const normalizedMin = Math.max(1, Number(minResults || 4));
+    return (queries || []).map(item => ({
+      ...item,
+      options: {
+        ...(item.options || {}),
+        maxResults: Math.max(normalizedMin, Number(item?.options?.maxResults || 0))
+      }
+    }));
+  }
+
+  getDefaultExcludeDomains(extra = []) {
+    return [...new Set([...COMMENTARY_HEAVY_DOMAINS, ...SOCIAL_NOISE_DOMAINS, ...(extra || [])])];
+  }
+
+  buildStockContextQueries(symbol, companyName = '') {
+    const identity = this.buildTickerIdentity(symbol, companyName);
+    const ticker = this.normalizeSymbolToken(symbol);
+    return this.buildTieredQueries(
+      [
+        { query: `${identity} stock news`, options: { maxResults: 3, engine: 'news' } },
+        { query: `${identity} earnings guidance analyst`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${identity} partnership acquisition contract product launch`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${identity} investigation lawsuit recall regulatory executive`, options: { maxResults: 2, engine: 'news' } }
+      ],
+      [
+        { query: `${ticker} stock news`, options: { maxResults: 3, engine: 'news' } },
+        { query: `${identity} latest news`, options: { maxResults: 2, engine: 'news' } }
+      ]
+    );
+  }
+
+  buildProfileContextQueries(symbol, companyName = '') {
+    const identity = this.buildTickerIdentity(symbol, companyName);
+    const ticker = this.normalizeSymbolToken(symbol);
+    return this.buildTieredQueries(
+      [
+        { query: `${identity} company news strategy outlook`, options: { maxResults: 3, engine: 'news' } },
+        { query: `${identity} earnings guidance demand margin`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${identity} partnership acquisition product launch customer`, options: { maxResults: 2, engine: 'news' } }
+      ],
+      [
+        { query: `${ticker} stock news`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${identity} latest news`, options: { maxResults: 2, engine: 'news' } }
+      ]
+    );
+  }
+
+  buildPremarketContextQueries(symbol, companyName = '') {
+    const identity = this.buildTickerIdentity(symbol, companyName);
+    const ticker = this.normalizeSymbolToken(symbol);
+    return this.buildTieredQueries(
+      [
+        { query: `${identity} stock news today`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${identity} earnings guidance analyst`, options: { maxResults: 2, engine: 'news' } }
+      ],
+      [
+        { query: `${identity} acquisition merger product launch investigation`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${ticker} premarket news`, options: { maxResults: 2, engine: 'news' } }
+      ]
+    );
+  }
+
+  buildEarningsContextQueries(symbol, companyName = '') {
+    const identity = this.buildTickerIdentity(symbol, companyName);
+    const ticker = this.normalizeSymbolToken(symbol);
+    return this.buildTieredQueries(
+      [
+        { query: `${identity} earnings preview`, options: { maxResults: 3, engine: 'news' } },
+        { query: `${identity} guidance outlook analyst expectations`, options: { maxResults: 3, engine: 'news' } },
+        { query: `${identity} margin revenue EPS expectations`, options: { maxResults: 2, engine: 'news' } }
+      ],
+      [
+        { query: `${ticker} earnings preview`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${identity} latest earnings news`, options: { maxResults: 2, engine: 'news' } }
+      ]
+    );
   }
 
   async searchStockNews(symbol, maxResults = 5, options = {}) {
@@ -314,7 +550,7 @@ class SerperAPI {
   }
 
   async searchMarketNews(maxResults = 5, options = {}) {
-    return await this.search('stock market news today', {
+    return await this.search('stock market news today earnings fed inflation oil geopolitical risk', {
       engine: 'news',
       timeRange: options.timeRange || 'day',
       maxResults,
@@ -332,126 +568,130 @@ class SerperAPI {
   }
 
   async searchStructuredStockContext(symbol, options = {}) {
-    const maxResults = options.maxResults || 5;
+    const minResults = Math.max(3, Number(options.minResults || 4));
+    const maxResults = Math.max(minResults, Number(options.maxResults || 5));
     const companyName = String(options.companyName || '').trim();
-    const identity = this.buildTickerIdentity(symbol, companyName);
-    const ticker = this.normalizeSymbolToken(symbol);
 
-    return await this.searchMany([
-      { query: `${identity} earnings guidance outlook`, options: { maxResults: 2, engine: 'news' } },
-      { query: `${identity} analyst upgrade downgrade price target`, options: { maxResults: 2, engine: 'news' } },
-      { query: `${identity} partnership deal product launch customer announcement`, options: { maxResults: 2, engine: 'news' } },
-      { query: `${identity} litigation investigation recall management change`, options: { maxResults: 2, engine: 'news' } },
-      { query: `${ticker} latest stock news earnings guidance analyst`, options: { maxResults: 2, engine: 'news' } }
-    ], {
+    return await this.searchMany(this.ensureMinResults(this.buildStockContextQueries(symbol, companyName), minResults), {
       activity: 'stock_context',
       symbol,
       maxResults,
-      timeRange: options.timeRange || 'month',
+      timeRange: options.timeRange || 'week',
       context: options.context || {},
-      includeDomains: options.includeDomains || []
+      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
+    });
+  }
+
+  async searchStructuredProfileContext(symbol, options = {}) {
+    const minResults = Math.max(3, Number(options.minResults || 4));
+    const maxResults = Math.max(minResults, Number(options.maxResults || 5));
+    const companyName = String(options.companyName || '').trim();
+
+    return await this.searchMany(this.ensureMinResults(this.buildProfileContextQueries(symbol, companyName), minResults), {
+      activity: 'profile_context',
+      symbol,
+      maxResults,
+      timeRange: options.timeRange || 'week',
+      context: options.context || {},
+      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
 
   async searchStructuredMonitoringContext(symbol, options = {}) {
-    const maxResults = options.maxResults || 4;
-    const ticker = this.normalizeSymbolToken(symbol);
-    const query = [
-      `${ticker} earnings guidance OR outlook`,
-      `${ticker} analyst upgrade OR analyst downgrade OR price target`,
-      `${ticker} product launch OR customer announcement OR partnership`,
-      `${ticker} litigation OR investigation OR recall OR management change`
-    ].join(' OR ');
+    const minResults = Math.max(3, Number(options.minResults || 4));
+    const maxResults = Math.max(minResults, Number(options.maxResults || 4));
+    const companyName = String(options.companyName || '').trim();
 
-    return await this.search(query, {
+    return await this.searchMany(this.ensureMinResults(this.buildTieredQueries(
+      [
+        { query: `${this.buildTickerIdentity(symbol, companyName)} guidance outlook warning Reuters CNBC Bloomberg`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${this.buildTickerIdentity(symbol, companyName)} analyst downgrade upgrade price target Reuters CNBC Bloomberg`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${this.buildTickerIdentity(symbol, companyName)} product launch contract acquisition partnership Reuters Bloomberg SEC FDA`, options: { maxResults: 2, engine: 'news' } }
+      ],
+      [
+        { query: `${this.buildTickerIdentity(symbol, companyName)} investigation lawsuit recall management change`, options: { maxResults: 2, engine: 'news' } },
+        { query: `${this.normalizeSymbolToken(symbol)} stock news warning downgrade catalyst`, options: { maxResults: 2, engine: 'news' } }
+      ]
+    ), minResults), {
       engine: 'news',
       activity: 'monitoring_context',
       symbol,
-      timeRange: options.timeRange || 'month',
+      timeRange: options.timeRange || 'week',
       maxResults,
       context: options.context || {},
-      includeDomains: options.includeDomains || []
+      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
 
   async searchStructuredEarningsContext(symbol, options = {}) {
-    const maxResults = options.maxResults || 5;
+    const minResults = Math.max(3, Number(options.minResults || 4));
+    const maxResults = Math.max(minResults, Number(options.maxResults || 5));
     const companyName = String(options.companyName || '').trim();
-    const includeDomains = options.includeDomains || [
-      'reuters.com',
-      'cnbc.com',
-      'marketwatch.com',
-      'investing.com',
-      'finance.yahoo.com',
-      'barrons.com',
-      'thestreet.com',
-      'benzinga.com',
-      'fool.com',
-      'seekingalpha.com'
-    ];
-    const identity = this.buildTickerIdentity(symbol, companyName);
-    const ticker = this.normalizeSymbolToken(symbol);
+    const includeDomains = options.includeDomains || DEFAULT_FINANCE_DOMAINS;
 
-    return await this.searchMany([
-      { query: `${identity} earnings preview`, options: { maxResults: 5, includeDomains, engine: 'news' } },
-      { query: `${identity} guidance outlook consensus estimates analyst expectations`, options: { maxResults: 5, includeDomains, engine: 'news' } },
-      { query: `${identity} margin outlook revenue outlook EPS outlook`, options: { maxResults: 4, includeDomains, engine: 'news' } },
-      { query: `${identity} analyst expectations price target sentiment`, options: { maxResults: 4, includeDomains, engine: 'news' } },
-      { query: `${ticker} earnings preview`, options: { maxResults: 4, engine: 'news' } }
-    ], {
+    return await this.searchMany(this.ensureMinResults(this.buildEarningsContextQueries(symbol, companyName), minResults), {
       activity: 'earnings_context',
       symbol,
       timeRange: options.timeRange || 'week',
       maxResults,
       context: options.context || {},
-      includeDomains
+      includeDomains,
+      excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
 
   async searchStructuredPremarketContext(symbol, options = {}) {
-    const maxResults = options.maxResults || 2;
-    const ticker = this.normalizeSymbolToken(symbol);
-    const query = [
-      `${ticker} premarket move`,
-      `${ticker} earnings OR guidance OR analyst`,
-      `${ticker} upgrade OR downgrade OR price target`,
-      `${ticker} merger OR acquisition OR investigation`
-    ].join(' OR ');
-
-    return await this.search(query, {
+    const minResults = Math.max(3, Number(options.minResults || 4));
+    const maxResults = Math.max(minResults, Number(options.maxResults || 4));
+    const companyName = String(options.companyName || '').trim();
+    return await this.searchMany(this.ensureMinResults(this.buildPremarketContextQueries(symbol, companyName), minResults), {
       engine: 'news',
       activity: 'premarket_context',
       symbol,
       timeRange: options.timeRange || 'day',
       maxResults,
       context: options.context || {},
-      includeDomains: options.includeDomains || []
+      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
 
   async searchStructuredMacroContext(options = {}) {
-    const maxResults = options.maxResults || 5;
-    const query = [
-      'Federal Reserve interest rates',
-      'inflation CPI PPI',
-      'jobs unemployment payrolls',
-      'earnings season guidance'
-    ].join(' OR ');
+    const minResults = Math.max(3, Number(options.minResults || 4));
+    const maxResults = Math.max(minResults, Number(options.maxResults || 5));
 
-    return await this.search(query, {
+    return await this.searchMany(this.ensureMinResults(this.buildTieredQueries(
+      [
+        { query: 'Federal Reserve interest rates Powell FOMC stocks bonds inflation Reuters CNBC Bloomberg', options: { maxResults: 2, engine: 'news' } },
+        { query: 'oil prices Middle East Iran war stocks inflation energy market impact Reuters CNBC Bloomberg', options: { maxResults: 2, engine: 'news' } }
+      ],
+      [
+        { query: 'CPI PPI payrolls unemployment recession stock market impact', options: { maxResults: 2, engine: 'news' } },
+        { query: 'earnings season guidance outlook stock market today', options: { maxResults: 2, engine: 'news' } }
+      ]
+    ), minResults), {
+      activity: 'macro_context',
       engine: 'news',
       timeRange: options.timeRange || 'week',
       maxResults,
-      includeDomains: options.includeDomains || []
+      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains()
     });
   }
 
   async searchSectorNews(sector, maxResults = 3, options = {}) {
-    const query = `${sector} sector stocks news`;
+    const minResults = Math.max(3, Number(options.minResults || 4));
+    const normalizedMax = Math.max(minResults, Number(maxResults || 3));
+    const query = `${sector} stocks news`;
     return await this.search(query, {
       engine: 'news',
-      maxResults,
+      maxResults: normalizedMax,
       timeRange: options.timeRange || 'week',
+      includeDomains: options.includeDomains || DEFAULT_FINANCE_DOMAINS,
+      excludeDomains: options.excludeDomains || this.getDefaultExcludeDomains(),
       ...options
     });
   }
@@ -466,6 +706,7 @@ class SerperAPI {
    Summary: ${result.content}
    Published: ${result.published_date || 'Recent'}`).join('\n\n');
   }
+
 }
 
 export default new SerperAPI();

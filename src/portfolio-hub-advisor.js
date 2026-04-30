@@ -85,6 +85,7 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
   const upcomingEarnings = Boolean(row.nextEarningsDate);
   const policy = row.positionType === 'short' ? PORTFOLIO_HUB_POLICY.short : PORTFOLIO_HUB_POLICY.long;
   const opusReview = context.opusReview || null;
+  const postEarningsSignal = row.postEarningsSignal || null;
   const accountContext = row.accountContext || {};
   const taxableShares = Number(accountContext.taxableShares || 0);
   const taxAdvantagedShares = Number(accountContext.taxAdvantagedShares || 0);
@@ -119,6 +120,26 @@ export function buildPortfolioHubRecommendation(row, context = {}) {
       takeProfit: Number.isFinite(Number(opusReview.takeProfit)) ? Number(opusReview.takeProfit) : null,
       confidence: opusReview.confidence || null,
       source: 'opus'
+    };
+  }
+
+  if (postEarningsSignal?.recommendation === 'BUY_DIP' && row.positionType !== 'short') {
+    const shareGuidance = buildShareGuidance(row, 'Add', { ...context, addPct: policy.maxTargetWeightPct });
+    return {
+      actionLabel: 'Add',
+      summary: 'Fresh post-earnings buy-the-dip signal is active.',
+      detail: `${postEarningsSignal.why || 'Recent earnings reaction appears buyable while the thesis remains intact.'}${postEarningsSignal.trigger ? ` Trigger: ${postEarningsSignal.trigger}` : ''}${taxAdvantagedShares > taxableShares ? ' Tax-advantaged exposure makes staged adds easier to justify.' : ''}`,
+      shareCountText: shareGuidance ? `Add about ${formatShareCount(shareGuidance.shares)}.` : null,
+      source: 'post_earnings_signal'
+    };
+  }
+
+  if (postEarningsSignal?.recommendation === 'PASS' && row.positionType !== 'short') {
+    return {
+      actionLabel: 'Hold',
+      summary: 'Fresh post-earnings caution signal is active.',
+      detail: `${postEarningsSignal.why || 'Recent earnings reaction does not currently justify adding exposure.'}${postEarningsSignal.trigger ? ` Trigger: ${postEarningsSignal.trigger}` : ''}${taxAwarenessText}`,
+      source: 'post_earnings_signal'
     };
   }
 

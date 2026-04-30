@@ -77,8 +77,10 @@ export async function runPreMarketScan() {
       // Fetch quick news for significant gaps (>3%)
       if (Math.abs(gapPct) > 3) {
         try {
-          const news = await newsSearch.searchStructuredPremarketContext(normalizedSymbol, { maxResults: 2 });
-          gapInfo.newsHeadlines = newsSearch.formatResults(news);
+          const newsHealth = await newsSearch.getStructuredPremarketContextWithHealth(normalizedSymbol, { maxResults: 2, timeRange: 'day' });
+          gapInfo.newsHeadlines = newsHealth.degraded
+            ? `SERPER STATUS: ${newsHealth.providerStatus}${newsHealth.warning ? ` — ${newsHealth.warning}` : ''}\n${newsSearch.formatResults(newsHealth.results || [])}`
+            : newsSearch.formatResults(newsHealth.results || []);
         } catch (e) {
           gapInfo.newsHeadlines = 'News unavailable';
         }

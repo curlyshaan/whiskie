@@ -765,12 +765,11 @@ router.post('/analyze', async (req, res) => {
     const nextEarnings = earningsResult.rows[0];
 
     // Step 6: Get recent news
-    let news = [];
-    try {
-      news = await newsCacheService.getStructuredStockContext(symbol, { maxResults: 5 });
-    } catch (error) {
-      console.warn(`   ⚠️ Serper structured search failed for ${symbol}: ${error.message}`);
-      news = [];
+    const newsHealth = await newsSearch.getStructuredStockContextWithHealth(symbol, { maxResults: 5 });
+    const news = newsHealth.results || [];
+    if (newsHealth.degraded) {
+      console.warn(`   ⚠️ Serper structured search degraded for ${symbol}: ${newsHealth.warning || newsHealth.providerStatus}`);
+      warnings.push(`Serper search degraded: ${newsHealth.providerStatus}${newsHealth.warning ? ` (${newsHealth.warning})` : ''}`);
     }
 
     // Step 7: Get catalyst research and options data

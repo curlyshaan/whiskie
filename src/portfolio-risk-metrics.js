@@ -105,7 +105,15 @@ class PortfolioRiskMetrics {
   async getBenchmarkSeries(symbol, startDate, endDate) {
     if (!startDate || !endDate) return [];
     try {
-      const history = await tradier.getHistory(symbol, 'daily', startDate, endDate);
+      let history = [];
+      try {
+        history = await fmp.getHistoricalPriceEodFull(symbol, startDate, endDate);
+      } catch (error) {
+        console.warn(`FMP benchmark history unavailable for ${symbol}:`, error.message);
+      }
+      if (!Array.isArray(history) || !history.length) {
+        history = await tradier.getHistory(symbol, 'daily', startDate, endDate);
+      }
       return (history || [])
         .map(row => ({
           date: String(row.date || '').slice(0, 10),

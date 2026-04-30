@@ -33,13 +33,15 @@ export async function researchCatalysts(symbol, pathway) {
   const [catalystResults, positioningResults] = await Promise.allSettled([
     newsSearch.searchStructuredStockContext(symbol, {
       maxResults: 4,
-      timeRange: 'month',
-      includeDomains: SEARCH_DOMAINS
+      timeRange: 'week',
+      includeDomains: SEARCH_DOMAINS,
+      context: { workflow: 'catalyst_research', pathway, focus: 'catalysts' }
     }),
     newsSearch.searchStructuredMonitoringContext(symbol, {
       maxResults: 3,
-      timeRange: 'month',
-      includeDomains: SEARCH_DOMAINS
+      timeRange: 'week',
+      includeDomains: SEARCH_DOMAINS,
+      context: { workflow: 'catalyst_research', pathway, focus: 'monitoring' }
     })
   ]);
 

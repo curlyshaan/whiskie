@@ -14,7 +14,7 @@ import tradeApproval from './trade-approval.js';
  * - Trailing stop activation (e.g., deepValue at +50%)
  * - Fundamental exit conditions (ROE drops, dividend cuts)
  *
- * Routes material exits through approval workflow and sends notifications.
+ * Routes material exits through the autonomous trade-intent queue and sends notifications.
  */
 
 class PathwayExitMonitor {
@@ -383,9 +383,9 @@ class PathwayExitMonitor {
     const latestPositions = await db.getPositions();
     const currentPosition = latestPositions.find(p => p.symbol === symbol);
     if (!currentPosition || Math.abs(Number(currentPosition.quantity || 0)) < quantity) {
-      throw new Error(`Position changed before exit approval for ${symbol}; aborting stale exit action`);
+      throw new Error(`Position changed before queued exit intent for ${symbol}; aborting stale exit action`);
     }
-    const approvalId = await tradeApproval.submitForApproval({
+    const approvalId = await tradeApproval.submitForExecution({
       symbol,
       action: orderType,
       quantity,
@@ -410,7 +410,7 @@ class PathwayExitMonitor {
       triggerReason: reason,
       triggerPrice: currentPrice,
       quantity,
-      status: 'pending',
+      status: 'approved',
       approvalId
     });
 
