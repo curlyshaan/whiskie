@@ -66,6 +66,27 @@ function classifyDipSeverity(reactionPct) {
   return 'mild';
 }
 
+function computeLiveReactionDipPct({
+  session,
+  liveReactionPct,
+  dipBasisPct,
+  earningsDate = null
+} = {}) {
+  const normalizedLive = Number.isFinite(Number(liveReactionPct)) ? Number(liveReactionPct) : null;
+  const normalizedBasis = Number.isFinite(Number(dipBasisPct)) ? Number(dipBasisPct) : null;
+  if (session === 'post_market') {
+    return normalizedLive ?? normalizedBasis;
+  }
+
+  const today = getTodayDateOnlyString();
+  const normalizedEarningsDate = toDateOnlyString(earningsDate);
+  if (session === 'pre_market' && normalizedEarningsDate && today === normalizedEarningsDate) {
+    return normalizedLive ?? normalizedBasis;
+  }
+
+  return normalizedBasis ?? normalizedLive;
+}
+
 function percentChange(baseValue, comparisonValue) {
   const base = Number(baseValue);
   const comparison = Number(comparisonValue);
@@ -243,6 +264,7 @@ async function buildPostEarningsReactionSnapshot(symbol, earningsDate, earningsS
       closeToCloseReactionPct: null,
       intradayReactionPct: null,
       liveReactionPct: null,
+      liveReactionDipPct: null,
       dipBasisPct: null,
       dipThresholdPct: -4,
       isDip: false,
@@ -285,8 +307,14 @@ async function buildPostEarningsReactionSnapshot(symbol, earningsDate, earningsS
   const liveReactionPct = percentChange(preEarningsClose, normalizedCurrentPrice);
   const dipBasisCandidates = [gapPct, closeToCloseReactionPct].filter(Number.isFinite);
   const dipBasisPct = dipBasisCandidates.length ? Math.min(...dipBasisCandidates) : null;
+  const liveReactionDipPct = computeLiveReactionDipPct({
+    session,
+    liveReactionPct,
+    dipBasisPct,
+    earningsDate: normalizedDate
+  });
   const reactionPct = closeToCloseReactionPct ?? liveReactionPct ?? gapPct;
-  const dipSeverity = classifyDipSeverity(dipBasisPct);
+  const dipSeverity = classifyDipSeverity(liveReactionDipPct);
   const comparisonDataReady = session !== 'post_market' || Number.isFinite(comparisonClose);
   const analysisReady = readiness.ready && comparisonDataReady;
   const pendingReason = !comparisonDataReady ? 'post_market_missing_comparison_session_data' : readiness.reason;
@@ -311,9 +339,10 @@ async function buildPostEarningsReactionSnapshot(symbol, earningsDate, earningsS
     closeToCloseReactionPct,
     intradayReactionPct,
     liveReactionPct,
+    liveReactionDipPct,
     dipBasisPct,
     dipThresholdPct: -4,
-    isDip: analysisReady && Number.isFinite(dipBasisPct) && dipBasisPct <= -4,
+    isDip: analysisReady && Number.isFinite(liveReactionDipPct) && liveReactionDipPct <= -4,
     dipSeverity
   };
 }
@@ -772,7 +801,7 @@ Position context:
 
 Your job:
 1. Decide whether the post-earnings reaction is a buyable dip, a thesis confirmation, a broken setup, or just noise.
-1a. Treat dipBasisPct as the primary deterministic dip metric. It is the worse of gapPct and closeToCloseReactionPct relative to the pre-earnings close.
+1a. Treat liveReactionDipPct as the primary deterministic dip metric for buy-the-overreaction decisions. For post-market names and same-day pre-market names, it should reflect the live move versus the pre-earnings close. For older events, fall back to dipBasisPct.
 2. Weigh earnings result, guidance, capex, margin commentary, reaction magnitude, and whether the profile still supports ownership.
 2a. If there is an existing position, explicitly decide whether adding shares fits the portfolio and current setup rather than assuming every dip is buyable.
 3. If there is no position, decide whether this should become a watchlist candidate.

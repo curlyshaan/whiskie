@@ -1,5 +1,6 @@
 import fmp from '../src/fmp.js';
 import * as db from '../src/db.js';
+import { enrichDoltHubTiming } from '../src/earnings-reminders.js';
 
 /**
  * Refresh earnings calendar from FMP
@@ -117,6 +118,42 @@ async function refreshEarningsCalendar() {
     }
 
     console.log(`   ✅ Processed ${processedSymbols} symbols and inserted/updated ${totalInserted} earnings events`);
+
+    console.log('   Enriching refreshed earnings with DoltHub timing...');
+    const refreshedRows = await db.query(
+      `SELECT DISTINCT symbol, earnings_date
+       FROM earnings_calendar
+       WHERE earnings_date >= $1
+         AND earnings_date <= $2
+         AND symbol = ANY($3::text[])
+       ORDER BY earnings_date ASC, symbol ASC`,
+      [fromDate, toDate, [...eligibleSymbols]]
+    );
+
+    let timingUpdated = 0;
+    let timingUnknown = 0;
+    let timingErrors = 0;
+
+    for (const row of refreshedRows.rows || []) {
+      try {
+        const doltHubTiming = await enrichDoltHubTiming(row.symbol);
+        if (!doltHubTiming?.earningsSession || doltHubTiming.earningsSession === 'unknown') {
+          timingUnknown += 1;
+          continue;
+        }
+        const enriched = await db.enrichEarningTiming(row.symbol, row.earnings_date, doltHubTiming);
+        if (enriched) {
+          timingUpdated += 1;
+        }
+      } catch (error) {
+        timingErrors += 1;
+        if (timingErrors <= 5) {
+          console.warn(`   ⚠️ DoltHub timing enrich failed for ${row.symbol} ${row.earnings_date}: ${error.message}`);
+        }
+      }
+    }
+
+    console.log(`   ✅ DoltHub timing enrichment complete: updated ${timingUpdated}, unknown ${timingUnknown}, errors ${timingErrors}`);
     process.exit(0);
 
   } catch (error) {

@@ -129,6 +129,18 @@ async function runScheduledPortfolioHubCycle(label, scheduledTime = new Date()) 
   }
 }
 
+function logRunPhase(scope, message) {
+  console.log(`[${scope}] ${message}`);
+}
+
+function summarizeProfileActions(results = []) {
+  return (results || []).reduce((acc, item) => {
+    const key = item?.action || 'unknown';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
 function getEasternDateString(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York',
@@ -212,7 +224,7 @@ class WhiskieBot {
 
       // Disable auto-start on deployment - only run on schedule or manual trigger
       console.log('⏰ Auto-start disabled. Bot will wait for scheduled cron jobs or manual trigger.');
-      console.log('📅 Scheduled runs: 9:00 AM (pre-market), 10:00 AM, 12:00 PM, 2:00 PM ET (Mon-Fri)');
+      console.log('📅 Scheduled runs: 9:00 AM (pre-market), 10:30 AM shared cycle, 12:00 PM, 2:30 PM shared cycle ET (Mon-Fri)');
       console.log('📡 Manual trigger: POST /analyze\n');
 
       if (!CRON_JOBS_ENABLED) {
@@ -235,33 +247,33 @@ class WhiskieBot {
         timezone: 'America/New_York'
       });
 
-      // Schedule daily analysis at 10:00 AM and 2:00 PM ET
-      cron.schedule('0 10 * * 1-5', async () => {
+      // Schedule shared live + PHUB cycle at 10:30 AM and 2:30 PM ET
+      cron.schedule('30 10 * * 1-5', async () => {
         const scheduledTime = new Date();
-        const jobId = await db.logCronJobStart('Morning Analysis', 'daily', scheduledTime);
+        const jobId = await db.logCronJobStart('Morning Shared Intelligence Cycle', 'daily', scheduledTime);
 
         try {
-          console.log('\n⏰ 10:00 AM Analysis - Market has settled after open');
-          await this.runDailyAnalysis();
+          logRunPhase('shared-cycle', '10:30 AM ET start: shared intelligence → live trading → PHUB');
+          await this.runDailyAnalysis({ includePortfolioHub: true, runLabel: 'morning_1030' });
           await db.logCronJobComplete(jobId, true);
         } catch (error) {
-          console.error('❌ Morning analysis failed:', error);
+          console.error('❌ Morning shared cycle failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
         }
       }, {
         timezone: 'America/New_York'
       });
 
-      cron.schedule('0 14 * * 1-5', async () => {
+      cron.schedule('30 14 * * 1-5', async () => {
         const scheduledTime = new Date();
-        const jobId = await db.logCronJobStart('Afternoon Analysis', 'daily', scheduledTime);
+        const jobId = await db.logCronJobStart('Afternoon Shared Intelligence Cycle', 'daily', scheduledTime);
 
         try {
-          console.log('\n⏰ 2:00 PM Analysis - Afternoon check');
-          await this.runDailyAnalysis();
+          logRunPhase('shared-cycle', '2:30 PM ET start: shared intelligence → live trading → PHUB');
+          await this.runDailyAnalysis({ includePortfolioHub: true, runLabel: 'afternoon_1430' });
           await db.logCronJobComplete(jobId, true);
         } catch (error) {
-          console.error('❌ Afternoon analysis failed:', error);
+          console.error('❌ Afternoon shared cycle failed:', error);
           await db.logCronJobComplete(jobId, false, error.message);
         }
       }, {
@@ -605,18 +617,6 @@ class WhiskieBot {
       });
 
 
-      // Schedule Portfolio Hub unified cycle - weekdays 11:00 AM and 3:00 PM ET
-      cron.schedule('0 11,15 * * 1-5', async () => {
-        const scheduledTime = new Date();
-        try {
-          await runScheduledPortfolioHubCycle('Portfolio Hub Unified Cycle', scheduledTime);
-        } catch (error) {
-          console.error('❌ Portfolio Hub unified cycle failed:', error);
-        }
-      }, {
-        timezone: 'America/New_York'
-      });
-
       // Schedule exit follow-through updater - weekdays 6:15 PM ET
       cron.schedule('15 18 * * 1-5', async () => {
         const scheduledTime = new Date();
@@ -730,9 +730,9 @@ class WhiskieBot {
       console.log('   • 7:00 AM ET - Corporate actions check');
       console.log('   • 8:00 AM ET - Macro regime detection');
       console.log('   • 9:00 AM ET - Pre-market gap scan');
-      console.log('   • 10:00 AM ET - Morning analysis + trim/tax/trailing checks');
+      console.log('   • 10:30 AM ET - Shared intelligence refresh → live trading → PHUB');
       console.log('   • 12:00 PM ET - Midday analysis + refresh checks');
-      console.log('   • 2:00 PM ET - Afternoon analysis + trim/tax/trailing checks');
+      console.log('   • 2:30 PM ET - Shared intelligence refresh → live trading → PHUB');
       console.log('   • 6:00 PM ET - Daily summary + portfolio risk metrics');
       console.log('   • Every 5 min (9am-4pm) - Process queued autonomous trades');
       console.log('   • Hourly (9am-4pm) - Order reconciliation');
@@ -1422,7 +1422,11 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
   /**
    * Run daily portfolio analysis
    */
-  async runDailyAnalysis() {
+  async runDailyAnalysis(options = {}) {
+    const {
+      includePortfolioHub = false,
+      runLabel = 'default'
+    } = options;
     if (this.analysisRunning) {
       console.log('⚠️ Analysis already running, skipping...');
       return;
@@ -1431,16 +1435,13 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
     this.analysisRunning = true;
 
     try {
-      console.log('═══════════════════════════════════════');
-      console.log('📊 DAILY PORTFOLIO ANALYSIS');
-      console.log('═══════════════════════════════════════\n');
+      logRunPhase('live', `start label=${runLabel}`);
 
       // Check if market is open
       const isMarketOpen = await tradier.isMarketOpen();
-      console.log(`📈 Market Status: ${isMarketOpen ? 'OPEN' : 'CLOSED'}\n`);
+      logRunPhase('live', `market=${isMarketOpen ? 'open' : 'closed'}`);
 
       // Get portfolio state with retry logic
-      console.log('💼 Fetching portfolio state...');
       const MAX_RETRIES = 3;
       const RETRY_DELAY = [30000, 60000, 120000]; // 30s, 1min, 2min
 
@@ -1460,14 +1461,10 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
         }
       }
 
-      console.log(`   Total Value: $${portfolio.totalValue.toLocaleString()}`);
-      console.log(`   Cash: $${portfolio.cash.toLocaleString()}`);
-      console.log(`   Positions: ${portfolio.positions.length}`);
-      console.log(`   Drawdown: ${(portfolio.drawdown * 100).toFixed(2)}%\n`);
+      logRunPhase('live', `portfolio value=$${portfolio.totalValue.toLocaleString()} cash=$${portfolio.cash.toLocaleString()} positions=${portfolio.positions.length}`);
       const cashPercent = portfolio.totalValue > 0 ? portfolio.cash / portfolio.totalValue : 0;
 
       // Sync positions to database (reconcile Tradier with database)
-      console.log('📦 Syncing positions with Tradier...');
       const dbPositions = await db.getPositions();
 
       // Get symbols from both sources
@@ -1507,13 +1504,9 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
         }
       }
 
-      console.log('');
-
       // Analyze portfolio health
-      console.log('🔍 Analyzing portfolio health...');
       const health = await analysisEngine.analyzePortfolioHealth(portfolio);
-      console.log(`   Issues: ${health.issues.length}`);
-      console.log(`   Opportunities: ${health.opportunities.length}\n`);
+      logRunPhase('live', `health issues=${health.issues.length} opportunities=${health.opportunities.length}`);
 
       // Handle critical issues first
       if (health.issues.length > 0) {
@@ -1556,44 +1549,22 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
       }
 
       // Check for trim opportunities (graduated trimming)
-      console.log('✂️ Checking for trim opportunities...');
       const trimResults = await runTrimCheck();
-      if (trimResults.trimmed > 0) {
-        console.log(`✅ Trimmed ${trimResults.trimmed} positions\n`);
-      }
 
       // Check for tax optimization opportunities
-      console.log('💰 Checking for tax optimization...');
       const taxResults = await runTaxOptimizationCheck();
-      if (taxResults.actionsCount > 0) {
-        console.log(`✅ Tax optimization: ${taxResults.actionsCount} stops tightened\n`);
-      }
 
       // Check for trailing stop activation
-      console.log('📈 Checking for trailing stop activation...');
       const trailingResults = await runTrailingStopCheck();
-      if (trailingResults.activated > 0) {
-        console.log(`✅ Activated ${trailingResults.activated} trailing stops\n`);
-      }
 
       // Update existing trailing stops
-      console.log('📊 Updating trailing stops...');
       const trailingUpdateResults = await updateTrailingStops();
-      if (trailingUpdateResults.updated > 0) {
-        console.log(`✅ Updated ${trailingUpdateResults.updated} trailing stops\n`);
-      }
 
       // Check for earnings day analysis (5 days ahead)
-      console.log('📊 Checking for earnings in next 5 days...');
       const earningsResults = await runEarningsDayAnalysis(5);
-      if (earningsResults.analyzed > 0) {
-        console.log(`✅ Analyzed ${earningsResults.analyzed} positions with upcoming earnings\n`);
-      } else {
-        console.log('✅ No positions with earnings in next 5 days\n');
-      }
+      logRunPhase('live', `risk trims=${trimResults.trimmed || 0} tax=${taxResults.actionsCount || 0} trailingActivated=${trailingResults.activated || 0} trailingUpdated=${trailingUpdateResults.updated || 0} earningsAhead=${earningsResults.analyzed || 0} postEarnings=${earningsResults.postEarningsAnalyzed || 0}`);
 
       // Analyze and modify orders based on news/events
-      console.log('🔄 Analyzing orders for potential modifications...');
       let ordersModified = 0;
       for (const position of portfolio.positions) {
         const result = await orderManager.analyzeAndModifyOrders(
@@ -1605,19 +1576,12 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
           ordersModified++;
         }
       }
-      if (ordersModified > 0) {
-        console.log(`✅ Modified ${ordersModified} orders based on AI analysis\n`);
-      } else {
-        console.log(`✅ All orders remain appropriate\n`);
-      }
+      logRunPhase('live', `ordersModified=${ordersModified}`);
 
       // Update days held for all lots (tax tracking)
-      console.log('📅 Updating days held for tax tracking...');
       await db.updateDaysHeld();
-      console.log('✅ Days held updated\n');
 
       // Get Tavily news scoped to active/promoted saturday_watchlist names only
-      console.log('📰 Fetching Tavily news for active saturday_watchlist analysis universe...');
       const activeWatchlistRows = await db.getCanonicalSaturdayWatchlistRows(['active'], { includePromoted: true });
       const universeSymbols = [...new Set(activeWatchlistRows.map(row => String(row.symbol || '').toUpperCase()).filter(Boolean))].slice(0, 12);
       const symbolNewsResults = await Promise.all(
@@ -1640,12 +1604,13 @@ Provide a clear, actionable answer. If recommending trades, be specific about en
 
       const formattedNews = newsSearch.formatResults(sanitizedNews);
       const wrappedNews = wrapNewsForPrompt(formattedNews);
-      console.log(`   Found ${allNews.length} Tavily articles across ${universeSymbols.length} active saturday_watchlist symbols (sanitized)\n`);
+      logRunPhase('shared', `news articles=${allNews.length} symbols=${universeSymbols.length}`);
 
-      console.log('📊 Market Sentiment: skipped (news context passed directly into analysis prompts)\n');
+      const profileRefreshResults = await runDailyProfileRefreshSweep({ staleAfterDays: 14 });
+      const profileSummary = summarizeProfileActions(profileRefreshResults);
+      logRunPhase('shared', `profileRefresh ${JSON.stringify(profileSummary)}`);
 
       // Gather additional context for Claude's analysis
-      console.log('📊 Gathering market context...');
 
       // Cash state context
       const cashState = riskManager.checkCashState(portfolio);
@@ -1748,7 +1713,7 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         console.warn('⚠️ Could not fetch options context:', error.message);
       }
 
-      console.log('✅ Market context gathered\n');
+      logRunPhase('shared', 'context ready');
 
       // Always run watchlist scan and news review, even if portfolio is healthy
       // This ensures we don't miss opportunities on stable days
@@ -1762,7 +1727,6 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
       let marketContext = {};
 
       if (shouldRunFullAnalysis) {
-        console.log('🧠 Running deep analysis with Claude Opus...');
         // Pass all context to deep analysis
         const deepAnalysisResult = await this.runDeepAnalysis(portfolio, wrappedNews, {
           cashContext,
@@ -1771,40 +1735,34 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
           gapContext,
           performanceContext,
           sectorContext,
-          optionsContext
+          optionsContext,
+          activeWatchlistRows
         });
         marketContext = deepAnalysisResult?.marketContext || {};
         if (deepAnalysisResult?.dailyStateSummary) {
-          console.log(`📝 Daily state updated for ${deepAnalysisResult.dailyStateSummary.updated} symbols`);
-          if (deepAnalysisResult.dailyStateSummary.promoted > 0) {
-            console.log(`🚀 Discovery promotions created: ${deepAnalysisResult.dailyStateSummary.promoted}`);
-          }
-          console.log('');
+          logRunPhase('live', `dailyState updated=${deepAnalysisResult.dailyStateSummary.updated} promoted=${deepAnalysisResult.dailyStateSummary.promoted || 0}`);
         }
       } else {
-        // Portfolio is healthy, but still scan watchlist and news for opportunities
-        console.log('✅ Portfolio healthy - running watchlist scan and news review');
-
-        if (activeWatchlistRows.length > 0) {
-          console.log(`📋 Active saturday_watchlist: ${activeWatchlistRows.length} stocks in current live analysis universe`);
-        }
-
-        if (allNews.length > 0) {
-          console.log(`📰 Tavily captured ${allNews.length} recent headlines across the active saturday_watchlist universe`);
-        }
+        logRunPhase('live', `portfolio healthy; skipped deep analysis watchlist=${activeWatchlistRows.length} news=${allNews.length}`);
       }
 
       // Save portfolio snapshot
       await this.saveSnapshot(portfolio, marketContext);
 
       // Run daily trend learning (learns from recent trades and patterns)
-      console.log('🧠 Running daily trend learning...');
       const recentTrades = await db.getTradeHistory(10);
       await trendLearning.runDailyTrendLearning(portfolio.positions, recentTrades);
 
-      console.log('\n═══════════════════════════════════════');
-      console.log('✅ Daily analysis complete');
-      console.log('═══════════════════════════════════════\n');
+      if (includePortfolioHub) {
+        const phubResult = await runPortfolioHubCycle({
+          triggerType: `shared_${runLabel}`,
+          performanceRange: 'day',
+          performanceMetric: 'pct'
+        });
+        logRunPhase('phub', `cycle reviewRun=${phubResult?.reviewRun?.id || 'n/a'} recommendedRun=${phubResult?.recommendedRun?.id || 'n/a'} holdings=${phubResult?.portfolioHub?.holdings?.length || 0}`);
+      }
+
+      logRunPhase('live', `complete label=${runLabel}`);
 
     } catch (error) {
       console.error('❌ Error in daily analysis:', error);
@@ -1957,7 +1915,8 @@ Use this as a CONFIRMING signal, not a standalone buy/sell trigger.
         gapContext = '',
         performanceContext = '',
         sectorContext = '',
-        optionsContext = ''
+        optionsContext = '',
+        activeWatchlistRows = []
       } = additionalContext;
 
       const runProfile = this.getDailyRunProfile();

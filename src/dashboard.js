@@ -741,6 +741,7 @@ function renderPortfolioHubSection(portfolioHub = {}) {
                             { label: 'Pre-earnings close', value: row.postEarningsSignal?.reactionSnapshot?.preEarningsClose ? formatMoney(row.postEarningsSignal.reactionSnapshot.preEarningsClose) : '-' },
                             { label: 'Current price', value: row.postEarningsSignal?.reactionSnapshot?.currentPrice ? formatMoney(row.postEarningsSignal.reactionSnapshot.currentPrice) : '-' },
                             { label: 'Reaction %', value: row.postEarningsSignal?.reactionSnapshot?.reactionPct != null ? `${Number(row.postEarningsSignal.reactionSnapshot.reactionPct).toFixed(2)}%` : '-' },
+                            { label: 'Live reaction dip %', value: row.postEarningsSignal?.reactionSnapshot?.liveReactionDipPct != null ? `${Number(row.postEarningsSignal.reactionSnapshot.liveReactionDipPct).toFixed(2)}%` : '-' },
                             { label: 'Gap %', value: row.postEarningsSignal?.reactionSnapshot?.gapPct != null ? `${Number(row.postEarningsSignal.reactionSnapshot.gapPct).toFixed(2)}%` : '-' },
                             { label: 'Dip bucket', value: row.postEarningsSignal?.reactionSnapshot?.dipSeverity || '-' },
                             { label: 'Why', value: row.postEarningsSignal?.why || '-' },
