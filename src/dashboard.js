@@ -4742,7 +4742,7 @@ router.post('/api/portfolio-hub/refresh', async (req, res) => {
 
 router.post('/api/portfolio-hub/opus-review', async (req, res) => {
   try {
-    const result = await runPortfolioHubOpusReview();
+    const result = await runPortfolioHubOpusReviewWithOptions({ reviewMode: 'full' });
     res.json({ success: true, result });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

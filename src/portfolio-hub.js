@@ -1178,6 +1178,40 @@ function shouldIncrementalReviewHolding(row) {
   return false;
 }
 
+function explainIncrementalReviewDecision(row) {
+  if (!row) return { selected: false, reasons: ['missing_row'] };
+
+  const reasons = [];
+  if (!row.opusReviewCreatedAt) {
+    reasons.push('never_reviewed');
+  } else {
+    const lastReview = new Date(row.opusReviewCreatedAt);
+    if (Number.isNaN(lastReview.getTime())) {
+      reasons.push('invalid_last_review');
+    } else {
+      const ageDays = (Date.now() - lastReview.getTime()) / (1000 * 60 * 60 * 24);
+      if (ageDays >= 7) reasons.push(`stale_review_${ageDays.toFixed(1)}d`);
+    }
+  }
+
+  if (Math.abs(Number(row.unrealizedPnLPct || 0)) >= 10) {
+    reasons.push(`large_pnl_${Number(row.unrealizedPnLPct || 0).toFixed(1)}pct`);
+  }
+
+  if (row.nextEarningsDate) {
+    const earningsDate = new Date(row.nextEarningsDate);
+    if (!Number.isNaN(earningsDate.getTime())) {
+      const daysToEarnings = (earningsDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+      if (daysToEarnings <= 7) reasons.push(`earnings_${daysToEarnings.toFixed(1)}d`);
+    }
+  }
+
+  return {
+    selected: reasons.length > 0,
+    reasons: reasons.length ? reasons : ['stable_not_due']
+  };
+}
+
 function pickDirectionalAdvice(row, latestAdviceRows = []) {
   const byDirection = (latestAdviceRows || [])
     .filter(candidate => String(candidate.symbol || '').toUpperCase() === String(row.symbol || '').toUpperCase())
@@ -1918,6 +1952,7 @@ export async function runPortfolioHubOpusReview() {
 
 export async function runPortfolioHubOpusReviewWithOptions(options = {}) {
   const cycleRunId = options.cycleRunId ?? null;
+  const reviewMode = options.reviewMode === 'full' ? 'full' : 'incremental';
   const reviewResult = await db.withPortfolioHubAdvisoryLock(
     PORTFOLIO_HUB_LOCKS.opusReview,
     `pid-${process.pid}-review`,
@@ -1925,12 +1960,30 @@ export async function runPortfolioHubOpusReviewWithOptions(options = {}) {
     async () => {
       const portfolioHub = await buildPortfolioHubView({ performanceRange: 'day', performanceMetric: 'pct', persistHistory: false });
       const holdings = Array.isArray(portfolioHub.holdings) ? portfolioHub.holdings : [];
-      logPortfolioHub('holdings-review', `start cycleRunId=${cycleRunId || 'n/a'} holdings=${holdings.length}`);
+      logPortfolioHub('holdings-review', `start cycleRunId=${cycleRunId || 'n/a'} mode=${reviewMode} holdings=${holdings.length}`);
       if (!holdings.length) {
         logPortfolioHub('holdings-review', 'skipped no holdings');
         return { reviewedAt: new Date().toISOString(), holdings: [] };
       }
-      const holdingsToReview = holdings.filter(shouldIncrementalReviewHolding);
+      const selectionDecisions = holdings.map(row => ({
+        row,
+        decision: reviewMode === 'full'
+          ? { selected: true, reasons: ['manual_full_review'] }
+          : explainIncrementalReviewDecision(row)
+      }));
+      const holdingsToReview = selectionDecisions
+        .filter(entry => entry.decision.selected)
+        .map(entry => entry.row);
+      if (reviewMode === 'incremental') {
+        logPortfolioHub(
+          'holdings-review',
+          `selection selected=${formatPhubLogList(selectionDecisions.filter(entry => entry.decision.selected), entry => `${entry.row.symbol}[${entry.decision.reasons.join('|')}]`)}`
+        );
+        logPortfolioHub(
+          'holdings-review',
+          `selection skipped=${formatPhubLogList(selectionDecisions.filter(entry => !entry.decision.selected), entry => `${entry.row.symbol}[${entry.decision.reasons.join('|')}]`)}`
+        );
+      }
       if (!holdingsToReview.length) {
         logPortfolioHub('holdings-review', 'skipped no holdings needed refresh');
         return { reviewedAt: new Date().toISOString(), holdings: [] };
@@ -2206,7 +2259,8 @@ export async function runPortfolioHubCycle(options = {}) {
         }
       });
 
-      const reviewRun = await runPortfolioHubOpusReviewWithOptions({ cycleRunId: cycleRun.id });
+      const reviewMode = triggerType === 'manual' ? 'full' : 'incremental';
+      const reviewRun = await runPortfolioHubOpusReviewWithOptions({ cycleRunId: cycleRun.id, reviewMode });
       const recommendedRun = await runPortfolioHubRecommendedPositions({ cycleRunId: cycleRun.id });
 
       const view = await buildPortfolioHubView({
